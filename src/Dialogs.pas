@@ -15,7 +15,7 @@ uses
   {$IFDEF OS_WINDOWS}
   Winapi.Windows,
   {$ENDIF}
-  System.SysUtils,
+  System.SysUtils, System.Classes, System.Generics.Collections,
   FVCommon, Objects, Drivers, Views, fvconsts, Validate, HistList;
 
 {***************************************************************************}
@@ -120,7 +120,7 @@ type
     Sel: Integer;
     Value: LongInt;
     EnableMask: LongInt;
-    Strings: TStringCollection;
+    Strings: TStringList;
     constructor Create(var Bounds: TRect; AStrings: PSItem); reintroduce; virtual;
     destructor Destroy; override;
     function DataSize: Word; override;
@@ -160,11 +160,23 @@ type
   end;
 
   TListBox = class(TListViewer)
-    List: TFVCollection;
+    List: TObjectList<TObject>;
     constructor Create(var Bounds: TRect; ANumCols: Word; AScrollBar: TScrollBar); reintroduce; virtual;
     function DataSize: Word; override;
     function GetText(Item: Integer; MaxLen: Integer): string; override;
-    procedure NewList(AList: TFVCollection); virtual;
+    procedure NewList(AList: TObjectList<TObject>); virtual;
+    procedure GetData(var Rec); override;
+    procedure SetData(var Rec); override;
+  end;
+
+  { TStringListBox - A list box specifically for displaying string lists }
+  TStringListBox = class(TListViewer)
+    Strings: TStringList;
+    constructor Create(var Bounds: TRect; ANumCols: Word; AScrollBar: TScrollBar); reintroduce; virtual;
+    destructor Destroy; override;
+    function DataSize: Word; override;
+    function GetText(Item: Integer; MaxLen: Integer): string; override;
+    procedure NewList(AStrings: TStringList); virtual;
     procedure GetData(var Rec); override;
     procedure SetData(var Rec); override;
   end;
@@ -811,21 +823,18 @@ end;
 constructor TCluster.Create(var Bounds: TRect; AStrings: PSItem);
 var
   P: PSItem;
-  I: Integer;
 begin
   inherited Create(Bounds);
   Options := Options or ofSelectable or ofFirstClick or ofPreProcess or ofPostProcess;
-  I := 0;
-  P := AStrings;
-  while P <> nil do begin
-    Inc(I);
-    P := P^.Next;
-  end;
-  Strings := TStringCollection.Create(I, 0);
+  Strings := TStringList.Create;
   while AStrings <> nil do begin
     P := AStrings;
-    Strings.AtInsert(Strings.Count, P^.Value);
+    if P^.Value <> nil then
+      Strings.Add(P^.Value^)
+    else
+      Strings.Add('');
     AStrings := P^.Next;
+    DisposeStr(P^.Value);
     Dispose(P);
   end;
   Value := 0;
@@ -890,7 +899,7 @@ var
 begin
   Result := -1;
   MakeLocal(P, P);
-  if P.X >= 0 then begin
+  if (P.X >= 0) and (Strings <> nil) then begin
     Col := P.X * (Strings.Count div Size.Y + 1) div Size.X;
     S := Col * Size.Y;
     for I := 0 to Size.Y - 1 do
@@ -913,17 +922,23 @@ var
   CNorm, CSel, CDis, Color: Word;
   B: TDrawBuffer;
   S: ShortString;
+  StringCount: Integer;
 begin
   CNorm := GetColor($0301);
   CSel := GetColor($0402);
   CDis := GetColor($0505);
 
+  if Strings <> nil then
+    StringCount := Strings.Count
+  else
+    StringCount := 0;
+
   for I := 0 to Size.Y - 1 do begin
     MoveChar(B, ' ', Byte(CNorm), Size.X);
     Col := 0;
-    for J := 0 to (Strings.Count - 1) div Size.Y do begin
+    for J := 0 to (StringCount - 1) div Size.Y do begin
       Cur := J * Size.Y + I;
-      if Cur < Strings.Count then begin
+      if Cur < StringCount then begin
         if not ButtonState(Cur) then
           Color := CDis
         else if (Cur = Sel) and (State and sfFocused <> 0) then
@@ -935,14 +950,15 @@ begin
         if Mark(Cur) then
           WordRec(B[Col + 2]).Lo := Byte(Marker);
 
-        S := PShortString(Strings.At(Cur))^;
+        S := ShortString(Strings[Cur]);
         MoveCStr(B[Col + Length(Icon)], S, Color);
         Inc(Col, Length(Icon) + CStrLen(S) + 2);
       end;
     end;
     WriteLine(0, I, Size.X, 1, B);
   end;
-  SetCursor(Column(Sel) * (Size.X div ((Strings.Count - 1) div Size.Y + 1)) + 2, Row(Sel));
+  if StringCount > 0 then
+    SetCursor(Column(Sel) * (Size.X div ((StringCount - 1) div Size.Y + 1)) + 2, Row(Sel));
 end;
 
 procedure TCluster.DrawMultiBox(const Icon, Marker: ShortString);
@@ -992,9 +1008,14 @@ var
   I: Integer;
   S: ShortString;
   C: AnsiChar;
+  StringCount: Integer;
 begin
   inherited HandleEvent(Event);
   if Options and ofSelectable = 0 then Exit;
+  if Strings <> nil then
+    StringCount := Strings.Count
+  else
+    StringCount := 0;
   case Event.What of
     evMouseDown: begin
       I := FindSel(Event.Where);
@@ -1010,8 +1031,8 @@ begin
       if State and sfFocused <> 0 then
         case CtrlToArrow(Event.KeyCode) of
           kbUp: if Sel > 0 then begin Dec(Sel); Press(Sel); DrawView; ClearEvent(Event); end;
-          kbDown: if Sel < Strings.Count - 1 then begin Inc(Sel); Press(Sel); DrawView; ClearEvent(Event); end;
-          kbRight: if Sel + Size.Y < Strings.Count then begin
+          kbDown: if Sel < StringCount - 1 then begin Inc(Sel); Press(Sel); DrawView; ClearEvent(Event); end;
+          kbRight: if Sel + Size.Y < StringCount then begin
             Inc(Sel, Size.Y);
             Press(Sel);
             DrawView;
@@ -1026,8 +1047,8 @@ begin
         end;
       if Event.What = evNothing then Exit;
       { Handle hotkeys in any phase }
-      for I := 0 to Strings.Count - 1 do begin
-        S := PShortString(Strings.At(I))^;
+      for I := 0 to StringCount - 1 do begin
+        S := ShortString(Strings[I]);
         C := HotKey(S);
         if (GetAltCode(C) = Event.KeyCode) or
            ((Owner.Phase = phPostProcess) and (C <> #0) and
@@ -1120,20 +1141,14 @@ begin
 end;
 
 function TListBox.GetText(Item: Integer; MaxLen: Integer): string;
-var
-  S: PShortString;
 begin
-  if (List <> nil) and (Item < List.Count) then begin
-    S := List.At(Item);
-    if S <> nil then
-      Result := Copy(S^, 1, MaxLen)
-    else
-      Result := '';
-  end else
-    Result := '';
+  { Base implementation returns empty string.
+    Subclasses (TFileList, TDirListBox) override this to extract text from their items.
+    For simple string lists, use TStringListBox instead. }
+  Result := '';
 end;
 
-procedure TListBox.NewList(AList: TFVCollection);
+procedure TListBox.NewList(AList: TObjectList<TObject>);
 begin
   FreeAndNil(List);
   List := AList;
@@ -1148,12 +1163,64 @@ end;
 
 procedure TListBox.GetData(var Rec);
 begin
-  TFVCollection(Rec) := List;
+  TObjectList<TObject>(Rec) := List;
 end;
 
 procedure TListBox.SetData(var Rec);
 begin
-  NewList(TFVCollection(Rec));
+  NewList(TObjectList<TObject>(Rec));
+end;
+
+{***************************************************************************}
+{                      TStringListBox Implementation                        }
+{***************************************************************************}
+
+constructor TStringListBox.Create(var Bounds: TRect; ANumCols: Word; AScrollBar: TScrollBar);
+begin
+  inherited Create(Bounds, ANumCols, nil, AScrollBar);
+  Strings := nil;
+end;
+
+destructor TStringListBox.Destroy;
+begin
+  FreeAndNil(Strings);
+  inherited Destroy;
+end;
+
+function TStringListBox.DataSize: Word;
+begin
+  Result := SizeOf(Pointer);
+end;
+
+function TStringListBox.GetText(Item: Integer; MaxLen: Integer): string;
+begin
+  if (Strings <> nil) and (Item < Strings.Count) then
+    Result := Copy(Strings[Item], 1, MaxLen)
+  else
+    Result := '';
+end;
+
+procedure TStringListBox.NewList(AStrings: TStringList);
+begin
+  FreeAndNil(Strings);
+  Strings := AStrings;
+  if AStrings <> nil then
+    SetRange(AStrings.Count)
+  else
+    SetRange(0);
+  if Range > 0 then
+    FocusItem(0);
+  DrawView;
+end;
+
+procedure TStringListBox.GetData(var Rec);
+begin
+  TStringList(Rec) := Strings;
+end;
+
+procedure TStringListBox.SetData(var Rec);
+begin
+  NewList(TStringList(Rec));
 end;
 
 {***************************************************************************}

@@ -3,7 +3,9 @@ program FVTest;
 {$APPTYPE CONSOLE}
 
 uses
-  System.SysUtils,
+  System.SysUtils, System.Classes, System.Generics.Collections, System.JSON,
+  FVInterfaces in 'src\FVInterfaces.pas',
+  FVSerialization in 'src\FVSerialization.pas',
   Objects in 'src\Objects.pas',
   Video in 'src\Video.pas',
   Drivers in 'src\Drivers.pas',
@@ -571,8 +573,8 @@ var
   R: TRect;
   Dlg: TDialog;
   ScrollBar: TScrollBar;
-  ListBox: TListBox;
-  List: TStringCollection;
+  ListBox: TStringListBox;
+  List: TStringList;
 begin
   R.Assign(5, 2, 70, 22);
   Dlg := TDialog.Create(R, 'Test Dialog');
@@ -609,28 +611,28 @@ begin
     ScrollBar := TScrollBar.Create(R);
     Dlg.Insert(ScrollBar);
 
-    { Listbox }
+    { Listbox with strings }
     R.Assign(38, 6, 58, 15);
-    ListBox := TListBox.Create(R, 1, ScrollBar);
+    ListBox := TStringListBox.Create(R, 1, ScrollBar);
     Dlg.Insert(ListBox);
 
-    { Create string collection for listbox }
-    List := TStringCollection.Create(15, 5);
-    List.Insert(NewStr('Apple'));
-    List.Insert(NewStr('Banana'));
-    List.Insert(NewStr('Cherry'));
-    List.Insert(NewStr('Date'));
-    List.Insert(NewStr('Elderberry'));
-    List.Insert(NewStr('Fig'));
-    List.Insert(NewStr('Grape'));
-    List.Insert(NewStr('Honeydew'));
-    List.Insert(NewStr('Kiwi'));
-    List.Insert(NewStr('Lemon'));
-    List.Insert(NewStr('Mango'));
-    List.Insert(NewStr('Nectarine'));
-    List.Insert(NewStr('Orange'));
-    List.Insert(NewStr('Papaya'));
-    List.Insert(NewStr('Quince'));
+    { Create string list for listbox }
+    List := TStringList.Create;
+    List.Add('Apple');
+    List.Add('Banana');
+    List.Add('Cherry');
+    List.Add('Date');
+    List.Add('Elderberry');
+    List.Add('Fig');
+    List.Add('Grape');
+    List.Add('Honeydew');
+    List.Add('Kiwi');
+    List.Add('Lemon');
+    List.Add('Mango');
+    List.Add('Nectarine');
+    List.Add('Orange');
+    List.Add('Papaya');
+    List.Add('Quince');
     ListBox.NewList(List);
 
     { Buttons }

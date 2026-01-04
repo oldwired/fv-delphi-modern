@@ -1,7 +1,7 @@
 {*******************************************************}
 {       Turbo Pascal Objects Unit                       }
-{       Compatibility layer for Modern Delphi           }
-{       CONVERTED TO CLASS SYNTAX                       }
+{       Compatibility layer for Modern Delphi 12+       }
+{       MODERNIZED - No TFVObject, uses RTL generics    }
 {*******************************************************}
 
 unit Objects;
@@ -14,7 +14,7 @@ uses
   {$IFDEF OS_WINDOWS}
   Winapi.Windows,
   {$ENDIF}
-  System.SysUtils, System.Classes;
+  System.SysUtils, System.Classes, System.Generics.Collections;
 
 const
   stOk         =  0;
@@ -24,42 +24,31 @@ const
   stWriteError = -4;
   stGetError   = -5;
   stPutError   = -6;
-  coIndexError = -1;
-  coOverflow   = -2;
-  MaxCollectionSize = MaxInt div SizeOf(Pointer);
 
 type
   PString = ^ShortString;
 
-  { Forward declarations }
-  TFVObject = class;
-  TFVStream = class;
-  TFVCollection = class;
-
+  { Callback types for iteration }
   TCallbackProcParam = procedure(Item: Pointer);
   TCallbackFunc = function(Item: Pointer): Boolean;
   CodePointer = Pointer;
   CodePtrInt = NativeInt;
 
-  { Base object - renamed to avoid conflict with System.TObject }
-  TFVObject = class(TObject)
-  public
-    constructor Create; virtual;
-    destructor Destroy; override;
-  end;
+  { Forward declarations }
+  TFVStream = class;
 
-  { Stream base class }
-  TFVStream = class(TFVObject)
+  { Stream base class - now inherits directly from TObject }
+  TFVStream = class(TObject)
   private
     FStatus: Integer;
     FErrorInfo: Integer;
   public
-    constructor Create; override;
+    constructor Create; virtual;
     destructor Destroy; override;
-    function Get: TFVObject; virtual;
+    function Get: TObject; virtual;
     function GetPos: LongInt; virtual;
     function GetSize: LongInt; virtual;
-    procedure Put(P: TFVObject); virtual;
+    procedure Put(P: TObject); virtual;
     procedure Read(var Buf; Count: LongInt); virtual;
     function ReadStr: PString;
     procedure Reset;
@@ -125,64 +114,7 @@ type
     procedure Write(var Buf; Count: LongInt); override;
   end;
 
-  PItemList = ^TItemList;
-  TItemList = array[0..MaxCollectionSize - 1] of Pointer;
-
-  TFVCollection = class(TFVObject)
-  private
-    FItems: PItemList;
-    FCount: Integer;
-    FLimit: Integer;
-    FDelta: Integer;
-  public
-    constructor Create(ALimit, ADelta: Integer); reintroduce; virtual;
-    constructor Load(var S: TFVStream); virtual;
-    destructor Destroy; override;
-    function At(Index: Integer): Pointer;
-    function IndexOf(Item: Pointer): Integer; virtual;
-    function GetItem(var S: TFVStream): Pointer; virtual;
-    procedure AtDelete(Index: Integer);
-    procedure AtFree(Index: Integer);
-    procedure AtInsert(Index: Integer; Item: Pointer);
-    procedure AtPut(Index: Integer; Item: Pointer);
-    procedure Delete(Item: Pointer);
-    procedure DeleteAll;
-    procedure FreeItem(Item: Pointer); virtual;
-    procedure FreeAll;
-    procedure ForEach(Action: TCallbackProcParam);
-    procedure Insert(Item: Pointer); virtual;
-    procedure Pack;
-    procedure PutItem(var S: TFVStream; Item: Pointer); virtual;
-    procedure SetLimit(ALimit: Integer); virtual;
-    procedure Store(var S: TFVStream);
-    procedure Error(Code, Info: Integer); virtual;
-    function Count: Integer;
-  end;
-
-  TSortedCollection = class(TFVCollection)
-  private
-    FDuplicates: Boolean;
-  public
-    constructor Create(ALimit, ADelta: Integer); override;
-    constructor Load(var S: TFVStream); override;
-    function Compare(Key1, Key2: Pointer): Integer; virtual;
-    function IndexOf(Item: Pointer): Integer; override;
-    function KeyOf(Item: Pointer): Pointer; virtual;
-    function Search(Key: Pointer; var Index: Integer): Boolean; virtual;
-    procedure Insert(Item: Pointer); override;
-    procedure Store(var S: TFVStream);
-    property Duplicates: Boolean read FDuplicates write FDuplicates;
-  end;
-
-  TStringCollection = class(TSortedCollection)
-  public
-    function Compare(Key1, Key2: Pointer): Integer; override;
-    procedure FreeItem(Item: Pointer); override;
-    function GetItem(var S: TFVStream): Pointer; override;
-    procedure PutItem(var S: TFVStream; Item: Pointer); override;
-  end;
-
-  { Stream registration - kept for compatibility but will be replaced with RTTI }
+  { Legacy stream registration - kept for compatibility, deprecated }
   PStreamRec = ^TStreamRec;
   TStreamRec = record
     ObjType: Word;
@@ -192,7 +124,8 @@ type
     Next: PStreamRec;
   end;
 
-procedure RegisterType(var S: TStreamRec);
+{ Legacy procedures - kept for backward compatibility }
+procedure RegisterType(var S: TStreamRec); deprecated 'Use TFVSerializerRegistry.RegisterType instead';
 function NewStr(const S: ShortString): PString;
 procedure DisposeStr(P: PString);
 
@@ -211,9 +144,11 @@ var
   StreamTypes: PStreamRec = nil;
 
 function NewStr(const S: ShortString): PString;
-var P: PString;
+var
+  P: PString;
 begin
-  if S = '' then Result := nil
+  if S = '' then
+    Result := nil
   else begin
     System.GetMem(P, Length(S) + 1);
     P^ := S;
@@ -223,25 +158,14 @@ end;
 
 procedure DisposeStr(P: PString);
 begin
-  if P <> nil then System.FreeMem(P, Length(P^) + 1);
+  if P <> nil then
+    System.FreeMem(P, Length(P^) + 1);
 end;
 
 procedure RegisterType(var S: TStreamRec);
 begin
   S.Next := StreamTypes;
   StreamTypes := @S;
-end;
-
-{ TFVObject }
-
-constructor TFVObject.Create;
-begin
-  inherited Create;
-end;
-
-destructor TFVObject.Destroy;
-begin
-  inherited Destroy;
 end;
 
 { TFVStream }
@@ -258,7 +182,7 @@ begin
   inherited Destroy;
 end;
 
-function TFVStream.Get: TFVObject;
+function TFVStream.Get: TObject;
 begin
   Result := nil;
 end;
@@ -273,7 +197,7 @@ begin
   Result := 0;
 end;
 
-procedure TFVStream.Put(P: TFVObject);
+procedure TFVStream.Put(P: TObject);
 begin
 end;
 
@@ -580,308 +504,6 @@ begin
   Inc(FPosition, Count);
   if FPosition > FSize then
     FSize := FPosition;
-end;
-
-{ TFVCollection }
-
-constructor TFVCollection.Create(ALimit, ADelta: Integer);
-begin
-  inherited Create;
-  FItems := nil;
-  FCount := 0;
-  FLimit := 0;
-  FDelta := ADelta;
-  SetLimit(ALimit);
-end;
-
-constructor TFVCollection.Load(var S: TFVStream);
-var
-  I: Integer;
-begin
-  inherited Create;
-  S.Read(FCount, SizeOf(FCount));
-  S.Read(FLimit, SizeOf(FLimit));
-  S.Read(FDelta, SizeOf(FDelta));
-  FItems := nil;
-  SetLimit(FLimit);
-  for I := 0 to FCount - 1 do
-    FItems^[I] := GetItem(S);
-end;
-
-destructor TFVCollection.Destroy;
-begin
-  FreeAll;
-  SetLimit(0);
-  inherited Destroy;
-end;
-
-function TFVCollection.At(Index: Integer): Pointer;
-begin
-  if (Index < 0) or (Index >= FCount) then begin
-    Error(coIndexError, Index);
-    Result := nil;
-  end else
-    Result := FItems^[Index];
-end;
-
-function TFVCollection.IndexOf(Item: Pointer): Integer;
-var
-  I: Integer;
-begin
-  for I := 0 to FCount - 1 do
-    if FItems^[I] = Item then begin
-      Result := I;
-      Exit;
-    end;
-  Result := -1;
-end;
-
-function TFVCollection.GetItem(var S: TFVStream): Pointer;
-begin
-  Result := S.Get;
-end;
-
-procedure TFVCollection.AtDelete(Index: Integer);
-begin
-  if (Index < 0) or (Index >= FCount) then
-    Error(coIndexError, Index)
-  else begin
-    Dec(FCount);
-    if Index < FCount then
-      Move(FItems^[Index + 1], FItems^[Index], (FCount - Index) * SizeOf(Pointer));
-  end;
-end;
-
-procedure TFVCollection.AtFree(Index: Integer);
-var
-  Item: Pointer;
-begin
-  Item := At(Index);
-  AtDelete(Index);
-  FreeItem(Item);
-end;
-
-procedure TFVCollection.AtInsert(Index: Integer; Item: Pointer);
-begin
-  if (Index < 0) or (Index > FCount) then
-    Error(coIndexError, Index)
-  else begin
-    if FCount = FLimit then
-      SetLimit(FLimit + FDelta);
-    if Index < FCount then
-      Move(FItems^[Index], FItems^[Index + 1], (FCount - Index) * SizeOf(Pointer));
-    FItems^[Index] := Item;
-    Inc(FCount);
-  end;
-end;
-
-procedure TFVCollection.AtPut(Index: Integer; Item: Pointer);
-begin
-  if (Index < 0) or (Index >= FCount) then
-    Error(coIndexError, Index)
-  else
-    FItems^[Index] := Item;
-end;
-
-procedure TFVCollection.Delete(Item: Pointer);
-begin
-  AtDelete(IndexOf(Item));
-end;
-
-procedure TFVCollection.DeleteAll;
-begin
-  FCount := 0;
-end;
-
-procedure TFVCollection.FreeItem(Item: Pointer);
-begin
-  { Note: Assumes Item is a TFVObject descendant. Crashes if not. }
-  if (Item <> nil) and (TObject(Item) is TFVObject) then
-    TFVObject(Item).Free;
-end;
-
-procedure TFVCollection.FreeAll;
-var
-  I: Integer;
-begin
-  for I := 0 to FCount - 1 do
-    FreeItem(FItems^[I]);
-  FCount := 0;
-end;
-
-procedure TFVCollection.ForEach(Action: TCallbackProcParam);
-var
-  I: Integer;
-begin
-  if not Assigned(Action) then Exit;
-  for I := 0 to FCount - 1 do
-    Action(FItems^[I]);
-end;
-
-procedure TFVCollection.Insert(Item: Pointer);
-begin
-  AtInsert(FCount, Item);
-end;
-
-procedure TFVCollection.Pack;
-var
-  I, J: Integer;
-begin
-  J := 0;
-  for I := 0 to FCount - 1 do
-    if FItems^[I] <> nil then begin
-      FItems^[J] := FItems^[I];
-      Inc(J);
-    end;
-  FCount := J;
-end;
-
-procedure TFVCollection.PutItem(var S: TFVStream; Item: Pointer);
-begin
-  S.Put(TFVObject(Item));
-end;
-
-procedure TFVCollection.SetLimit(ALimit: Integer);
-var
-  NewItems: PItemList;
-begin
-  if ALimit < FCount then
-    ALimit := FCount;
-  if ALimit > MaxCollectionSize then
-    ALimit := MaxCollectionSize;
-  if ALimit <> FLimit then begin
-    if ALimit = 0 then
-      NewItems := nil
-    else begin
-      System.GetMem(NewItems, ALimit * SizeOf(Pointer));
-      if (FCount > 0) and (FItems <> nil) then
-        Move(FItems^, NewItems^, FCount * SizeOf(Pointer));
-    end;
-    if FItems <> nil then
-      System.FreeMem(FItems);
-    FItems := NewItems;
-    FLimit := ALimit;
-  end;
-end;
-
-procedure TFVCollection.Store(var S: TFVStream);
-var
-  I: Integer;
-begin
-  S.Write(FCount, SizeOf(FCount));
-  S.Write(FLimit, SizeOf(FLimit));
-  S.Write(FDelta, SizeOf(FDelta));
-  for I := 0 to FCount - 1 do
-    PutItem(S, FItems^[I]);
-end;
-
-procedure TFVCollection.Error(Code, Info: Integer);
-begin
-end;
-
-function TFVCollection.Count: Integer;
-begin
-  Result := FCount;
-end;
-
-{ TSortedCollection }
-
-constructor TSortedCollection.Create(ALimit, ADelta: Integer);
-begin
-  inherited Create(ALimit, ADelta);
-  FDuplicates := False;
-end;
-
-constructor TSortedCollection.Load(var S: TFVStream);
-begin
-  inherited Load(S);
-  S.Read(FDuplicates, SizeOf(FDuplicates));
-end;
-
-function TSortedCollection.Compare(Key1, Key2: Pointer): Integer;
-begin
-  Result := 0;
-end;
-
-function TSortedCollection.IndexOf(Item: Pointer): Integer;
-var
-  I: Integer;
-begin
-  if Search(KeyOf(Item), I) then begin
-    if FDuplicates then
-      while (I < FCount) and (Item <> FItems^[I]) do
-        Inc(I);
-    if I < FCount then begin
-      Result := I;
-      Exit;
-    end;
-  end;
-  Result := -1;
-end;
-
-function TSortedCollection.KeyOf(Item: Pointer): Pointer;
-begin
-  Result := Item;
-end;
-
-function TSortedCollection.Search(Key: Pointer; var Index: Integer): Boolean;
-var
-  L, H, I, C: Integer;
-begin
-  Result := False;
-  L := 0;
-  H := FCount - 1;
-  while L <= H do begin
-    I := (L + H) shr 1;
-    C := Compare(KeyOf(FItems^[I]), Key);
-    if C < 0 then
-      L := I + 1
-    else begin
-      H := I - 1;
-      if C = 0 then begin
-        Result := True;
-        if not FDuplicates then
-          L := I;
-      end;
-    end;
-  end;
-  Index := L;
-end;
-
-procedure TSortedCollection.Insert(Item: Pointer);
-var
-  I: Integer;
-begin
-  if not Search(KeyOf(Item), I) or FDuplicates then
-    AtInsert(I, Item);
-end;
-
-procedure TSortedCollection.Store(var S: TFVStream);
-begin
-  inherited Store(S);
-  S.Write(FDuplicates, SizeOf(FDuplicates));
-end;
-
-{ TStringCollection }
-
-function TStringCollection.Compare(Key1, Key2: Pointer): Integer;
-begin
-  Result := CompareStr(PString(Key1)^, PString(Key2)^);
-end;
-
-procedure TStringCollection.FreeItem(Item: Pointer);
-begin
-  DisposeStr(PString(Item));
-end;
-
-function TStringCollection.GetItem(var S: TFVStream): Pointer;
-begin
-  Result := S.ReadStr;
-end;
-
-procedure TStringCollection.PutItem(var S: TFVStream; Item: Pointer);
-begin
-  S.WriteStr(PString(Item));
 end;
 
 end.
