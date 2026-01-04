@@ -33,7 +33,6 @@ type
     procedure Store(var S: TFVStream);
     property Secs: LongInt read FSecs write FSecs;
   end;
-  PTimedDialog = TTimedDialog;
 
   { Must be always included in TTimedDialog! }
   TTimedDialogText = class(TStaticText)
@@ -41,7 +40,6 @@ type
     constructor Create(var Bounds: TRect); reintroduce; virtual;
     procedure GetText(var S: ShortString); override;
   end;
-  PTimedDialogText = TTimedDialogText;
 
 const
   RTimedDialog: TStreamRec = (

@@ -32,18 +32,12 @@ type
   PSearchRec = ^TSearchRec;
 
   { TFileInputLine }
-  TFileInputLine = class;
-  PFileInputLine = TFileInputLine;
-
   TFileInputLine = class(TInputLine)
     constructor Create(var Bounds: TRect; AMaxLen: Integer); override;
     procedure HandleEvent(var Event: TEvent); override;
   end;
 
   { TFileCollection }
-  TFileCollection = class;
-  PFileCollection = TFileCollection;
-
   TFileCollection = class(TSortedCollection)
     function Compare(Key1, Key2: Pointer): Integer; override;
     procedure FreeItem(Item: Pointer); override;
@@ -52,16 +46,10 @@ type
   end;
 
   { TFileValidator }
-  TFileValidator = class;
-  PFileValidator = TFileValidator;
-
   TFileValidator = class(TValidator)
   end;
 
   { TSortedListBox }
-  TSortedListBox = class;
-  PSortedListBox = TSortedListBox;
-
   TSortedListBox = class(TListBox)
     SearchPos: Byte;
     HandleDir: Boolean;
@@ -73,11 +61,8 @@ type
 
   { Forward declarations for TFileDialog }
   TFileDialog = class;
-  PFileDialog = TFileDialog;
   TFileHistory = class;
-  PFileHistory = TFileHistory;
   TFileList = class;
-  PFileList = TFileList;
 
   { TFileList }
   TFileList = class(TSortedListBox)
@@ -94,9 +79,6 @@ type
   end;
 
   { TFileInfoPane }
-  TFileInfoPane = class;
-  PFileInfoPane = TFileInfoPane;
-
   TFileInfoPane = class(TView)
     S: TSearchRec;
     constructor Create(var Bounds: TRect); override;
@@ -147,9 +129,6 @@ type
   end;
 
   { TDirCollection }
-  TDirCollection = class;
-  PDirCollection = TDirCollection;
-
   TDirCollection = class(TFVCollection)
     function GetItem(var S: TFVStream): Pointer; override;
     procedure FreeItem(Item: Pointer); override;
@@ -157,9 +136,6 @@ type
   end;
 
   { TDirListBox }
-  TDirListBox = class;
-  PDirListBox = TDirListBox;
-
   TDirListBox = class(TListBox)
     Dir: DirStr;
     Cur: Word;
@@ -179,9 +155,6 @@ const
 
 type
   { TChDirDialog }
-  TChDirDialog = class;
-  PChDirDialog = TChDirDialog;
-
   TChDirDialog = class(TDialog)
     DirInput: TInputLine;
     DirList: TDirListBox;
@@ -200,9 +173,6 @@ type
   end;
 
   { TEditChDirDialog }
-  TEditChDirDialog = class;
-  PEditChDirDialog = TEditChDirDialog;
-
   TEditChDirDialog = class(TChDirDialog)
     function DataSize: Word; override;
     procedure GetData(var Rec); override;
@@ -210,9 +180,6 @@ type
   end;
 
   { TDirValidator }
-  TDirValidator = class;
-  PDirValidator = TDirValidator;
-
   TDirValidator = class(TFilterValidator)
     constructor Create; reintroduce; virtual;
     function IsValid(const S: string): Boolean; override;

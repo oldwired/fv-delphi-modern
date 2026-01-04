@@ -29,9 +29,6 @@ type
   TOutlineViewer = class;
   TOutline = class;
 
-  POutlineViewer = TOutlineViewer;
-  POutline = TOutline;
-
   { TNode - Tree node record }
   TNode = record
     Next: PNode;

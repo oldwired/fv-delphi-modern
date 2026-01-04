@@ -45,7 +45,6 @@ TYPE
       property Mode: THeapViewMode read FMode write FMode;
       property OldMem: LongInt read FOldMem write FOldMem;
    end;
-   PHeapView = THeapView;                            { Heapview alias }
 
 {---------------------------------------------------------------------------}
 {                 TClockView OBJECT - ANCESTOR VIEW OBJECT                  }
@@ -67,7 +66,6 @@ TYPE
       property LastTime: LongInt read FLastTime write FLastTime;
       property TimeStr: TTimeString read FTimeStr write FTimeStr;
    end;
-   PClockView = TClockView;                          { Clockview alias }
 
 {<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>}
                              IMPLEMENTATION

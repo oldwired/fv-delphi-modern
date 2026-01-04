@@ -36,11 +36,6 @@ type
   TFVStream = class;
   TFVCollection = class;
 
-  { Type aliases for compatibility - these are now class references, not pointers }
-  PObject = TFVObject;
-  PStream = TFVStream;
-  PCollection = TFVCollection;
-
   TCallbackProcParam = procedure(Item: Pointer);
   TCallbackFunc = function(Item: Pointer): Boolean;
   CodePointer = Pointer;
@@ -77,8 +72,6 @@ type
     function ErrorInfo: Integer;
   end;
 
-  TDosStream = class;
-  PDosStream = TDosStream;
   TDosStream = class(TFVStream)
   private
     FHandle: THandle;
@@ -94,8 +87,6 @@ type
     procedure Write(var Buf; Count: LongInt); override;
   end;
 
-  TBufStream = class;
-  PBufStream = TBufStream;
   TBufStream = class(TDosStream)
   private
     FBuffer: Pointer;
@@ -115,8 +106,6 @@ type
     procedure Write(var Buf; Count: LongInt); override;
   end;
 
-  TMemoryStream = class;
-  PMemoryStream = TMemoryStream;
   TMemoryStream = class(TFVStream)
   private
     FSize: LongInt;
@@ -170,8 +159,6 @@ type
     function Count: Integer;
   end;
 
-  TSortedCollection = class;
-  PSortedCollection = TSortedCollection;
   TSortedCollection = class(TFVCollection)
   private
     FDuplicates: Boolean;
@@ -187,8 +174,6 @@ type
     property Duplicates: Boolean read FDuplicates write FDuplicates;
   end;
 
-  TStringCollection = class;
-  PStringCollection = TStringCollection;
   TStringCollection = class(TSortedCollection)
   public
     function Compare(Key1, Key2: Pointer): Integer; override;

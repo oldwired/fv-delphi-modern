@@ -18,7 +18,6 @@ type
 
   { Forward declaration for callback type }
   TCalendarView = class;
-  PCalendarView = TCalendarView;
 
   { Callback for date selection events }
   TCalendarDateEvent = procedure(Calendar: TCalendarView) of object;
@@ -106,7 +105,6 @@ type
     property Selection: Integer read FSelection write FSelection;
     property EndState: Word read FEndState write FEndState;
   end;
-  PCalendarMenu = TCalendarMenu;
 
 const
   { Use same palette as menus: indices 2,3,4,5,6,7 from app palette }

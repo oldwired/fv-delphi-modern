@@ -59,9 +59,6 @@ type
     Items: PStatusItem;
   end;
 
-  TMenuView = class;
-  PMenuView = TMenuView;
-
   TMenuView = class(TView)
     ParentMenu: TMenuView;
     Menu: PMenu;
@@ -83,9 +80,6 @@ type
     procedure GetItemRectX(Item: PMenuItem; var R: TRect); virtual;
   end;
 
-  TMenuBar = class;
-  PMenuBar = TMenuBar;
-
   TMenuBar = class(TMenuView)
     constructor Create(var Bounds: TRect; AMenu: PMenu); reintroduce; virtual;
     destructor Destroy; override;
@@ -94,9 +88,6 @@ type
     procedure GetItemRectX(Item: PMenuItem; var R: TRect); override;
   end;
 
-  TMenuBox = class;
-  PMenuBox = TMenuBox;
-
   TMenuBox = class(TMenuView)
     constructor Create(var Bounds: TRect; AMenu: PMenu; AParentMenu: TMenuView); reintroduce; virtual;
     procedure Draw; override;
@@ -104,17 +95,11 @@ type
     procedure GetItemRectX(Item: PMenuItem; var R: TRect); override;
   end;
 
-  TMenuPopup = class;
-  PMenuPopup = TMenuPopup;
-
   TMenuPopup = class(TMenuBox)
     constructor Create(var Bounds: TRect; AMenu: PMenu); reintroduce; virtual;
     destructor Destroy; override;
     procedure HandleEvent(var Event: TEvent); override;
   end;
-
-  TStatusLine = class;
-  PStatusLine = TStatusLine;
 
   TStatusLine = class(TView)
     Items: PStatusItem;

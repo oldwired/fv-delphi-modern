@@ -40,13 +40,6 @@ type
   TColorItemList = class;
   TColorDialog = class;
 
-  PColorSelector = TColorSelector;
-  PMonoSelector = TMonoSelector;
-  PColorDisplay = TColorDisplay;
-  PColorGroupList = TColorGroupList;
-  PColorItemList = TColorItemList;
-  PColorDialog = TColorDialog;
-
   { TColorItem - Record for individual color settings }
   TColorItem = record
     Name: Objects.PString;

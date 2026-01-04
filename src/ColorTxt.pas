@@ -40,7 +40,6 @@ type
     procedure Store(var S: TFVStream);
     property Attr: Byte read FAttr write FAttr;
   end;
-  PColoredText = TColoredText;
 
 const
   RColoredText: TStreamRec = (

@@ -34,7 +34,6 @@ type
     procedure Draw; override;
     procedure HandleEvent(var Event: TEvent); override;
   end;
-  PTable = TTable;
 
 {---------------------------------------------------------------------------}
 {                  TREPORT OBJECT - View with details of current AnsiChar       }
@@ -49,7 +48,6 @@ type
     procedure Store(var S: TFVStream);
     property ASCIIChar: LongInt read FASCIIChar write FASCIIChar;
   end;
-  PReport = TReport;
 
 {---------------------------------------------------------------------------}
 {                  TASCIIChart OBJECT - the complete AsciiChar window       }
@@ -67,7 +65,6 @@ type
     property Report: TReport read FReport;
     property Table: TTable read FTable;
   end;
-  PASCIIChart = TASCIIChart;
 
 {---------------------------------------------------------------------------}
 { AsciiTableCommandBase                                                     }

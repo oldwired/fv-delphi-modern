@@ -68,7 +68,6 @@ type
     property ActiveDef: SmallInt read FActiveDef write FActiveDef;
     property DefCount: Word read FDefCount write FDefCount;
   end;
-  PTab = TTab;
 
 function NewTabItem(AView: TView; ANext: PTabItem): PTabItem;
 procedure DisposeTabItem(P: PTabItem);

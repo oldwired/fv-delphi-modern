@@ -63,8 +63,8 @@ var
   ExceptionLogOpen: Boolean = False;
   IdleCounter: Integer = 0;
   LastSecond: Word = 65535;
-  ClockView: PClockView = nil;
-  HeapView: PHeapView = nil;
+  ClockView: TClockView = nil;
+  HeapView: THeapView = nil;
 
 procedure LogException(const Context: string; E: Exception);
 begin
@@ -86,15 +86,13 @@ type
   TMyWindow = class;
   TTabTestDialog = class;
 
-  PMyStatusLine = TMyStatusLine;
   TMyStatusLine = class(TStatusLine)
     function Hint(AHelpCtx: Word): ShortString; override;
   end;
 
-  PMyApp = TMyApp;
   TMyApp = class(TApplication)
   private
-    FCalendarDateLabel: PStaticText;  { Reference for calendar demo }
+    FCalendarDateLabel: TStaticText;  { Reference for calendar demo }
   public
     constructor Create; reintroduce; virtual;
     procedure InitMenuBar; override;
@@ -124,47 +122,43 @@ type
     procedure TestEditorClipboard;
     procedure TestCalendar;
     procedure TestCalendarBroadcast;
-    procedure OnCalendarDateSelect(Calendar: PCalendarView);
-    property CalendarDateLabel: PStaticText read FCalendarDateLabel write FCalendarDateLabel;
+    procedure OnCalendarDateSelect(Calendar: TCalendarView);
+    property CalendarDateLabel: TStaticText read FCalendarDateLabel write FCalendarDateLabel;
   end;
 
   { Custom window for calendar that handles broadcast }
-  PCalendarWindow = TCalendarWindow;
   TCalendarWindow = class(TWindow)
   private
-    FDateLabel: PStaticText;
+    FDateLabel: TStaticText;
   public
     constructor Create(var Bounds: TRect); reintroduce; virtual;
     procedure HandleEvent(var Event: TEvent); override;
-    property DateLabel: PStaticText read FDateLabel write FDateLabel;
+    property DateLabel: TStaticText read FDateLabel write FDateLabel;
   end;
 
   { Custom scroller that displays numbered lines }
-  PTextScroller = TTextScroller;
   TTextScroller = class(TScroller)
   public
-    constructor Create(var Bounds: TRect; AHScrollBar, AVScrollBar: PScrollBar); reintroduce; virtual;
+    constructor Create(var Bounds: TRect; AHScrollBar, AVScrollBar: TScrollBar); reintroduce; virtual;
     procedure Draw; override;
   end;
 
-  PMyWindow = TMyWindow;
   TMyWindow = class(TWindow)
   public
     constructor Create(var Bounds: TRect; ATitle: ShortString; ANumber: Integer); reintroduce; virtual;
   end;
 
   { Custom dialog for testing dynamic tab add/remove }
-  PTabTestDialog = TTabTestDialog;
   TTabTestDialog = class(TDialog)
   private
-    FTabCtrl: PTab;
+    FTabCtrl: TTab;
     FTabCounter: Integer;
   public
     constructor Create(var Bounds: TRect; ATitle: ShortString); reintroduce; virtual;
     procedure HandleEvent(var Event: TEvent); override;
     procedure AddNewTab;
     procedure RemoveCurrentTab;
-    property TabCtrl: PTab read FTabCtrl write FTabCtrl;
+    property TabCtrl: TTab read FTabCtrl write FTabCtrl;
     property TabCounter: Integer read FTabCounter write FTabCounter;
   end;
 
@@ -187,7 +181,7 @@ end;
 constructor TCalendarWindow.Create(var Bounds: TRect);
 var
   R: TRect;
-  CalView: PCalendarView;
+  CalView: TCalendarView;
   Y, M, D: Word;
   S: ShortString;
 begin
@@ -219,7 +213,7 @@ end;
 
 procedure TCalendarWindow.HandleEvent(var Event: TEvent);
 var
-  Cal: PCalendarView;
+  Cal: TCalendarView;
   Y, M, D: Word;
   S: ShortString;
 begin
@@ -227,7 +221,7 @@ begin
 
   { Handle calendar date selection broadcast }
   if (Event.What = evBroadcast) and (Event.Command = cmCalendarDateSelected) then begin
-    Cal := PCalendarView(Event.InfoPtr);
+    Cal := TCalendarView(Event.InfoPtr);
     if (Cal <> nil) and (FDateLabel <> nil) then begin
       Cal.GetDate(Y, M, D);
       S := ShortString(Format('Selected: %d/%d/%d', [M, D, Y]));
@@ -268,7 +262,7 @@ end;
 procedure TTabTestDialog.AddNewTab;
 var
   R: TRect;
-  NewInput: PInputLine;
+  NewInput: TInputLine;
   TabDef: PTabDef;
 begin
   if FTabCtrl = nil then Exit;
@@ -297,7 +291,7 @@ begin
 end;
 
 { TTextScroller - displays 100 lines of text for scrolling test }
-constructor TTextScroller.Create(var Bounds: TRect; AHScrollBar, AVScrollBar: PScrollBar);
+constructor TTextScroller.Create(var Bounds: TRect; AHScrollBar, AVScrollBar: TScrollBar);
 begin
   inherited Create(Bounds, AHScrollBar, AVScrollBar);
   Options := Options or ofFirstClick;
@@ -492,7 +486,7 @@ end;
 procedure TMyApp.NewWindow;
 var
   R: TRect;
-  Win: PMyWindow;
+  Win: TMyWindow;
 begin
   Inc(WindowCount);
   R.Assign(0, 0, 40, 12);
@@ -505,7 +499,7 @@ procedure TMyApp.TestWindow1;
 { Window with input line, radio buttons, static text }
 var
   R: TRect;
-  Win: PWindow;
+  Win: TWindow;
 begin
   R.Assign(5, 2, 40, 16);
   Win := TWindow.Create(R, 'Test Window 1', wnNoNumber);
@@ -540,7 +534,7 @@ procedure TMyApp.TestWindow2;
 { Window with checkboxes }
 var
   R: TRect;
-  Win: PWindow;
+  Win: TWindow;
 begin
   R.Assign(10, 2, 45, 18);  { Made window taller: 16 rows }
   Win := TWindow.Create(R, 'Test Window 2', wnNoNumber);
@@ -575,10 +569,10 @@ procedure TMyApp.TestDialog;
 { Full dialog with buttons, listbox, input, checkboxes }
 var
   R: TRect;
-  Dlg: PDialog;
-  ScrollBar: PScrollBar;
-  ListBox: PListBox;
-  List: PStringCollection;
+  Dlg: TDialog;
+  ScrollBar: TScrollBar;
+  ListBox: TListBox;
+  List: TStringCollection;
 begin
   R.Assign(5, 2, 70, 22);
   Dlg := TDialog.Create(R, 'Test Dialog');
@@ -657,9 +651,9 @@ procedure TMyApp.TestScroller;
 { Window with scrollable content to test TScroller and scrollbars }
 var
   R: TRect;
-  Win: PWindow;
-  Scroller: PTextScroller;
-  HScrollBar, VScrollBar: PScrollBar;
+  Win: TWindow;
+  Scroller: TTextScroller;
+  HScrollBar, VScrollBar: TScrollBar;
 begin
   R.Assign(5, 2, 55, 20);
   Win := TWindow.Create(R, 'Scroller Test', wnNoNumber);
@@ -732,7 +726,7 @@ end;
 
 procedure TMyApp.TestFileOpen;
 var
-  Dlg: PFileDialog;
+  Dlg: TFileDialog;
   FileName: PathStr;
   C: Word;
 begin
@@ -781,7 +775,7 @@ end;
 
 procedure TMyApp.TestChDir;
 var
-  Dlg: PChDirDialog;
+  Dlg: TChDirDialog;
 begin
   Dlg := TChDirDialog.Create(cdNormal, 2);
   if Dlg <> nil then begin
@@ -794,7 +788,7 @@ procedure TMyApp.TestColoredText;
 { Window with colored static text examples }
 var
   R: TRect;
-  Win: PWindow;
+  Win: TWindow;
 begin
   R.Assign(5, 2, 50, 16);
   Win := TWindow.Create(R, 'Colored Text Test', wnNoNumber);
@@ -833,8 +827,8 @@ procedure TMyApp.TestInputLong;
 { Dialog with TInputLong for numeric input }
 var
   R: TRect;
-  Dlg: PDialog;
-  InputLine: PInputLong;
+  Dlg: TDialog;
+  InputLine: TInputLong;
   Value: LongInt;
 begin
   R.Assign(10, 4, 60, 18);
@@ -882,7 +876,7 @@ end;
 procedure TMyApp.TestAsciiChart;
 { Open ASCII Chart window }
 var
-  Chart: PASCIIChart;
+  Chart: TASCIIChart;
 begin
   Chart := TASCIIChart.Create;
   if Chart <> nil then begin
@@ -910,11 +904,11 @@ procedure TMyApp.TestTabs;
 { Test tabbed dialog with multiple tabs and dynamic add/remove }
 var
   R: TRect;
-  Dlg: PTabTestDialog;
-  Tab: PTab;
-  Input1, Input2, Input3: PInputLine;
-  Check1: PCheckBoxes;
-  Radio1: PRadioButtons;
+  Dlg: TTabTestDialog;
+  Tab: TTab;
+  Input1, Input2, Input3: TInputLine;
+  Check1: TCheckBoxes;
+  Radio1: TRadioButtons;
 begin
   R.Assign(5, 2, 65, 22);  { Made taller for extra buttons }
   Dlg := TTabTestDialog.Create(R, 'Tabbed Dialog Test');
@@ -984,12 +978,12 @@ procedure TMyApp.TestStatuses;
 { Comprehensive test for Status/Gauge views from Statuses.pas }
 var
   R: TRect;
-  Dlg: PDialog;
-  BarGauge: PBarGauge;
-  PercentGauge: PPercentGauge;
-  ArrowGaugeR, ArrowGaugeL: PArrowGauge;
-  SpinnerGauge: PSpinnerGauge;
-  UpdateBtn, ResetBtn: PButton;
+  Dlg: TDialog;
+  BarGauge: TBarGauge;
+  PercentGauge: TPercentGauge;
+  ArrowGaugeR, ArrowGaugeL: TArrowGauge;
+  SpinnerGauge: TSpinnerGauge;
+  UpdateBtn, ResetBtn: TButton;
   Event: TEvent;
   Finished: Boolean;
 begin
@@ -1123,7 +1117,7 @@ end;
 procedure TMyApp.TestColors;
 { Test color selection dialog }
 var
-  Dlg: PColorDialog;
+  Dlg: TColorDialog;
   Groups: PColorGroup;
   Pal: TPalette;
   Result: Word;
@@ -1160,10 +1154,10 @@ procedure TMyApp.TestOutline;
 { Test outline/tree view }
 var
   R: TRect;
-  Win: PWindow;
-  OutlineView: POutline;
+  Win: TWindow;
+  OutlineView: TOutline;
   Root: PNode;
-  HScrollBar, VScrollBar: PScrollBar;
+  HScrollBar, VScrollBar: TScrollBar;
 begin
   {
     Build a sample tree structure:
@@ -1287,8 +1281,8 @@ procedure TMyApp.TestCalendar;
 { Test calendar view - opens in a window so events can be handled }
 var
   R: TRect;
-  Win: PWindow;
-  CalView: PCalendarView;
+  Win: TWindow;
+  CalView: TCalendarView;
   Y, M, D: Word;
   S: string;
 begin
@@ -1332,7 +1326,7 @@ begin
   end;
 end;
 
-procedure TMyApp.OnCalendarDateSelect(Calendar: PCalendarView);
+procedure TMyApp.OnCalendarDateSelect(Calendar: TCalendarView);
 var
   Y, M, D: Word;
   S: ShortString;
@@ -1352,7 +1346,7 @@ procedure TMyApp.TestCalendarBroadcast;
 { Test calendar using broadcast message approach }
 var
   R: TRect;
-  Win: PCalendarWindow;
+  Win: TCalendarWindow;
 begin
   R.Assign(0, 0, 28, 14);
   R.Move((Desktop.Size.X - R.B.X) div 2 + 5, (Desktop.Size.Y - R.B.Y) div 2 + 2);

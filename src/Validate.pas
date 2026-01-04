@@ -45,9 +45,6 @@ type
 {***************************************************************************}
 
 type
-  TValidator = class;
-  PValidator = TValidator;
-
   TValidator = class(TFVObject)
     Status: Word;
     Options: Word;
@@ -61,9 +58,6 @@ type
     procedure Store(var S: TFVStream);
   end;
 
-  TPXPictureValidator = class;
-  PPXPictureValidator = TPXPictureValidator;
-
   TPXPictureValidator = class(TValidator)
     Pic: PString;  { Use Objects.PString for compatibility }
     constructor Create(const APic: string; AutoFill: Boolean); reintroduce; virtual;
@@ -76,9 +70,6 @@ type
     procedure Store(var S: TFVStream);
   end;
 
-  TFilterValidator = class;
-  PFilterValidator = TFilterValidator;
-
   TFilterValidator = class(TValidator)
     ValidChars: CharSet;
     constructor Create(AValidChars: CharSet); reintroduce; virtual;
@@ -88,9 +79,6 @@ type
     procedure Error; override;
     procedure Store(var S: TFVStream);
   end;
-
-  TRangeValidator = class;
-  PRangeValidator = TRangeValidator;
 
   TRangeValidator = class(TFilterValidator)
     Min: LongInt;
@@ -103,16 +91,10 @@ type
     procedure Store(var S: TFVStream);
   end;
 
-  TLookupValidator = class;
-  PLookupValidator = TLookupValidator;
-
   TLookupValidator = class(TValidator)
     function IsValid(const S: string): Boolean; override;
     function Lookup(const S: string): Boolean; virtual;
   end;
-
-  TStringLookupValidator = class;
-  PStringLookupValidator = TStringLookupValidator;
 
   TStringLookupValidator = class(TLookupValidator)
     Strings: TStringCollection;

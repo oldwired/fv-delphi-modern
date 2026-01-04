@@ -135,13 +135,6 @@ type
   TScrollBar = class;
   TWindow = class;
 
-  { Type aliases for compatibility - these are now class references }
-  PView = TView;
-  PGroup = TGroup;
-  PFrame = TFrame;
-  PScrollBar = TScrollBar;
-  PWindow = TWindow;
-
   SelectMode = (NormalSelect, EnterSelect, LeaveSelect);
 
   TView = class(TFVObject)
@@ -310,8 +303,6 @@ type
     procedure DrawPos(Pos: Integer);
   end;
 
-  TScroller = class;
-  PScroller = TScroller;
   TScroller = class(TView)
   public
     Delta: TPoint;
@@ -332,8 +323,6 @@ type
     procedure CheckDraw;
   end;
 
-  TListViewer = class;
-  PListViewer = TListViewer;
   TListViewer = class(TView)
   public
     NumCols: Integer;

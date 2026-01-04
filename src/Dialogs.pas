@@ -71,9 +71,6 @@ type
 {***************************************************************************}
 
 type
-  TInputLine = class;
-  PInputLine = TInputLine;
-
   TInputLine = class(TView)
     MaxLen: Integer;
     CurPos: Integer;
@@ -100,9 +97,6 @@ type
     function ScreenCurPos: Integer;
   end;
 
-  TButton = class;
-  PButton = TButton;
-
   TButton = class(TView)
     AmDefault: Boolean;
     Flags: Byte;
@@ -120,9 +114,6 @@ type
   private
     DownFlag: Boolean;
   end;
-
-  TCluster = class;
-  PCluster = TCluster;
 
   TCluster = class(TView)
     Id: Integer;
@@ -154,9 +145,6 @@ type
     function Column(Item: Integer): Integer;
   end;
 
-  TRadioButtons = class;
-  PRadioButtons = TRadioButtons;
-
   TRadioButtons = class(TCluster)
     function Mark(Item: Integer): Boolean; override;
     procedure Draw; override;
@@ -165,17 +153,11 @@ type
     procedure SetData(var Rec); override;
   end;
 
-  TCheckBoxes = class;
-  PCheckBoxes = TCheckBoxes;
-
   TCheckBoxes = class(TCluster)
     function Mark(Item: Integer): Boolean; override;
     procedure Draw; override;
     procedure Press(Item: Integer); override;
   end;
-
-  TListBox = class;
-  PListBox = TListBox;
 
   TListBox = class(TListViewer)
     List: TFVCollection;
@@ -187,9 +169,6 @@ type
     procedure SetData(var Rec); override;
   end;
 
-  TStaticText = class;
-  PStaticText = TStaticText;
-
   TStaticText = class(TView)
     Text: PString;
     constructor Create(var Bounds: TRect; const AText: ShortString); reintroduce; virtual;
@@ -200,9 +179,6 @@ type
     procedure GetText(var S: ShortString); virtual;
     procedure Store(var S: TFVStream);
   end;
-
-  TParamText = class;
-  PParamText = TParamText;
 
   TParamText = class(TStaticText)
     ParamCount: SmallInt;
@@ -216,9 +192,6 @@ type
     procedure GetText(var S: ShortString); override;
   end;
 
-  TLabel = class;
-  PLabel = TLabel;
-
   TLabel = class(TStaticText)
     Light: Boolean;
     Link: TView;
@@ -227,9 +200,6 @@ type
     procedure Draw; override;
     procedure HandleEvent(var Event: TEvent); override;
   end;
-
-  TDialog = class;
-  PDialog = TDialog;
 
   TDialog = class(TWindow)
     constructor Create(var Bounds: TRect; ATitle: TTitleStr); reintroduce; virtual;
@@ -249,9 +219,6 @@ type
   end;
 
   { THistoryViewer - displays history list }
-  THistoryViewer = class;
-  PHistoryViewer = THistoryViewer;
-
   THistoryViewer = class(TListViewer)
     HistoryId: Word;
     constructor Create(var Bounds: TRect; AHScrollBar, AVScrollBar: TScrollBar;
@@ -263,9 +230,6 @@ type
   end;
 
   { THistoryWindow - popup window for history selection }
-  THistoryWindow = class;
-  PHistoryWindow = THistoryWindow;
-
   THistoryWindow = class(TWindow)
     Viewer: TListViewer;
     constructor Create(var Bounds: TRect; AHistoryId: Word); reintroduce; virtual;
@@ -275,9 +239,6 @@ type
   end;
 
   { THistory - history dropdown button for input lines }
-  THistory = class;
-  PHistory = THistory;
-
   THistory = class(TView)
     HistoryId: Word;
     Link: TInputLine;
