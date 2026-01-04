@@ -1431,7 +1431,7 @@ begin
   Inc(WindowCount);
   R.Assign(3, 2, 72, 22);
   R.Move((WindowCount mod 4) * 2, (WindowCount mod 4));
-  Win := TEditWindow.Create(R, ShortString(TestFileName), WindowCount);
+  Win := TEditWindow.Create(R, TestFileName, WindowCount);
   if Win <> nil then begin
     Desktop.Insert(Win);
 
