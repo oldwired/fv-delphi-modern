@@ -16,6 +16,7 @@ unit TimedDlg;
 interface
 
 uses
+  System.SysUtils,
   Objects, FVConsts, FVCommon, Dialogs, Drivers, Views;
 
 type
@@ -179,7 +180,7 @@ begin
     TextR.Assign(3, 2, Size.X - 2, Size.Y - 5);
   end;
   Result := MessageBoxRectDlg(Dlg, TextR, Msg, Params, AOptions);
-  Dlg.Free;
+  FreeAndNil(Dlg);
 end;
 
 procedure RegisterTimedDialog;

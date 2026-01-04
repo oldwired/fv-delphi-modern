@@ -707,11 +707,7 @@ end;
 destructor TFileList.Destroy;
 begin
   SetState(sfVisible, False);
-  if List <> nil then
-  begin
-    List.Free;
-    List := nil;
-  end;
+  FreeAndNil(List);
   inherited Destroy;
 end;
 
@@ -1119,7 +1115,7 @@ begin
         Link.SelectAll(True);
         Link.DrawView;
       end;
-      HistoryWindow.Free;
+      FreeAndNil(HistoryWindow);
     end;
     ClearEvent(Event);
   end
@@ -1530,11 +1526,7 @@ end;
 destructor TDirListBox.Destroy;
 begin
   SetState(sfVisible, False);
-  if List <> nil then
-  begin
-    List.Free;
-    List := nil;
-  end;
+  FreeAndNil(List);
   inherited Destroy;
 end;
 

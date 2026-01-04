@@ -227,7 +227,7 @@ begin
     if (Action = DoSelect) or ((Action = DoNothing) and AutoSelect) then if Current <> nil then with Current^ do if Name <> nil then
       if Command = 0 then begin if E.What and (evMouseDown + evMouseMove) <> 0 then PutEvent(E);
         GetItemRectX(Current, R); R.A.X := R.A.X + Origin.X; R.A.Y := R.B.Y + Origin.Y; R.B.X := Owner.Size.X; R.B.Y := Owner.Size.Y;
-        Target := TopMenu.NewSubView(R, SubMenu, Self); Res := Owner.ExecView(Target); Target.Free;
+        Target := TopMenu.NewSubView(R, SubMenu, Self); Res := Owner.ExecView(Target); FreeAndNil(Target);
       end else if Action = DoSelect then Res := Command;
     if (Res <> 0) and CommandEnabled(Res) then begin Action := DoReturn; ClearEvent(E); end else Res := 0;
   until Action = DoReturn;
@@ -431,7 +431,7 @@ function NewItem(Name, Param: TMenuStr; KeyCode: Word; Command: Word; AHelpCtx: 
 var P: PMenuItem; R: TRect; T: TView;
 begin if (Name <> '') and (Command <> 0) then begin New(P); FillChar(P^, SizeOf(TMenuItem), 0);
   if P <> nil then begin P.Next := Next; P.Name := NewStr(Name); P.Command := Command;
-    R.Assign(1, 1, 10, 10); T := TView.Create(R); if T <> nil then begin P.Disabled := not T.CommandEnabled(Command); T.Free; end else P.Disabled := True;
+    R.Assign(1, 1, 10, 10); T := TView.Create(R); if T <> nil then begin P.Disabled := not T.CommandEnabled(Command); FreeAndNil(T); end else P.Disabled := True;
     P.KeyCode := KeyCode; P.HelpCtx := AHelpCtx; P.Param := NewStr(Param); end;
   NewItem := P; end else NewItem := Next; end;
 

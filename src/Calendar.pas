@@ -453,7 +453,7 @@ begin
       DrawView;
       SelectDate;
     end;
-    Menu.Free;
+    FreeAndNil(Menu);
   end;
 end;
 
@@ -497,7 +497,7 @@ begin
       DrawView;
       SelectDate;
     end;
-    Menu.Free;
+    FreeAndNil(Menu);
   end;
 end;
 

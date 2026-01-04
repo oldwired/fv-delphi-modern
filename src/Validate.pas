@@ -392,7 +392,7 @@ end;
 
 procedure TStringLookupValidator.NewStringList(AStrings: TStringCollection);
 begin
-  if Strings <> nil then Strings.Free;
+  FreeAndNil(Strings);
   Strings := AStrings;
 end;
 

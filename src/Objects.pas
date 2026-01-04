@@ -710,7 +710,8 @@ end;
 
 procedure TFVCollection.FreeItem(Item: Pointer);
 begin
-  if Item <> nil then
+  { Note: Assumes Item is a TFVObject descendant. Crashes if not. }
+  if (Item <> nil) and (TObject(Item) is TFVObject) then
     TFVObject(Item).Free;
 end;
 
@@ -727,6 +728,7 @@ procedure TFVCollection.ForEach(Action: TCallbackProcParam);
 var
   I: Integer;
 begin
+  if not Assigned(Action) then Exit;
   for I := 0 to FCount - 1 do
     Action(FItems^[I]);
 end;

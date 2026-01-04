@@ -1354,7 +1354,7 @@ begin
     while P <> nil do begin
       T := P.Next;
       P.Owner := nil;  { Prevent TView.Destroy from calling Delete }
-      P.Free;
+      FreeAndNil(P);
       P := T;
     end;
   end;

@@ -645,7 +645,7 @@ begin
     C := Desktop.ExecView(P);
     if (C <> cmCancel) and (Data <> nil) then
       P.GetData(Data^);
-    P.Free;
+    FreeAndNil(P);
     Result := C;
   end;
 end;

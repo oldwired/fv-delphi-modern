@@ -347,7 +347,7 @@ end;
 destructor TInputLine.Destroy;
 begin
   if Data <> nil then FreeMem(Data, MaxLen + 1);
-  if Validator <> nil then Validator.Free;
+  FreeAndNil(Validator);
   inherited Destroy;
 end;
 
@@ -458,7 +458,7 @@ end;
 
 procedure TInputLine.SetValidator(AValid: TValidator);
 begin
-  if Validator <> nil then Validator.Free;
+  FreeAndNil(Validator);
   Validator := AValid;
 end;
 
@@ -874,7 +874,7 @@ end;
 
 destructor TCluster.Destroy;
 begin
-  Strings.Free;
+  FreeAndNil(Strings);
   inherited Destroy;
 end;
 
@@ -1174,8 +1174,7 @@ end;
 
 procedure TListBox.NewList(AList: TFVCollection);
 begin
-  if List <> nil then
-    List.Free;
+  FreeAndNil(List);
   List := AList;
   if AList <> nil then
     SetRange(AList.Count)
@@ -1509,7 +1508,7 @@ procedure TDialog.FreeSubView(ASubView: TView);
 begin
   if IsSubView(ASubView) then begin
     Delete(ASubView);
-    ASubView.Free;
+    FreeAndNil(ASubView);
     DrawView;
   end;
 end;
@@ -1523,7 +1522,7 @@ begin
     P := First;
     if P <> nil then begin
       Delete(P);
-      P.Free;
+      FreeAndNil(P);
     end;
   until P = nil;
   DrawView;
@@ -1757,7 +1756,7 @@ begin
         Link.SelectAll(True);
         Link.DrawView;
       end;
-      HistoryWindow.Free;
+      FreeAndNil(HistoryWindow);
     end;
     ClearEvent(Event);
   end else if Event.What = evBroadcast then begin
