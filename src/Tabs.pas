@@ -68,7 +68,6 @@ type
     property ActiveDef: SmallInt read FActiveDef write FActiveDef;
     property DefCount: Word read FDefCount write FDefCount;
   end;
-  PTab = TTab;
 
 function NewTabItem(AView: TView; ANext: PTabItem): PTabItem;
 procedure DisposeTabItem(P: PTabItem);
@@ -378,8 +377,7 @@ begin
     Item := ToRemove^.Items;
     while Item <> nil do begin
       NextItem := Item^.Next;
-      if Item^.View <> nil then
-        Item^.View.Free;
+      FreeAndNil(Item^.View);
       Dispose(Item);
       Item := NextItem;
     end;
@@ -858,8 +856,7 @@ begin
     while PI <> nil do
     begin
       NextPI := PI^.Next;
-      if PI^.View <> nil then
-        PI^.View.Free;
+      FreeAndNil(PI^.View);
       Dispose(PI);
       PI := NextPI;
     end;
@@ -886,8 +883,7 @@ procedure DisposeTabItem(P: PTabItem);
 begin
   if P <> nil then
   begin
-    if P^.View <> nil then
-      P^.View.Free;
+    FreeAndNil(P^.View);
     Dispose(P);
   end;
 end;

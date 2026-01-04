@@ -57,9 +57,6 @@ const
                    #$0F#$0F#$07#$70#$07#$07#$70#$07#$07#$07#$70#$0F#$07#$07#$00#$00;
 
 type
-  TBackground = class;
-  PBackground = TBackground;
-
   TBackground = class(TView)
     Pattern: AnsiChar;
     constructor Create(var Bounds: TRect; APattern: AnsiChar); reintroduce; virtual;
@@ -68,9 +65,6 @@ type
     procedure Draw; override;
     procedure Store(var S: TFVStream);
   end;
-
-  TDesktop = class;
-  PDesktop = TDesktop;
 
   TDesktop = class(TGroup)
     Background: TBackground;
@@ -90,9 +84,6 @@ type
     procedure CloseAll; virtual;
   end;
 
-  TProgram = class;
-  PProgram = TProgram;
-
   TProgram = class(TGroup)
     constructor Create; reintroduce; virtual;
     destructor Destroy; override;
@@ -110,9 +101,6 @@ type
     procedure Run; virtual;
     procedure SetScreenMode(Mode: Word); virtual;
   end;
-
-  TApplication = class;
-  PApplication = TApplication;
 
   TApplication = class(TProgram)
     constructor Create; override;
@@ -645,7 +633,7 @@ begin
     C := Desktop.ExecView(P);
     if (C <> cmCancel) and (Data <> nil) then
       P.GetData(Data^);
-    P.Free;
+    FreeAndNil(P);
     Result := C;
   end;
 end;

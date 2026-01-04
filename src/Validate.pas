@@ -12,7 +12,7 @@ unit Validate;
 interface
 
 uses
-  System.SysUtils,
+  System.SysUtils, System.Classes,
   FVCommon, Objects, fvconsts;
 
 {***************************************************************************}
@@ -45,13 +45,10 @@ type
 {***************************************************************************}
 
 type
-  TValidator = class;
-  PValidator = TValidator;
-
-  TValidator = class(TFVObject)
+  TValidator = class(TObject)
     Status: Word;
     Options: Word;
-    constructor Create; override;
+    constructor Create; virtual;
     constructor Load(var S: TFVStream);
     function Valid(const S: string): Boolean;
     function IsValid(const S: string): Boolean; virtual;
@@ -60,9 +57,6 @@ type
     procedure Error; virtual;
     procedure Store(var S: TFVStream);
   end;
-
-  TPXPictureValidator = class;
-  PPXPictureValidator = TPXPictureValidator;
 
   TPXPictureValidator = class(TValidator)
     Pic: PString;  { Use Objects.PString for compatibility }
@@ -76,9 +70,6 @@ type
     procedure Store(var S: TFVStream);
   end;
 
-  TFilterValidator = class;
-  PFilterValidator = TFilterValidator;
-
   TFilterValidator = class(TValidator)
     ValidChars: CharSet;
     constructor Create(AValidChars: CharSet); reintroduce; virtual;
@@ -88,9 +79,6 @@ type
     procedure Error; override;
     procedure Store(var S: TFVStream);
   end;
-
-  TRangeValidator = class;
-  PRangeValidator = TRangeValidator;
 
   TRangeValidator = class(TFilterValidator)
     Min: LongInt;
@@ -103,25 +91,19 @@ type
     procedure Store(var S: TFVStream);
   end;
 
-  TLookupValidator = class;
-  PLookupValidator = TLookupValidator;
-
   TLookupValidator = class(TValidator)
     function IsValid(const S: string): Boolean; override;
     function Lookup(const S: string): Boolean; virtual;
   end;
 
-  TStringLookupValidator = class;
-  PStringLookupValidator = TStringLookupValidator;
-
   TStringLookupValidator = class(TLookupValidator)
-    Strings: TStringCollection;
-    constructor Create(AStrings: TStringCollection); reintroduce; virtual;
+    Strings: TStringList;
+    constructor Create(AStrings: TStringList); reintroduce; virtual;
     constructor Load(var S: TFVStream);
     destructor Destroy; override;
     function Lookup(const S: string): Boolean; override;
     procedure Error; override;
-    procedure NewStringList(AStrings: TStringCollection);
+    procedure NewStringList(AStrings: TStringList);
     procedure Store(var S: TFVStream);
   end;
 
@@ -357,7 +339,7 @@ end;
 {                  TStringLookupValidator Implementation                    }
 {***************************************************************************}
 
-constructor TStringLookupValidator.Create(AStrings: TStringCollection);
+constructor TStringLookupValidator.Create(AStrings: TStringList);
 begin
   inherited Create;
   Strings := AStrings;
@@ -366,7 +348,8 @@ end;
 constructor TStringLookupValidator.Load(var S: TFVStream);
 begin
   inherited Load(S);
-  Strings := TStringCollection(S.Get);
+  { Legacy stream loading - create empty list for now }
+  Strings := TStringList.Create;
 end;
 
 destructor TStringLookupValidator.Destroy;
@@ -376,13 +359,10 @@ begin
 end;
 
 function TStringLookupValidator.Lookup(const S: string): Boolean;
-var
-  I: Integer;
 begin
   Result := False;
-  if Strings <> nil then begin
-    Result := Strings.Search(@S, I);
-  end;
+  if Strings <> nil then
+    Result := Strings.IndexOf(S) >= 0;
 end;
 
 procedure TStringLookupValidator.Error;
@@ -390,16 +370,16 @@ begin
   { Would show message box in full implementation }
 end;
 
-procedure TStringLookupValidator.NewStringList(AStrings: TStringCollection);
+procedure TStringLookupValidator.NewStringList(AStrings: TStringList);
 begin
-  if Strings <> nil then Strings.Free;
+  FreeAndNil(Strings);
   Strings := AStrings;
 end;
 
 procedure TStringLookupValidator.Store(var S: TFVStream);
 begin
   inherited Store(S);
-  S.Put(Strings);
+  { Legacy stream storage - placeholder }
 end;
 
 {***************************************************************************}

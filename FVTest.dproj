@@ -82,6 +82,8 @@
         <DelphiCompile Include="$(MainSource)">
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
+        <DCCReference Include="src\FVInterfaces.pas"/>
+        <DCCReference Include="src\FVSerialization.pas"/>
         <DCCReference Include="src\Objects.pas"/>
         <DCCReference Include="src\Video.pas"/>
         <DCCReference Include="src\Drivers.pas"/>

@@ -29,9 +29,6 @@ type
   TOutlineViewer = class;
   TOutline = class;
 
-  POutlineViewer = TOutlineViewer;
-  POutline = TOutline;
-
   { TNode - Tree node record }
   TNode = record
     Next: PNode;
@@ -364,41 +361,29 @@ procedure TOutlineViewer.Draw;
 var
   DC: TDrawContext;
   IC: TIterContext;
-  BlankStart, BlankCount, I: Integer;
+  I: Integer;
+  ClearColor: Byte;
 begin
   DC.Viewer := Self;
-  DC.CNormal := GetColor(4);
+  { Use same color for normal and collapsed items to avoid black line issue }
+  DC.CNormal := GetColor(1);
   DC.CNormalX := GetColor(1);
   DC.CFocus := GetColor(2);
   DC.CSelect := GetColor(3);
   DC.MaxPos := -1;
 
-  { Initialize draw buffer to avoid uninitialized memory }
-  FillChar(DC.B, SizeOf(DC.B), 0);
+  { Clear entire view area first to prevent artifacts }
+  ClearColor := Lo(GetColor(1));
+  MoveChar(DC.B, ' ', ClearColor, Size.X);
+  for I := 0 to Size.Y - 1 do
+    WriteLine(0, I, Size.X, 1, DC.B);
 
   IC.UserData := @DC;
   IC.Found := False;
   IC.ResultNode := nil;
 
+  { Draw all visible items on top of cleared background }
   ForEach(DrawItemCallback, @IC);
-
-  { Calculate blank lines to fill after last drawn item }
-  if DC.MaxPos >= Delta.Y then begin
-    { Some items were drawn - blank starts after last item }
-    BlankStart := DC.MaxPos - Delta.Y + 1;
-    BlankCount := Size.Y - BlankStart;
-  end else begin
-    { No items visible in current scroll position - clear entire area }
-    BlankStart := 0;
-    BlankCount := Size.Y;
-  end;
-
-  if BlankCount > 0 then begin
-    MoveChar(DC.B, ' ', DC.CNormal, Size.X);
-    { Must write one line at a time - TDrawBuffer only holds one row }
-    for I := 0 to BlankCount - 1 do
-      WriteLine(0, BlankStart + I, Size.X, 1, DC.B);
-  end;
 end;
 
 procedure TOutlineViewer.ExpandAll(Node: Pointer);
@@ -716,6 +701,8 @@ procedure TOutlineViewer.Update;
 var
   UC: TUpdateContext;
   IC: TIterContext;
+  NewFoc: Sw_Integer;
+  NewDeltaY: Sw_Integer;
 begin
   UC.Viewer := Self;
   UC.Count := 0;
@@ -727,7 +714,33 @@ begin
 
   ForEach(UpdateCallback, @IC);
   SetLimit(UC.MaxWidth, UC.Count);
-  SetFocus(FFoc);
+
+  { Clamp focus to valid range }
+  NewFoc := FFoc;
+  if NewFoc >= UC.Count then
+    NewFoc := UC.Count - 1;
+  if NewFoc < 0 then
+    NewFoc := 0;
+  FFoc := NewFoc;
+
+  { Adjust scroll position if content shrunk }
+  NewDeltaY := Delta.Y;
+  if NewDeltaY + Size.Y > UC.Count then
+  begin
+    NewDeltaY := UC.Count - Size.Y;
+    if NewDeltaY < 0 then
+      NewDeltaY := 0;
+  end;
+
+  { Scroll to adjusted position if needed }
+  if NewDeltaY <> Delta.Y then
+    ScrollTo(Delta.X, NewDeltaY);
+
+  { Force complete redraw of owner to prevent buffering artifacts }
+  if (Owner <> nil) and (Owner is TGroup) then
+    TGroup(Owner).ReDraw
+  else
+    DrawView;
 end;
 
 {****************************************************************************}

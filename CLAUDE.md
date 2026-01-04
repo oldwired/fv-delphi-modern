@@ -4,9 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a port of the Free Vision (FV) text-mode UI framework from Free Pascal to modern Delphi (10.x, 11.x, 12.x). Free Vision is a classic console-based GUI toolkit originally from Turbo Pascal.
+This is a port of the Free Vision (FV) text-mode UI framework from Free Pascal to modern Delphi (12+). Free Vision is a classic console-based GUI toolkit originally from Turbo Pascal.
 
-**Status**: The codebase has been converted from legacy Turbo Pascal `OBJECT` syntax to modern Delphi `CLASS` syntax.
+**Status**: Fully modernized with:
+- Delphi `CLASS` syntax (converted from legacy `OBJECT` syntax)
+- Interface-based design (`IFVDrawable`, `IFVEventHandler`, `IFVDataAware`, `ISerializable`)
+- RTL generics (`TObjectList<T>`, `TStringList`) instead of custom collections
+- JSON serialization infrastructure
 
 ## CRITICAL: OBJECT to CLASS Conversion Rules
 
@@ -74,7 +78,7 @@ The original sourcecode for free vision is in C:\temp\fpc\fpc\packages\fv refere
 
 Use the MCP build tool with **Win32** platform and **Debug** configuration:
 
-`mcp__dbuildmcp__msbuild with projectfile="C:/projects/fv-delphi/FVTest.dproj", platform="Win32", config="Debug"`
+`mcp__dbuildmcp__msbuild with projectfile="C:/projects/fv-delphi-modern/FVTest.dproj", platform="Win32", config="Debug"`
 
 **Important**: Always use Win32/Debug during development. The project targets 32-bit Windows.
 
@@ -91,19 +95,30 @@ The test app exercises all ported widgets through menu options (Test menu). Debu
 
 ## Architecture
 
+See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed diagrams.
+
 ### Core Layering (bottom to top)
 1. **FVCommon.pas** - Platform types (`Sw_Word`, `Sw_String = ShortString`, `PString`)
-2. **Objects.pas** - Base object system, streams, collections (`TObject`, `TStream`, `TCollection`)
-3. **Video.pas** - Console output via Windows Console API
-4. **Drivers.pas** - Input handling (keyboard, mouse, event queue)
-5. **Views.pas** - View hierarchy (`TView`, `TGroup`, `TWindow`, `TDesktop`)
-6. **Menus.pas** - Menu system (`TMenuBar`, `TMenuBox`, `TStatusLine`)
-7. **App.pas** - Application framework (`TProgram`, `TApplication`)
-8. **Dialogs.pas** - Dialog controls (`TDialog`, `TButton`, `TInputLine`, `TCheckBoxes`, etc.)
+2. **FVInterfaces.pas** - Interface definitions (`IFVDrawable`, `IFVEventHandler`, `IFVDataAware`, `ISerializable`)
+3. **FVSerialization.pas** - JSON serialization registry and helpers
+4. **Objects.pas** - Stream classes (`TFVStream`, `TDosStream`, `TBufStream`), string utilities
+5. **Video.pas** - Console output via Windows Console API
+6. **Drivers.pas** - Input handling (keyboard, mouse, event queue)
+7. **Views.pas** - View hierarchy (`TView`, `TGroup`, `TWindow`, `TDesktop`)
+8. **Menus.pas** - Menu system (`TMenuBar`, `TMenuBox`, `TStatusLine`)
+9. **App.pas** - Application framework (`TProgram`, `TApplication`)
+10. **Dialogs.pas** - Dialog controls (`TDialog`, `TButton`, `TInputLine`, `TListBox`, `TStringListBox`, etc.)
+
+### Interface System
+All views implement these interfaces (with reference counting disabled):
+- `IFVDrawable` - `Draw`, `DrawView`
+- `IFVEventHandler` - `ClearEvent`
+- `IFVDataAware` - `GetData`, `SetData`, `Valid`, `DataSize`
+- `ISerializable` - `ToJSON`, `FromJSON`, `GetTypeId`
 
 ### Extended Components
 - **MsgBox.pas, StdDlg.pas** - Standard dialogs (message boxes, file dialogs)
-- **Validate.pas** - Input validators
+- **Validate.pas** - Input validators (`TValidator` hierarchy)
 - **Gadgets.pas** - `TClockView`, `THeapView`
 - **Tabs.pas** - Tab control
 - **TimedDlg.pas** - Auto-closing dialogs
@@ -133,15 +148,22 @@ The test app exercises all ported widgets through menu options (Test menu). Debu
 - Use `TTypeName.Create(...)` for object creation
 - Call `P.Free` or `FreeAndNil(P)` for cleanup
 - Pointer type aliases like `PView = TView` are used for compatibility (not actual pointers)
+- Interface references don't affect lifetime (`_AddRef`/`_Release` return -1)
+
+### Collections
+- Use `TStringList` for string content (e.g., `TStringListBox.Strings`)
+- Use `TObjectList<TObject>` for generic objects (e.g., `TListBox.List`)
+- File/directory collections extend `TObjectList<TObject>` with manual memory management
 
 ## Porting Status
 
-See `PORTING_STATUS.txt` for detailed status. Core functionality is complete. Recently ported:
-- **Editors.pas** - Text editor (compiles, needs testing)
-- **ColorSel.pas** - Color selection dialogs
-- **Outline.pas** - Tree view (with mousewheel support)
+Core port is complete. All widgets functional and tested via FVTest.exe.
+
+**Modernization phases completed:**
+1. OBJECT to CLASS syntax conversion
+2. FreeAndNil replacement, P-alias removal
+3. Interface system, RTL generics, JSON serialization infrastructure
 
 ## Known Issues
 
 - Console window resize causes visual artifacts (resize not handled)
-- Some units use FPC-specific features like `get_caller_frame` that need alternatives in Delphi

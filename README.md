@@ -1,21 +1,23 @@
 # Free Vision Modern (fv-delphi-modern)
 
-An experimental port of the Free Vision (FV) text-mode UI framework from Free Pascal to modern Delphi (13.x).
+A modernized port of the Free Vision (FV) text-mode UI framework from Free Pascal to modern Delphi (12+).
 
 Free Vision is a classic console-based GUI toolkit originally derived from Borland's Turbo Vision. This **modern variant** uses Delphi `CLASS` syntax instead of the legacy Turbo Pascal `OBJECT` syntax, providing better IDE integration, proper inheritance, and modern memory management.
 
 ## Features
 
 - **Complete TUI Framework**: Windows, dialogs, menus, status bars, buttons, input fields, and more
+- **Modern Architecture**: Interfaces (`IFVDrawable`, `ISerializable`), RTL generics (`TObjectList<T>`, `TStringList`)
 - **Text Editor**: Full-featured editor with find/replace, clipboard, undo, and file operations
 - **Standard Dialogs**: Message boxes, file open/save dialogs, color selection, ASCII table
 - **Advanced Controls**: Tab controls, outline/tree views, progress gauges, timed dialogs
 - **Input Validation**: Built-in validators for ranges, patterns, and lookups
+- **JSON Serialization**: Views implement `ISerializable` for state persistence
 - **Windows Console**: Native Windows Console API for display and input
 
 ## Requirements
 
-- Delphi 13.x
+- Delphi 12.x or later
 - Windows 32-bit or 64-bit target
 
 ## Getting Started
@@ -75,34 +77,41 @@ end.
 
 ```
 src/
-  FVCommon.pas    - Common types and definitions
-  Objects.pas     - Base object system, streams, collections
-  Video.pas       - Console output abstraction
-  Drivers.pas     - Keyboard and mouse input handling
-  Views.pas       - View hierarchy (TView, TGroup, TWindow, etc.)
-  Menus.pas       - Menu system (TMenuBar, TMenuBox, TStatusLine)
-  App.pas         - Application framework (TApplication)
-  Dialogs.pas     - Dialog controls (TDialog, TButton, TInputLine, etc.)
-  Validate.pas    - Input validation
-  MsgBox.pas      - Message box helpers
-  StdDlg.pas      - Standard file dialogs
-  Editors.pas     - Text editor components
-  ColorSel.pas    - Color selection dialog
-  Outline.pas     - Tree/outline view
-  Tabs.pas        - Tab control
-  Statuses.pas    - Progress gauges
-  Gadgets.pas     - Clock and heap views
+  FVCommon.pas      - Platform types (Sw_Word, PString, etc.)
+  FVInterfaces.pas  - Interface definitions (IFVDrawable, ISerializable, etc.)
+  FVSerialization.pas - JSON serialization helpers
+  Objects.pas       - Stream classes, string utilities
+  Video.pas         - Console output (Windows Console API)
+  Drivers.pas       - Keyboard and mouse input handling
+  Views.pas         - View hierarchy (TView, TGroup, TWindow, etc.)
+  Menus.pas         - Menu system (TMenuBar, TMenuBox, TStatusLine)
+  App.pas           - Application framework (TApplication)
+  Dialogs.pas       - Dialog controls (TDialog, TButton, TInputLine, etc.)
+  Validate.pas      - Input validation
+  MsgBox.pas        - Message box helpers
+  StdDlg.pas        - Standard file dialogs
+  Editors.pas       - Text editor components
+  ColorSel.pas      - Color selection dialog
+  Outline.pas       - Tree/outline view
+  Tabs.pas          - Tab control
+  Statuses.pas      - Progress gauges
+  Gadgets.pas       - Clock and heap views
   ...
 ```
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed class hierarchies and diagrams.
 
 ## Porting Notes
 
 - Uses modern Delphi `CLASS` syntax with proper inheritance and `override`
+- All view classes derive directly from `TObject` (no intermediate base class)
+- Views implement interfaces: `IFVDrawable`, `IFVEventHandler`, `IFVDataAware`, `ISerializable`
+- Uses RTL generics: `TObjectList<T>`, `TStringList` (no custom collection classes)
 - `TClass.Create` / `Object.Free` instead of `New(P, Init)` / `Dispose(P, Done)`
 - Pointer types aliased for compatibility: `PView = TView`
 - `ShortString` used for FV string types (`Sw_String`, `PString`)
 - Windows Console API for video output and input
-- Range checking should be OFF on Project level
+- Range checking should be OFF at project level
 
 ## Known Limitations
 

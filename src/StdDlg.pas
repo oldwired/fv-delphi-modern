@@ -11,7 +11,8 @@ unit StdDlg;
 interface
 
 uses
-  Winapi.Windows, System.SysUtils,
+  Winapi.Windows, System.SysUtils, System.Classes, System.Generics.Collections,
+  System.Generics.Defaults,
   FVConsts, Objects, FVCommon, Drivers, Views, Dialogs, Validate;
 
 const
@@ -32,55 +33,43 @@ type
   PSearchRec = ^TSearchRec;
 
   { TFileInputLine }
-  TFileInputLine = class;
-  PFileInputLine = TFileInputLine;
-
   TFileInputLine = class(TInputLine)
     constructor Create(var Bounds: TRect; AMaxLen: Integer); override;
     procedure HandleEvent(var Event: TEvent); override;
   end;
 
-  { TFileCollection }
-  TFileCollection = class;
-  PFileCollection = TFileCollection;
-
-  TFileCollection = class(TSortedCollection)
-    function Compare(Key1, Key2: Pointer): Integer; override;
-    procedure FreeItem(Item: Pointer); override;
-    function GetItem(var S: TFVStream): Pointer; override;
-    procedure PutItem(var S: TFVStream; Item: Pointer); override;
+  { TFileCollection - type-safe sorted list of file records }
+  TFileCollection = class(TList<PSearchRec>)
+  public
+    destructor Destroy; override;
+    procedure ClearAll;
+    function Compare(Key1, Key2: PSearchRec): Integer;
+    procedure InsertSorted(Item: PSearchRec);
+    function Search(Key: PSearchRec; var Index: Integer): Boolean;
   end;
 
   { TFileValidator }
-  TFileValidator = class;
-  PFileValidator = TFileValidator;
-
   TFileValidator = class(TValidator)
   end;
 
   { TSortedListBox }
-  TSortedListBox = class;
-  PSortedListBox = TSortedListBox;
-
   TSortedListBox = class(TListBox)
     SearchPos: Byte;
     HandleDir: Boolean;
     constructor Create(var Bounds: TRect; ANumCols: Word; AScrollBar: TScrollBar); override;
     procedure HandleEvent(var Event: TEvent); override;
     function GetKey(var S: string): Pointer; virtual;
-    procedure NewList(AList: TFVCollection); override;
+    procedure NewList(AList: TObjectList<TObject>); override;
   end;
 
   { Forward declarations for TFileDialog }
   TFileDialog = class;
-  PFileDialog = TFileDialog;
   TFileHistory = class;
-  PFileHistory = TFileHistory;
   TFileList = class;
-  PFileList = TFileList;
 
   { TFileList }
   TFileList = class(TSortedListBox)
+    Files: TFileCollection;  { Type-safe file collection }
     constructor Create(var Bounds: TRect; AScrollBar: TScrollBar); reintroduce; virtual;
     destructor Destroy; override;
     function DataSize: Word; override;
@@ -94,9 +83,6 @@ type
   end;
 
   { TFileInfoPane }
-  TFileInfoPane = class;
-  PFileInfoPane = TFileInfoPane;
-
   TFileInfoPane = class(TView)
     S: TSearchRec;
     constructor Create(var Bounds: TRect); override;
@@ -146,23 +132,19 @@ type
     Directory: PString;
   end;
 
-  { TDirCollection }
-  TDirCollection = class;
-  PDirCollection = TDirCollection;
-
-  TDirCollection = class(TFVCollection)
-    function GetItem(var S: TFVStream): Pointer; override;
-    procedure FreeItem(Item: Pointer); override;
-    procedure PutItem(var S: TFVStream; Item: Pointer); override;
+  { TDirCollection - type-safe list of directory entries }
+  TDirCollection = class(TList<PDirEntry>)
+  public
+    destructor Destroy; override;
+    procedure FreeDirEntry(Item: PDirEntry);
+    procedure ClearAll;
   end;
 
   { TDirListBox }
-  TDirListBox = class;
-  PDirListBox = TDirListBox;
-
   TDirListBox = class(TListBox)
     Dir: DirStr;
     Cur: Word;
+    Dirs: TDirCollection;  { Type-safe directory collection }
     constructor Create(var Bounds: TRect; AScrollBar: TScrollBar); reintroduce; virtual;
     destructor Destroy; override;
     function GetText(Item: Integer; MaxLen: Integer): string; override;
@@ -179,9 +161,6 @@ const
 
 type
   { TChDirDialog }
-  TChDirDialog = class;
-  PChDirDialog = TChDirDialog;
-
   TChDirDialog = class(TDialog)
     DirInput: TInputLine;
     DirList: TDirListBox;
@@ -200,9 +179,6 @@ type
   end;
 
   { TEditChDirDialog }
-  TEditChDirDialog = class;
-  PEditChDirDialog = TEditChDirDialog;
-
   TEditChDirDialog = class(TChDirDialog)
     function DataSize: Word; override;
     procedure GetData(var Rec); override;
@@ -210,9 +186,6 @@ type
   end;
 
   { TDirValidator }
-  TDirValidator = class;
-  PDirValidator = TDirValidator;
-
   TDirValidator = class(TFilterValidator)
     constructor Create; reintroduce; virtual;
     function IsValid(const S: string): Boolean; override;
@@ -567,56 +540,65 @@ begin
     end;
 end;
 
-function TFileCollection.Compare(Key1, Key2: Pointer): Integer;
+destructor TFileCollection.Destroy;
 begin
-  if PSearchRec(Key1)^.Name = PSearchRec(Key2)^.Name then
+  ClearAll;
+  inherited Destroy;
+end;
+
+procedure TFileCollection.ClearAll;
+var
+  I: Integer;
+begin
+  for I := 0 to Count - 1 do
+    if Items[I] <> nil then
+      Dispose(Items[I]);
+  Clear;
+end;
+
+function TFileCollection.Compare(Key1, Key2: PSearchRec): Integer;
+begin
+  if Key1^.Name = Key2^.Name then
     Result := 0
-  else if PSearchRec(Key1)^.Name = '..' then
+  else if Key1^.Name = '..' then
     Result := 1
-  else if PSearchRec(Key2)^.Name = '..' then
+  else if Key2^.Name = '..' then
     Result := -1
-  else if (PSearchRec(Key1)^.Attr and Directory <> 0) and
-          (PSearchRec(Key2)^.Attr and Directory = 0) then
+  else if (Key1^.Attr and Directory <> 0) and
+          (Key2^.Attr and Directory = 0) then
     Result := 1
-  else if (PSearchRec(Key2)^.Attr and Directory <> 0) and
-          (PSearchRec(Key1)^.Attr and Directory = 0) then
+  else if (Key2^.Attr and Directory <> 0) and
+          (Key1^.Attr and Directory = 0) then
     Result := -1
-  else if UpperName(PSearchRec(Key1)^.Name) > UpperName(PSearchRec(Key2)^.Name) then
+  else if UpperName(Key1^.Name) > UpperName(Key2^.Name) then
     Result := 1
   else
     Result := -1;
 end;
 
-procedure TFileCollection.FreeItem(Item: Pointer);
+procedure TFileCollection.InsertSorted(Item: PSearchRec);
 begin
-  Finalize(PSearchRec(Item)^);
-  Dispose(PSearchRec(Item));
+  Add(Item);
+  Sort(TComparer<PSearchRec>.Construct(
+    function(const Left, Right: PSearchRec): Integer
+    begin
+      Result := Compare(Left, Right);
+    end));
 end;
 
-function TFileCollection.GetItem(var S: TFVStream): Pointer;
+function TFileCollection.Search(Key: PSearchRec; var Index: Integer): Boolean;
 var
-  Item: PSearchRec;
+  I: Integer;
 begin
-  New(Item);
-  Initialize(Item^);
-  S.Read(Item^.Attr, SizeOf(Item^.Attr));
-  S.Read(Item^.Time, SizeOf(Item^.Time));
-  S.Read(Item^.Size, SizeOf(Item^.Size));
-  Item^.Name := S.ReadStr^;
-  Result := Item;
-end;
-
-procedure TFileCollection.PutItem(var S: TFVStream; Item: Pointer);
-var
-  P: PSearchRec;
-  ShortName: ShortString;
-begin
-  P := PSearchRec(Item);
-  S.Write(P^.Attr, SizeOf(P^.Attr));
-  S.Write(P^.Time, SizeOf(P^.Time));
-  S.Write(P^.Size, SizeOf(P^.Size));
-  ShortName := ShortString(P^.Name);
-  S.WriteStr(@ShortName);
+  Result := False;
+  for I := 0 to Count - 1 do
+    if Compare(Items[I], Key) = 0 then
+    begin
+      Index := I;
+      Result := True;
+      Exit;
+    end;
+  Index := Count;
 end;
 
 { Pattern matching }
@@ -702,16 +684,13 @@ end;
 constructor TFileList.Create(var Bounds: TRect; AScrollBar: TScrollBar);
 begin
   inherited Create(Bounds, 2, AScrollBar);
+  Files := nil;
 end;
 
 destructor TFileList.Destroy;
 begin
   SetState(sfVisible, False);
-  if List <> nil then
-  begin
-    List.Free;
-    List := nil;
-  end;
+  FreeAndNil(Files);
   inherited Destroy;
 end;
 
@@ -723,8 +702,8 @@ end;
 procedure TFileList.FocusItem(Item: Integer);
 begin
   inherited FocusItem(Item);
-  if List.Count > 0 then
-    Message(Owner, evBroadcast, cmFileFocused, List.At(Item));
+  if (Files <> nil) and (Files.Count > 0) and (Item < Files.Count) then
+    Message(Owner, evBroadcast, cmFileFocused, Files[Item]);
 end;
 
 procedure TFileList.GetData(var Rec);
@@ -755,7 +734,12 @@ var
   S: string;
   SR: PSearchRec;
 begin
-  SR := PSearchRec(List.At(Item));
+  if (Files = nil) or (Item >= Files.Count) then
+  begin
+    Result := '';
+    Exit;
+  end;
+  SR := Files[Item];
   S := SR^.Name;
   if SR^.Attr and Directory <> 0 then
     S := S + DirSeparator;
@@ -765,8 +749,8 @@ end;
 procedure TFileList.HandleEvent(var Event: TEvent);
 var
   S: String;
-  K: Pointer;
-  Value: Sw_Integer;
+  K: PSearchRec;
+  Value: Integer;
 begin
   if (Event.What = evMouseDown) and Event.Double then
   begin
@@ -778,8 +762,8 @@ begin
   else if (Event.What = evKeyDown) and (Event.CharCode = AnsiChar('<')) then
   begin
     S := '..';
-    K := GetKey(S);
-    if TSortedCollection(List).Search(K, Value) then
+    K := PSearchRec(GetKey(S));
+    if (Files <> nil) and Files.Search(K, Value) then
       FocusItem(Value);
   end
   else
@@ -801,12 +785,12 @@ var
   Event: TEvent;
   Tmp: PathStr;
 begin
-  AFileList := TFileCollection.Create(5, 5);
+  AFileList := TFileCollection.Create;
   AWildCard := FExpand(AWildCard);
   FSplit(AWildCard, Dir, Name, Ext);
-  if Pos(ListSeparator, AWildCard) > 0 then
+  if Pos(ListSeparator, string(AWildCard)) > 0 then
   begin
-    WildName := Copy(AWildCard, Length(Dir) + 1, 255);
+    WildName := Copy(string(AWildCard), Length(Dir) + 1, 255);
     FindStr := Dir + AllFiles;
   end
   else
@@ -824,7 +808,7 @@ begin
       New(P);
       Initialize(P^);
       P^ := SR;
-      AFileList.Insert(P);
+      AFileList.InsertSorted(P);
     end;
     DosFindNext(SR);
   end;
@@ -832,7 +816,7 @@ begin
 
   { Find directories }
   Tmp := Dir + AllFiles;
-  DosFindFirst(Tmp, Directory, SR);
+  DosFindFirst(string(Tmp), Directory, SR);
   while DosError = 0 do
   begin
     if (SR.Attr and Directory <> 0) and (SR.Name <> '.') and (SR.Name <> '..') then
@@ -840,7 +824,7 @@ begin
       New(P);
       Initialize(P^);
       P^ := SR;
-      AFileList.Insert(P);
+      AFileList.InsertSorted(P);
     end;
     DosFindNext(SR);
   end;
@@ -851,7 +835,7 @@ begin
   begin
     New(P);
     Initialize(P^);
-    DosFindFirst(Tmp, Directory, SR);
+    DosFindFirst(string(Tmp), Directory, SR);
     DosFindNext(SR);
     if (DosError = 0) and (SR.Name = PrevDir) then
       P^ := SR
@@ -862,16 +846,19 @@ begin
       P^.Time := $210000;
       P^.Attr := Directory;
     end;
-    AFileList.Insert(P);
+    AFileList.InsertSorted(P);
     DosFindClose;
   end;
 
-  NewList(AFileList);
-  if List.Count > 0 then
+  { Replace old Files with new list }
+  FreeAndNil(Files);
+  Files := AFileList;
+  SetRange(Files.Count);
+  if Files.Count > 0 then
   begin
     Event.What := evBroadcast;
     Event.Command := cmFileFocused;
-    Event.InfoPtr := List.At(0);
+    Event.InfoPtr := Files[0];
     Owner.HandleEvent(Event);
   end;
 end;
@@ -1119,7 +1106,7 @@ begin
         Link.SelectAll(True);
         Link.DrawView;
       end;
-      HistoryWindow.Free;
+      FreeAndNil(HistoryWindow);
     end;
     ClearEvent(Event);
   end
@@ -1485,33 +1472,27 @@ end;
 
 { TDirCollection }
 
-function TDirCollection.GetItem(var S: TFVStream): Pointer;
-var
-  DirItem: PDirEntry;
+destructor TDirCollection.Destroy;
 begin
-  New(DirItem);
-  DirItem^.DisplayText := S.ReadStr;
-  DirItem^.Directory := S.ReadStr;
-  Result := DirItem;
+  ClearAll;
+  inherited Destroy;
 end;
 
-procedure TDirCollection.FreeItem(Item: Pointer);
-var
-  DirItem: PDirEntry;
+procedure TDirCollection.FreeDirEntry(Item: PDirEntry);
 begin
-  DirItem := PDirEntry(Item);
-  DisposeStr(DirItem^.DisplayText);
-  DisposeStr(DirItem^.Directory);
-  Dispose(DirItem);
+  if Item = nil then Exit;
+  DisposeStr(Item^.DisplayText);
+  DisposeStr(Item^.Directory);
+  Dispose(Item);
 end;
 
-procedure TDirCollection.PutItem(var S: TFVStream; Item: Pointer);
+procedure TDirCollection.ClearAll;
 var
-  DirItem: PDirEntry;
+  I: Integer;
 begin
-  DirItem := PDirEntry(Item);
-  S.WriteStr(DirItem^.DisplayText);
-  S.WriteStr(DirItem^.Directory);
+  for I := 0 to Count - 1 do
+    FreeDirEntry(Items[I]);
+  Clear;
 end;
 
 { TDirListBox }
@@ -1525,22 +1506,22 @@ begin
   DrivesS := sDrives;
   inherited Create(Bounds, 1, AScrollBar);
   Dir := '';
+  Dirs := nil;
 end;
 
 destructor TDirListBox.Destroy;
 begin
   SetState(sfVisible, False);
-  if List <> nil then
-  begin
-    List.Free;
-    List := nil;
-  end;
+  FreeAndNil(Dirs);
   inherited Destroy;
 end;
 
 function TDirListBox.GetText(Item: Integer; MaxLen: Integer): string;
 begin
-  Result := PDirEntry(List.At(Item))^.DisplayText^;
+  if (Dirs = nil) or (Item >= Dirs.Count) then
+    Result := ''
+  else
+    Result := Dirs[Item]^.DisplayText^;
 end;
 
 procedure TDirListBox.HandleEvent(var Event: TEvent);
@@ -1558,9 +1539,9 @@ begin
         ClearEvent(Event);
       end;
     evKeyboard:
-      if (Event.CharCode = AnsiChar(' ')) and (List <> nil) and (Focused < List.Count) then
+      if (Event.CharCode = AnsiChar(' ')) and (Dirs <> nil) and (Focused < Dirs.Count) then
       begin
-        DirEntry := PDirEntry(List.At(Focused));
+        DirEntry := Dirs[Focused];
         if (DirEntry <> nil) and (DirEntry^.Directory <> nil) then
         begin
           DirName := DirEntry^.Directory^;
@@ -1585,7 +1566,7 @@ const
   LastDir = ' '#192#196;
   IndentSize = '  ';
 var
-  AList: TFVCollection;
+  AList: TDirCollection;
   NewDir, Dirct: DirStr;
   C, OldC: Char;
   S, Indent: string;
@@ -1600,18 +1581,18 @@ var
     DirEntry: PDirEntry;
   begin
     New(DirEntry);
-    DirEntry^.DisplayText := NewStr(DisplayText);
+    DirEntry^.DisplayText := NewStr(ShortString(DisplayText));
     if ADirectory = '' then
       DirEntry^.Directory := NewStr(DirSeparator)
     else
-      DirEntry^.Directory := NewStr(ADirectory);
+      DirEntry^.Directory := NewStr(ShortString(ADirectory));
     Result := DirEntry;
   end;
 
 begin
   Dir := ADir;
-  AList := TDirCollection.Create(5, 5);
-  AList.Insert(NewDirEntry(Drives^, Drives^));
+  AList := TDirCollection.Create;
+  AList.Add(NewDirEntry(Drives^, Drives^));
 
   if Dir = Drives^ then
   begin
@@ -1630,7 +1611,7 @@ begin
           end
           else
             S := MiddleDir + OldC;
-          AList.Insert(NewDirEntry(S, OldC + ':' + DirSeparator));
+          AList.Add(NewDirEntry(S, OldC + ':' + DirSeparator));
         end;
         if C = GetCurDrive then
           NewCur := AList.Count;
@@ -1638,30 +1619,30 @@ begin
       end;
     end;
     if OldC <> ' ' then
-      AList.Insert(NewDirEntry(LastDir + OldC, OldC + ':' + DirSeparator));
+      AList.Add(NewDirEntry(LastDir + OldC, OldC + ':' + DirSeparator));
   end
   else
   begin
     Indent := IndentSize;
     NewDir := Dir;
     Dirct := Copy(NewDir, 1, 3);
-    AList.Insert(NewDirEntry(PathDir + Dirct, Dirct));
+    AList.Add(NewDirEntry(PathDir + string(Dirct), string(Dirct)));
     NewDir := Copy(NewDir, 4, 255);
 
     while NewDir <> '' do
     begin
-      I := Pos(DirSeparator, NewDir);
+      I := Pos(DirSeparator, string(NewDir));
       if I <> 0 then
       begin
-        S := Copy(NewDir, 1, I - 1);
-        Dirct := Dirct + S;
-        AList.Insert(NewDirEntry(Indent + PathDir + S, Dirct));
+        S := Copy(string(NewDir), 1, I - 1);
+        Dirct := Dirct + DirStr(S);
+        AList.Add(NewDirEntry(Indent + PathDir + S, string(Dirct)));
         NewDir := Copy(NewDir, I + 1, 255);
       end
       else
       begin
         Dirct := Dirct + NewDir;
-        AList.Insert(NewDirEntry(Indent + PathDir + NewDir, Dirct));
+        AList.Add(NewDirEntry(Indent + PathDir + string(NewDir), string(Dirct)));
         NewDir := '';
       end;
       Indent := Indent + IndentSize;
@@ -1671,7 +1652,7 @@ begin
     NewCur := AList.Count - 1;
     IsFirst := True;
     NewDir := Dirct + AllFiles;
-    DosFindFirst(NewDir, Directory, SR);
+    DosFindFirst(string(NewDir), Directory, SR);
     while DosError = 0 do
     begin
       if (SR.Attr and Directory <> 0) and (SR.Name <> '.') and (SR.Name <> '..') then
@@ -1683,13 +1664,13 @@ begin
         end
         else
           S := MiddleDir;
-        AList.Insert(NewDirEntry(Indent + S + SR.Name, Dirct + SR.Name));
+        AList.Add(NewDirEntry(Indent + S + SR.Name, string(Dirct) + SR.Name));
       end;
       DosFindNext(SR);
     end;
     DosFindClose;
 
-    P := PDirEntry(AList.At(AList.Count - 1))^.DisplayText;
+    P := AList[AList.Count - 1]^.DisplayText;
     I := System.Pos(AnsiString(#192), P^);
     if I = 0 then
     begin
@@ -1704,7 +1685,10 @@ begin
     end;
   end;
 
-  NewList(AList);
+  { Replace old Dirs with new list }
+  FreeAndNil(Dirs);
+  Dirs := AList;
+  SetRange(Dirs.Count);
   FocusItem(NewCur);
   Cur := NewCur;
 end;
@@ -1797,7 +1781,7 @@ begin
             System.GetDir(0, CurDir);
           cmChangeDir:
             begin
-              P := PDirEntry(DirList.List.At(DirList.Focused));
+              P := DirList.Dirs[DirList.Focused];
               if (P^.Directory^ = Drives^) or DriveValid(Char(P^.Directory^[1])) then
                 CurDir := P^.Directory^
               else
@@ -1926,12 +1910,21 @@ procedure TSortedListBox.HandleEvent(var Event: TEvent);
     Result := (C = AnsiChar(#0)) or (C = AnsiChar(#9)) or (C = AnsiChar(#27));
   end;
 
+  function GetFileList: TFileCollection;
+  begin
+    if Self is TFileList then
+      Result := TFileList(Self).Files
+    else
+      Result := nil;
+  end;
+
 var
   CurString, NewString: String;
-  K: Pointer;
+  K: PSearchRec;
   Value: Sw_Integer;
   OldPos, OldValue: Sw_Integer;
   T: Boolean;
+  FileList: TFileCollection;
 begin
   OldValue := Focused;
   inherited HandleEvent(Event);
@@ -1941,8 +1934,9 @@ begin
     SearchPos := 0;
   if Event.What = evKeyDown then
   begin
+    FileList := GetFileList;
     if not IsSpecialChar(Event.CharCode) and
-       (List <> nil) and (List.Count > 0) then
+       (FileList <> nil) and (FileList.Count > 0) then
     begin
       Value := Focused;
       if Value < Range then
@@ -1969,8 +1963,14 @@ begin
         SetLength(CurString, SearchPos);
         CurString[SearchPos] := Char(Event.CharCode);
       end;
-      K := GetKey(CurString);
-      T := TSortedCollection(List).Search(K, Value);
+      K := PSearchRec(GetKey(CurString));
+      if FileList <> nil then
+        T := FileList.Search(K, Value)
+      else
+      begin
+        T := False;
+        Value := 0;
+      end;
       if Value < Range then
       begin
         if Value < Range then
@@ -2003,7 +2003,7 @@ begin
   Result := @S;
 end;
 
-procedure TSortedListBox.NewList(AList: TFVCollection);
+procedure TSortedListBox.NewList(AList: TObjectList<TObject>);
 begin
   inherited NewList(AList);
   SearchPos := 0;

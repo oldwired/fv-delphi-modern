@@ -72,9 +72,6 @@ type
 
   TEditorDialog = function(Dialog: SmallInt; Info: Pointer): Word;
 
-  TIndicator = class;
-  PIndicator = TIndicator;
-
   TIndicator = class(TView)
   private
     FLocation   : TPoint;
@@ -100,9 +97,6 @@ type
   TLineInfoArr = array[0..MaxLines] of TLineInfoRec;
   PLineInfoArr = ^TLineInfoArr;
 
-  TLineInfo = class;
-  PLineInfo = TLineInfo;
-
   TLineInfo = class(TObject)
   private
     FInfo: PLineInfoArr;
@@ -123,7 +117,6 @@ type
   TEditBuffer = array[0..MaxBufLength] of AnsiChar;
 
   TEditor = class;
-  PEditor = TEditor;
 
   TEditor = class(TView)
   private
@@ -282,9 +275,6 @@ type
     Buffer: TEditBuffer;
   end;
 
-  TMemo = class;
-  PMemo = TMemo;
-
   TMemo = class(TEditor)
   public
     function    DataSize: Word; override;
@@ -293,9 +283,6 @@ type
     procedure   HandleEvent(var Event: TEvent); override;
     procedure   SetData(var Rec); override;
   end;
-
-  TFileEditor = class;
-  PFileEditor = TFileEditor;
 
   TFileEditor = class(TEditor)
   private
@@ -316,9 +303,6 @@ type
     property FileName: FNameStr read FFileName write FFileName;
   end;
 
-  TEditWindow = class;
-  PEditWindow = TEditWindow;
-
   TEditWindow = class(TWindow)
   private
     FEditor: TFileEditor;
@@ -332,12 +316,12 @@ type
   end;
 
 function DefEditorDialog(Dialog: SmallInt; Info: Pointer): Word;
-function CreateFindDialog: PDialog;
-function CreateReplaceDialog: PDialog;
-function JumpLineDialog: PDialog;
-function ReformDocDialog: PDialog;
-function RightMarginDialog: PDialog;
-function TabStopDialog: PDialog;
+function CreateFindDialog: TDialog;
+function CreateReplaceDialog: TDialog;
+function JumpLineDialog: TDialog;
+function ReformDocDialog: TDialog;
+function RightMarginDialog: TDialog;
+function TabStopDialog: TDialog;
 function StdEditorDialog(Dialog: SmallInt; Info: Pointer): Word;
 
 const
@@ -351,7 +335,7 @@ const
   EditorFlags: Word = efBackupFiles + efPromptOnReplace;
   FindStr: String[80] = '';
   ReplaceStr: String[80] = '';
-  Clipboard: PEditor = nil;
+  Clipboard: TEditor = nil;
 
 type
   TEditorDebugLog = procedure(const Msg: string);
@@ -546,7 +530,7 @@ begin
   Result := cmCancel;
 end;
 
-function CreateFindDialog: PDialog;
+function CreateFindDialog: TDialog;
 var
   D: TDialog;
   Control: TView;
@@ -587,7 +571,7 @@ begin
   Result := D;
 end;
 
-function CreateReplaceDialog: PDialog;
+function CreateReplaceDialog: TDialog;
 var
   D: TDialog;
   Control: TView;
@@ -638,7 +622,7 @@ begin
   Result := D;
 end;
 
-function JumpLineDialog: PDialog;
+function JumpLineDialog: TDialog;
 var
   D: TDialog;
   R: TRect;
@@ -674,7 +658,7 @@ begin
   Result := D;
 end;
 
-function ReformDocDialog: PDialog;
+function ReformDocDialog: TDialog;
 var
   R: TRect;
   D: TDialog;
@@ -708,7 +692,7 @@ begin
   Result := D;
 end;
 
-function RightMarginDialog: PDialog;
+function RightMarginDialog: TDialog;
 var
   R: TRect;
   D: TDialog;
@@ -744,7 +728,7 @@ begin
   Result := D;
 end;
 
-function TabStopDialog: PDialog;
+function TabStopDialog: TDialog;
 var
   R: TRect;
   D: TDialog;
@@ -1777,7 +1761,7 @@ var
   D, Mouse: TPoint;
   ShiftState: Byte;
 
-  function CheckScrollBar(P: PScrollBar; var D: Sw_Integer): Boolean;
+  function CheckScrollBar(P: TScrollBar; var D: Sw_Integer): Boolean;
   begin
     Result := False;
     if (Event.InfoPtr = P) and (P.Value <> D) then
@@ -2119,7 +2103,7 @@ begin
   Update(ufView);
 end;
 
-function TEditor.InsertFrom(Editor: PEditor): Boolean;
+function TEditor.InsertFrom(Editor: TEditor): Boolean;
 begin
   Result := InsertBuffer(Editor.Buffer, Editor.BufPtr(Editor.SelStart),
                          Editor.SelEnd - Editor.SelStart, CanUndo, IsClipboard);

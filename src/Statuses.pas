@@ -61,16 +61,6 @@ type
   TSpinnerGauge = class;
   TAppStatus = class;
 
-  PStatus = TStatus;
-  PStatusDlg = TStatusDlg;
-  PStatusMessageDlg = TStatusMessageDlg;
-  PGauge = TGauge;
-  PArrowGauge = TArrowGauge;
-  PPercentGauge = TPercentGauge;
-  PBarGauge = TBarGauge;
-  PSpinnerGauge = TSpinnerGauge;
-  PAppStatus = TAppStatus;
-
   { TStatus - Base status view class }
   TStatus = class(TParamText)
   private

@@ -47,7 +47,6 @@ type
     property LLim: LongInt read FLLim write FLLim;
     property ULim: LongInt read FULim write FULim;
   end;
-  PInputLong = TInputLong;
 
 const
   RInputLong: TStreamRec = (

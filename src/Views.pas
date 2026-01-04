@@ -15,8 +15,8 @@ uses
   {$IFDEF OS_WINDOWS}
   Winapi.Windows,
   {$ENDIF}
-  System.SysUtils, System.IOUtils,
-  Objects, Drivers, Video, FVConsts;
+  System.SysUtils, System.IOUtils, System.JSON,
+  Objects, Drivers, Video, FVConsts, FVInterfaces, FVSerialization;
 
 
 
@@ -135,16 +135,9 @@ type
   TScrollBar = class;
   TWindow = class;
 
-  { Type aliases for compatibility - these are now class references }
-  PView = TView;
-  PGroup = TGroup;
-  PFrame = TFrame;
-  PScrollBar = TScrollBar;
-  PWindow = TWindow;
-
   SelectMode = (NormalSelect, EnterSelect, LeaveSelect);
 
-  TView = class(TFVObject)
+  TView = class(TObject, IFVDrawable, IFVEventHandler, IFVDataAware, ISerializable)
   public
     GrowMode: Byte;
     DragMode: Byte;
@@ -157,6 +150,15 @@ type
     Cursor: TPoint;
     Next: TView;
     Owner: TGroup;
+    { Interface support - disable reference counting }
+    function QueryInterface(const IID: TGUID; out Obj): HResult; stdcall;
+    function _AddRef: Integer; stdcall;
+    function _Release: Integer; stdcall;
+    { ISerializable implementation }
+    function ToJSON: TJSONObject; virtual;
+    procedure FromJSON(const AJson: TJSONObject); virtual;
+    function GetTypeId: string; virtual;
+    { Constructors and destructor }
     constructor Create(var Bounds: TRect); reintroduce; virtual;
     constructor Load(var S: TFVStream); virtual;
     procedure Store(var S: TFVStream);
@@ -310,8 +312,6 @@ type
     procedure DrawPos(Pos: Integer);
   end;
 
-  TScroller = class;
-  PScroller = TScroller;
   TScroller = class(TView)
   public
     Delta: TPoint;
@@ -332,8 +332,6 @@ type
     procedure CheckDraw;
   end;
 
-  TListViewer = class;
-  PListViewer = TListViewer;
   TListViewer = class(TView)
   public
     NumCols: Integer;
@@ -504,6 +502,69 @@ begin
   S.Write(State, SizeOf(State));
   S.Write(Options, SizeOf(Options));
   S.Write(EventMask, SizeOf(EventMask));
+end;
+
+{ Interface support - disable reference counting }
+
+function TView.QueryInterface(const IID: TGUID; out Obj): HResult;
+begin
+  if GetInterface(IID, Obj) then
+    Result := S_OK
+  else
+    Result := E_NOINTERFACE;
+end;
+
+function TView._AddRef: Integer;
+begin
+  Result := -1;  { Disable reference counting }
+end;
+
+function TView._Release: Integer;
+begin
+  Result := -1;  { Disable reference counting }
+end;
+
+{ ISerializable implementation }
+
+function TView.GetTypeId: string;
+begin
+  Result := 'TView';
+end;
+
+function TView.ToJSON: TJSONObject;
+begin
+  Result := TJSONObject.Create;
+  Result.AddPair('_type', GetTypeId);
+  Result.AddPair('origin', TFVJsonHelper.PointToJSON(Origin.X, Origin.Y));
+  Result.AddPair('size', TFVJsonHelper.PointToJSON(Size.X, Size.Y));
+  Result.AddPair('cursor', TFVJsonHelper.PointToJSON(Cursor.X, Cursor.Y));
+  Result.AddPair('growMode', TJSONNumber.Create(GrowMode));
+  Result.AddPair('dragMode', TJSONNumber.Create(DragMode));
+  Result.AddPair('helpCtx', TJSONNumber.Create(HelpCtx));
+  Result.AddPair('state', TJSONNumber.Create(State));
+  Result.AddPair('options', TJSONNumber.Create(Options));
+  Result.AddPair('eventMask', TJSONNumber.Create(EventMask));
+end;
+
+procedure TView.FromJSON(const AJson: TJSONObject);
+var
+  P: TSerializablePoint;
+begin
+  P := TFVJsonHelper.JSONToPoint(AJson.GetValue<TJSONObject>('origin'));
+  Origin.X := P.X;
+  Origin.Y := P.Y;
+  P := TFVJsonHelper.JSONToPoint(AJson.GetValue<TJSONObject>('size'));
+  Size.X := P.X;
+  Size.Y := P.Y;
+  P := TFVJsonHelper.JSONToPoint(AJson.GetValue<TJSONObject>('cursor'));
+  Cursor.X := P.X;
+  Cursor.Y := P.Y;
+  GrowMode := AJson.GetValue<Integer>('growMode', 0);
+  DragMode := AJson.GetValue<Integer>('dragMode', dmLimitLoY);
+  HelpCtx := AJson.GetValue<Integer>('helpCtx', hcNoContext);
+  State := AJson.GetValue<Integer>('state', sfVisible);
+  Options := AJson.GetValue<Integer>('options', 0);
+  EventMask := AJson.GetValue<Integer>('eventMask', evMouseDown + evKeyDown + evCommand);
 end;
 
 function TView.Prev: TView;
@@ -1354,7 +1415,7 @@ begin
     while P <> nil do begin
       T := P.Next;
       P.Owner := nil;  { Prevent TView.Destroy from calling Delete }
-      P.Free;
+      FreeAndNil(P);
       P := T;
     end;
   end;

@@ -16,6 +16,7 @@ unit TimedDlg;
 interface
 
 uses
+  System.SysUtils,
   Objects, FVConsts, FVCommon, Dialogs, Drivers, Views;
 
 type
@@ -32,7 +33,6 @@ type
     procedure Store(var S: TFVStream);
     property Secs: LongInt read FSecs write FSecs;
   end;
-  PTimedDialog = TTimedDialog;
 
   { Must be always included in TTimedDialog! }
   TTimedDialogText = class(TStaticText)
@@ -40,7 +40,6 @@ type
     constructor Create(var Bounds: TRect); reintroduce; virtual;
     procedure GetText(var S: ShortString); override;
   end;
-  PTimedDialogText = TTimedDialogText;
 
 const
   RTimedDialog: TStreamRec = (
@@ -179,7 +178,7 @@ begin
     TextR.Assign(3, 2, Size.X - 2, Size.Y - 5);
   end;
   Result := MessageBoxRectDlg(Dlg, TextR, Msg, Params, AOptions);
-  Dlg.Free;
+  FreeAndNil(Dlg);
 end;
 
 procedure RegisterTimedDialog;

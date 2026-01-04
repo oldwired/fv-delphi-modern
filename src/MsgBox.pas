@@ -11,6 +11,7 @@ unit MsgBox;
 interface
 
 uses
+  System.SysUtils,
   Objects, FVCommon, FVConsts, Drivers, Views, Dialogs;
 
 const
@@ -137,7 +138,7 @@ begin
   with Dialog do
     R.Assign(3, 2, Size.X - 2, Size.Y - 3);
   Result := MessageBoxRectDlg(Dialog, R, Msg, Params, AOptions);
-  Dialog.Free;
+  FreeAndNil(Dialog);
 end;
 
 function InputBox(const Title, ALabel: string; var S: string;
@@ -185,7 +186,7 @@ begin
     InputLine.GetData(ShortS);
     S := string(ShortS);
   end;
-  Dialog.Free;
+  FreeAndNil(Dialog);
   Result := C;
 end;
 
