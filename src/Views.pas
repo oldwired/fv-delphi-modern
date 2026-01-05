@@ -1133,31 +1133,80 @@ var
   Target: PWord;
   Source: PWord;
   GX, GY: Integer;
+  LocalY: Integer;
   V: TView;
   CopyWidth: Integer;
   BufOffset: Integer;
+  Clipped: Boolean;
+  ClipRight: Integer;
+  ClipLeft, ClipTop, ClipBottom: Integer;
+  XOffset: Integer;
+  FrameInset: Integer;
 begin
   if (State and sfExposed) <> 0 then begin
     if (W <= 0) or (H <= 0) then Exit;
     for I := 0 to H - 1 do begin
       if (Y + I >= 0) and (Y + I < Size.Y) then begin
-        GY := Origin.Y + Y + I;
+        { Start with local coordinates relative to parent }
+        LocalY := Y + I;
+        GY := Origin.Y + LocalY;
         GX := Origin.X + X;
+        CopyWidth := W;
+        XOffset := 0;
+        Clipped := False;
+
+        { Walk up the owner chain, checking clip at each level }
         V := Owner;
         while V <> nil do begin
+          { Inset clip by 1 for framed views (windows) - but not for the frame itself }
+          { Frame child is detected by: view is at (0,0) with same size as owner }
+          { Only apply inset if owner has ofFramed flag set }
+          FrameInset := 0;
+          if (V = Owner) and ((V.Options and ofFramed) <> 0) and
+             ((Origin.X <> 0) or (Origin.Y <> 0) or
+             (Size.X <> V.Size.X) or (Size.Y <> V.Size.Y)) then
+            FrameInset := 1;
+
+          ClipTop := TGroup(V).Clip.A.Y + FrameInset;
+          ClipBottom := TGroup(V).Clip.B.Y - FrameInset;
+          ClipLeft := TGroup(V).Clip.A.X + FrameInset;
+          ClipRight := TGroup(V).Clip.B.X - FrameInset;
+
+          { Check vertical clipping }
+          if (GY < ClipTop) or (GY >= ClipBottom) then begin
+            Clipped := True;
+            Break;
+          end;
+          { Horizontal clipping - left edge }
+          if GX < ClipLeft then begin
+            XOffset := XOffset + (ClipLeft - GX);
+            CopyWidth := CopyWidth - (ClipLeft - GX);
+            GX := ClipLeft;
+          end;
+          { Horizontal clipping - right edge }
+          if GX + CopyWidth > ClipRight then
+            CopyWidth := ClipRight - GX;
+          { Check if completely clipped }
+          if CopyWidth <= 0 then begin
+            Clipped := True;
+            Break;
+          end;
           Inc(GY, V.Origin.Y);
           Inc(GX, V.Origin.X);
           V := V.Owner;
         end;
-        if (GY >= 0) and (GY < Video.ScreenHeight) and
-           (GX >= 0) and (GX < Video.ScreenWidth) then begin
-          BufOffset := I * W;
-          if BufOffset >= MaxViewWidth then Continue; { Prevent buffer overrun }
-          Target := @VideoBuf^[GY * Video.ScreenWidth + GX];
-          Source := @TWordArray(Buf)[BufOffset];
-          CopyWidth := Min(W, Video.ScreenWidth - GX);
-          if CopyWidth > 0 then
-            Move(Source^, Target^, CopyWidth * 2);
+
+        if not Clipped then begin
+          if (GY >= 0) and (GY < Video.ScreenHeight) and
+             (GX >= 0) and (GX < Video.ScreenWidth) then begin
+            BufOffset := I * W + XOffset;
+            if BufOffset >= MaxViewWidth then Continue; { Prevent buffer overrun }
+            Target := @VideoBuf^[GY * Video.ScreenWidth + GX];
+            Source := @TWordArray(Buf)[BufOffset];
+            CopyWidth := Min(CopyWidth, Video.ScreenWidth - GX);
+            if CopyWidth > 0 then
+              Move(Source^, Target^, CopyWidth * 2);
+          end;
         end;
       end;
     end;
@@ -2745,7 +2794,7 @@ constructor TWindow.Create(var Bounds: TRect; ATitle: TTitleStr; ANumber: Intege
 begin
   inherited Create(Bounds);
   State := State or sfShadow;
-  Options := Options or ofSelectable or ofFirstClick or ofTopSelect;
+  Options := Options or ofSelectable or ofFirstClick or ofTopSelect or ofFramed;
   GrowMode := gfGrowAll + gfGrowRel;
   Flags := wfMove + wfGrow + wfClose + wfZoom;
   Title := NewStr(ATitle);
