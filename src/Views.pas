@@ -423,6 +423,7 @@ begin
   Flush(DebugLog);
 end;
 
+
 var
   OwnerGroup: TGroup;
 
@@ -1626,6 +1627,10 @@ begin
     InsertView(P, Target);  { Sets P.Owner }
     if (SaveState and sfVisible) <> 0 then P.Show;  { Triggers ResetCurrent for selectable views }
     if GetState(sfActive) then P.SetState(sfActive, True);
+    { If the inserted view is selectable, select it so it becomes Current.
+      This ensures newly inserted windows get focus. }
+    if (P.Options and ofSelectable) <> 0 then
+      P.Select;
   end;
 end;
 
@@ -1933,14 +1938,16 @@ procedure TGroup.SetCurrent(P: TView; Mode: SelectMode);
 
   procedure SelectView(V: TView; Enable: Boolean);
   begin
-    if V <> nil then
+    { Skip SetState on views that are being destroyed (no longer visible) }
+    if (V <> nil) and ((V.State and sfVisible) <> 0) then
       V.SetState(sfSelected, Enable);
   end;
 
   procedure FocusView(V: TView; Enable: Boolean);
   begin
     { Only propagate focus if this group itself has sfFocused }
-    if ((State and sfFocused) <> 0) and (V <> nil) then
+    { Skip SetState on views that are being destroyed (no longer visible) }
+    if ((State and sfFocused) <> 0) and (V <> nil) and ((V.State and sfVisible) <> 0) then
       V.SetState(sfFocused, Enable);
   end;
 

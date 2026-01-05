@@ -30,7 +30,8 @@ uses
   ColorSel in 'src\ColorSel.pas',
   Outline in 'src\Outline.pas',
   Editors in 'src\Editors.pas',
-  Calendar in 'src\Calendar.pas';
+  Calendar in 'src\Calendar.pas',
+  Grid in 'src\Grid.pas';
 
 const
   cmNewWindow = 100;
@@ -59,6 +60,9 @@ const
   cmTestEditorClipboard = 1023;
   cmTestCalendar = 1024;
   cmTestCalendarBroadcast = 1025;
+  cmTestStringGrid = 1026;
+  cmTestStringGrid2 = 1027;
+  cmTestStringGrid3 = 1028;
 
 var
   ExceptionLog: TextFile;
@@ -84,6 +88,7 @@ type
   TMyStatusLine = class;
   TMyApp = class;
   TCalendarWindow = class;
+  TGridTestWindow = class;
   TTextScroller = class;
   TMyWindow = class;
   TTabTestDialog = class;
@@ -95,6 +100,8 @@ type
   TMyApp = class(TApplication)
   private
     FCalendarDateLabel: TStaticText;  { Reference for calendar demo }
+    FGridCellLabel: TStaticText;      { Reference for grid callback demo }
+    FCallbackGrid: TStringGrid;       { Reference to callback grid }
   public
     constructor Create; reintroduce; virtual;
     procedure InitMenuBar; override;
@@ -124,7 +131,11 @@ type
     procedure TestEditorClipboard;
     procedure TestCalendar;
     procedure TestCalendarBroadcast;
+    procedure TestStringGrid;
+    procedure TestStringGrid2;
+    procedure TestStringGrid3;
     procedure OnCalendarDateSelect(Calendar: TCalendarView);
+    procedure OnGridCellFocused(Sender: TObject; Col, Row: Integer);
     property CalendarDateLabel: TStaticText read FCalendarDateLabel write FCalendarDateLabel;
   end;
 
@@ -136,6 +147,18 @@ type
     constructor Create(var Bounds: TRect); reintroduce; virtual;
     procedure HandleEvent(var Event: TEvent); override;
     property DateLabel: TStaticText read FDateLabel write FDateLabel;
+  end;
+
+  { Custom window for grid that handles cell focus broadcast }
+  TGridTestWindow = class(TWindow)
+  private
+    FCellLabel: TStaticText;
+    FGrid: TStringGrid;
+  public
+    constructor Create(var Bounds: TRect); reintroduce; virtual;
+    procedure HandleEvent(var Event: TEvent); override;
+    property CellLabel: TStaticText read FCellLabel write FCellLabel;
+    property Grid: TStringGrid read FGrid write FGrid;
   end;
 
   { Custom scroller that displays numbered lines }
@@ -231,6 +254,128 @@ begin
         DisposeStr(FDateLabel.Text);
       FDateLabel.Text := NewStr(S);
       FDateLabel.DrawView;
+    end;
+    ClearEvent(Event);
+  end;
+end;
+
+{ TGridTestWindow - demonstrates grid with cell info label }
+constructor TGridTestWindow.Create(var Bounds: TRect);
+var
+  R: TRect;
+  HScrollBar, VScrollBar: TScrollBar;
+  I: Integer;
+begin
+  inherited Create(Bounds, 'StringGrid (With Label)', wnNoNumber);
+  Options := Options or ofTileable;
+  Flags := Flags and not wfZoom;
+
+  { Create vertical scrollbar }
+  GetExtent(R);
+  R.A.X := R.B.X - 2;
+  R.B.X := R.B.X - 1;
+  R.A.Y := 1;
+  R.B.Y := R.B.Y - 4;
+  VScrollBar := TScrollBar.Create(R);
+  VScrollBar.GrowMode := gfGrowLoX + gfGrowHiX + gfGrowHiY;
+  Insert(VScrollBar);
+
+  { Create horizontal scrollbar }
+  GetExtent(R);
+  R.A.X := 1;
+  R.B.X := R.B.X - 2;
+  R.A.Y := R.B.Y - 4;
+  R.B.Y := R.B.Y - 3;
+  HScrollBar := TScrollBar.Create(R);
+  HScrollBar.GrowMode := gfGrowLoY + gfGrowHiY + gfGrowHiX;
+  Insert(HScrollBar);
+
+  { Create the string grid }
+  GetExtent(R);
+  R.A.X := 1;
+  R.A.Y := 1;
+  R.B.X := R.B.X - 2;
+  R.B.Y := R.B.Y - 4;
+  FGrid := TStringGrid.Create(R, 4, HScrollBar, VScrollBar);
+  FGrid.GrowMode := gfGrowHiX + gfGrowHiY;
+
+  { Configure columns }
+  FGrid.Columns[0].Title := 'ID';
+  FGrid.Columns[0].Width := 6;
+  FGrid.Columns[0].Alignment := gaRight;
+
+  FGrid.Columns[1].Title := 'Name';
+  FGrid.Columns[1].Width := 15;
+
+  FGrid.Columns[2].Title := 'Value';
+  FGrid.Columns[2].Width := 10;
+  FGrid.Columns[2].Alignment := gaRight;
+
+  FGrid.Columns[3].Title := 'Status';
+  FGrid.Columns[3].Width := 12;
+  FGrid.Columns[3].Alignment := gaCenter;
+
+  { Set grid options }
+  FGrid.FixedRows := 1;
+  FGrid.ShowGridLines := True;
+  FGrid.SelectionMode := smCell;
+
+  { Add test data - start at row 1 (row 0 is header) }
+  FGrid.RowCount := 16;  { 1 header + 15 data rows }
+  for I := 1 to 15 do begin
+    FGrid[0, I] := ShortString(IntToStr(I));
+    FGrid[1, I] := ShortString('Item ' + IntToStr(I));
+    FGrid[2, I] := ShortString(Format('%.2f', [Random * 100]));
+    case I mod 3 of
+      0: FGrid[3, I] := 'Active';
+      1: FGrid[3, I] := 'Pending';
+      2: FGrid[3, I] := 'Done';
+    end;
+  end;
+
+  Insert(FGrid);
+
+  { Add label to show cell info }
+  GetExtent(R);
+  R.A.X := 1;
+  R.A.Y := R.B.Y - 3;
+  R.B.X := R.B.X - 1;
+  R.B.Y := R.B.Y - 2;
+  FCellLabel := TStaticText.Create(R, 'Click a cell to see info');
+  Insert(FCellLabel);
+
+  { Instructions }
+  GetExtent(R);
+  R.A.X := 1;
+  R.A.Y := R.B.Y - 2;
+  R.B.X := R.B.X - 1;
+  R.B.Y := R.B.Y - 1;
+  Insert(TStaticText.Create(R, 'Using broadcast cmGridCellFocused'));
+
+  FGrid.Select;
+end;
+
+procedure TGridTestWindow.HandleEvent(var Event: TEvent);
+var
+  G: TStringGrid;
+  S: ShortString;
+  Col, Row: Integer;
+  CellText: ShortString;
+begin
+  inherited HandleEvent(Event);
+
+  { Handle grid cell focused broadcast }
+  if (Event.What = evBroadcast) and (Event.Command = cmGridCellFocused) then begin
+    G := TStringGrid(Event.InfoPtr);
+    if (G = FGrid) and (FCellLabel <> nil) then begin
+      Col := G.FocusedCol;
+      Row := G.FocusedRow;
+      CellText := G[Col, Row];
+      S := ShortString(Format('%d,%d: %s', [Col, Row, string(CellText)]));
+      if FCellLabel.Text <> nil then
+        DisposeStr(FCellLabel.Text);
+      FCellLabel.Text := NewStr(S);
+      FCellLabel.DrawView;
     end;
     ClearEvent(Event);
   end;
@@ -381,6 +526,11 @@ begin
       NewItem('~S~tatuses', '', kbNoKey, cmTestStatuses, hcNoContext,
       NewItem('~C~olors', '', kbNoKey, cmTestColors, hcNoContext,
       NewItem('~O~utline', '', kbNoKey, cmTestOutline, hcNoContext,
+      NewSubMenu('String~G~rid', hcNoContext, NewMenu(
+        NewItem('~B~asic Test', '', kbNoKey, cmTestStringGrid, hcNoContext,
+        NewItem('~B~roadcast Label', '', kbNoKey, cmTestStringGrid2, hcNoContext,
+        NewItem('~C~allback Label', '', kbNoKey, cmTestStringGrid3, hcNoContext,
+        nil)))),
       NewSubMenu('Ca~l~endar', hcNoContext, NewMenu(
         NewItem('~C~allback', '', kbNoKey, cmTestCalendar, hcNoContext,
         NewItem('~B~roadcast', '', kbNoKey, cmTestCalendarBroadcast, hcNoContext,
@@ -391,7 +541,7 @@ begin
         NewItem('File ~L~oad/Save', '', kbNoKey, cmTestEditorFile, hcNoContext,
         NewItem('~C~lipboard', '', kbNoKey, cmTestEditorClipboard, hcNoContext,
         nil))))),
-      nil))))))))))))))))))),
+      nil)))))))))))))))))))),
     NewSubMenu('~W~indow', hcNoContext, NewMenu(
       NewItem('~T~ile', '', kbNoKey, cmTile, hcNoContext,
       NewItem('Tile ~H~orizontal', '', kbNoKey, cmTileHorizontal, hcNoContext,
@@ -451,6 +601,9 @@ begin
         cmTestEditorClipboard: TestEditorClipboard;
         cmTestCalendar: TestCalendar;
         cmTestCalendarBroadcast: TestCalendarBroadcast;
+        cmTestStringGrid: TestStringGrid;
+        cmTestStringGrid2: TestStringGrid2;
+        cmTestStringGrid3: TestStringGrid3;
       else
         Exit;
       end;
@@ -1355,6 +1508,218 @@ begin
   Win := TCalendarWindow.Create(R);
   if Win <> nil then
     Desktop.Insert(Win);
+end;
+
+procedure TMyApp.TestStringGrid;
+{ Test the TStringGrid component }
+var
+  R: TRect;
+  Win: TWindow;
+  Grid: TStringGrid;
+  HScrollBar, VScrollBar: TScrollBar;
+  I: Integer;
+begin
+  R.Assign(3, 1, 75, 22);
+  Win := TWindow.Create(R, 'StringGrid Test', wnNoNumber);
+  if Win <> nil then begin
+    Win.Options := Win.Options or ofTileable;
+
+    { Create vertical scrollbar }
+    Win.GetExtent(R);
+    R.A.X := R.B.X - 2;
+    R.B.X := R.B.X - 1;
+    R.A.Y := 1;
+    R.B.Y := R.B.Y - 2;
+    VScrollBar := TScrollBar.Create(R);
+    VScrollBar.GrowMode := gfGrowLoX + gfGrowHiX + gfGrowHiY;
+    Win.Insert(VScrollBar);
+
+    { Create horizontal scrollbar }
+    Win.GetExtent(R);
+    R.A.X := 1;
+    R.B.X := R.B.X - 2;
+    R.A.Y := R.B.Y - 2;
+    R.B.Y := R.B.Y - 1;
+    HScrollBar := TScrollBar.Create(R);
+    HScrollBar.GrowMode := gfGrowLoY + gfGrowHiY + gfGrowHiX;
+    Win.Insert(HScrollBar);
+
+    { Create the string grid }
+    Win.GetExtent(R);
+    R.A.X := 1;
+    R.A.Y := 1;
+    R.B.X := R.B.X - 2;
+    R.B.Y := R.B.Y - 2;
+    Grid := TStringGrid.Create(R, 5, HScrollBar, VScrollBar);
+    Grid.GrowMode := gfGrowHiX + gfGrowHiY;
+
+    { Configure columns }
+    Grid.Columns[0].Title := 'ID';
+    Grid.Columns[0].Width := 5;
+    Grid.Columns[0].Alignment := gaRight;
+
+    Grid.Columns[1].Title := 'Name';
+    Grid.Columns[1].Width := 15;
+    Grid.Columns[1].Alignment := gaLeft;
+
+    Grid.Columns[2].Title := 'Value';
+    Grid.Columns[2].Width := 10;
+    Grid.Columns[2].Alignment := gaRight;
+
+    Grid.Columns[3].Title := 'Status';
+    Grid.Columns[3].Width := 12;
+    Grid.Columns[3].Alignment := gaCenter;
+
+    Grid.Columns[4].Title := 'Notes';
+    Grid.Columns[4].Width := 20;
+    Grid.Columns[4].Alignment := gaLeft;
+
+    { Set grid options }
+    Grid.FixedRows := 1;
+    Grid.ShowGridLines := True;
+    Grid.SelectionMode := smRow;
+
+    { Add some test data - start at row 1 (row 0 is header) }
+    Grid.RowCount := 21;  { 1 header + 20 data rows }
+    for I := 1 to 20 do begin
+      Grid[0, I] := ShortString(IntToStr(I));
+      Grid[1, I] := ShortString('Item ' + IntToStr(I));
+      Grid[2, I] := ShortString(Format('%.2f', [Random * 1000]));
+      case I mod 4 of
+        0: Grid[3, I] := 'Active';
+        1: Grid[3, I] := 'Pending';
+        2: Grid[3, I] := 'Completed';
+        3: Grid[3, I] := 'Cancelled';
+      end;
+      Grid[4, I] := ShortString('Note for item ' + IntToStr(I));
+    end;
+
+    Win.Insert(Grid);
+    Desktop.Insert(Win);
+    Grid.Select;
+  end;
+end;
+
+procedure TMyApp.TestStringGrid2;
+{ Test the TStringGrid component with broadcast label }
+var
+  R: TRect;
+  Win: TGridTestWindow;
+begin
+  R.Assign(5, 2, 60, 20);
+  Win := TGridTestWindow.Create(R);
+  if Win <> nil then
+    Desktop.Insert(Win);
+end;
+
+procedure TMyApp.TestStringGrid3;
+{ Test the TStringGrid component with callback label }
+var
+  R: TRect;
+  Win: TWindow;
+  Grid: TStringGrid;
+  HScrollBar, VScrollBar: TScrollBar;
+  I: Integer;
+begin
+  R.Assign(8, 3, 65, 21);
+  Win := TWindow.Create(R, 'StringGrid (Callback)', wnNoNumber);
+  if Win <> nil then begin
+    Win.Options := Win.Options or ofTileable;
+    Win.Flags := Win.Flags and not wfZoom;
+
+    { Create vertical scrollbar }
+    Win.GetExtent(R);
+    R.A.X := R.B.X - 2;
+    R.B.X := R.B.X - 1;
+    R.A.Y := 1;
+    R.B.Y := R.B.Y - 4;
+    VScrollBar := TScrollBar.Create(R);
+    VScrollBar.GrowMode := gfGrowLoX + gfGrowHiX + gfGrowHiY;
+    Win.Insert(VScrollBar);
+
+    { Create horizontal scrollbar }
+    Win.GetExtent(R);
+    R.A.X := 1;
+    R.B.X := R.B.X - 2;
+    R.A.Y := R.B.Y - 4;
+    R.B.Y := R.B.Y - 3;
+    HScrollBar := TScrollBar.Create(R);
+    HScrollBar.GrowMode := gfGrowLoY + gfGrowHiY + gfGrowHiX;
+    Win.Insert(HScrollBar);
+
+    { Create the string grid }
+    Win.GetExtent(R);
+    R.A.X := 1;
+    R.A.Y := 1;
+    R.B.X := R.B.X - 2;
+    R.B.Y := R.B.Y - 4;
+    Grid := TStringGrid.Create(R, 3, HScrollBar, VScrollBar);
+    Grid.GrowMode := gfGrowHiX + gfGrowHiY;
+
+    { Configure columns }
+    Grid.Columns[0].Title := 'Col 0';
+    Grid.Columns[0].Width := 8;
+    Grid.Columns[1].Title := 'Col 1';
+    Grid.Columns[1].Width := 15;
+    Grid.Columns[2].Title := 'Col 2';
+    Grid.Columns[2].Width := 12;
+
+    { Set grid options }
+    Grid.FixedRows := 1;
+    Grid.ShowGridLines := True;
+    Grid.SelectionMode := smCell;
+
+    { Set up callback }
+    Grid.OnCellFocused := OnGridCellFocused;
+    FCallbackGrid := Grid;
+
+    { Add test data }
+    Grid.RowCount := 11;
+    for I := 1 to 10 do begin
+      Grid[0, I] := ShortString(Format('R%d C0', [I]));
+      Grid[1, I] := ShortString(Format('Row %d Col 1', [I]));
+      Grid[2, I] := ShortString(Format('Data %d', [I]));
+    end;
+
+    Win.Insert(Grid);
+
+    { Add label to show cell info }
+    Win.GetExtent(R);
+    R.A.X := 1;
+    R.A.Y := R.B.Y - 3;
+    R.B.X := R.B.X - 1;
+    R.B.Y := R.B.Y - 2;
+    FGridCellLabel := TStaticText.Create(R, 'Click a cell (callback mode)');
+    Win.Insert(FGridCellLabel);
+
+    { Instructions }
+    Win.GetExtent(R);
+    R.A.X := 1;
+    R.A.Y := R.B.Y - 2;
+    R.B.X := R.B.X - 1;
+    R.B.Y := R.B.Y - 1;
+    Win.Insert(TStaticText.Create(R, 'Using OnCellFocused callback'));
+
+    Desktop.Insert(Win);
+    Grid.Select;
+  end;
+end;
+
+procedure TMyApp.OnGridCellFocused(Sender: TObject; Col, Row: Integer);
+var
+  Grid: TStringGrid;
+  S: ShortString;
+  CellText: ShortString;
+begin
+  if (Sender = FCallbackGrid) and (FGridCellLabel <> nil) then begin
+    Grid := TStringGrid(Sender);
+    CellText := Grid[Col, Row];
+    S := ShortString(Format('CB: %d,%d: %s', [Col, Row, string(CellText)]));
+    if FGridCellLabel.Text <> nil then
+      DisposeStr(FGridCellLabel.Text);
+    FGridCellLabel.Text := NewStr(S);
+    FGridCellLabel.DrawView;
+  end;
 end;
 
 { Editor test cases }
