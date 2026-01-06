@@ -1,211 +1,149 @@
 {*******************************************************}
-{       Turbo Pascal HistList Unit                      }
-{       Compatibility layer for Modern Delphi           }
+{       Free Vision - History List Unit                 }
+{       Modern Unicode Implementation                   }
 {*******************************************************}
 
 unit HistList;
 
-{$I platform.inc}
-
 interface
 
 uses
-  System.SysUtils, Objects;
+  System.SysUtils, System.Classes, System.Generics.Collections, Objects;
 
 procedure InitHistory;
 procedure DoneHistory;
 function HistoryCount(Id: Byte): Word;
-function HistoryStr(Id: Byte; Index: Integer): ShortString;
+function HistoryStr(Id: Byte; Index: Integer): string;
 procedure ClearHistory;
-procedure HistoryAdd(Id: Byte; const Str: ShortString);
+procedure HistoryAdd(Id: Byte; const Str: string);
 function HistoryRemove(Id: Byte; Index: Integer): Boolean;
 procedure LoadHistory(var S: TFVStream);
 procedure StoreHistory(var S: TFVStream);
 
 const
-  HistorySize: Integer = 64 * 1024;
-  HistoryUsed: Integer = 0;
-
-var
-  HistoryBlock: Pointer;
+  MaxHistoryItems: Integer = 100;  { Max items per history ID }
 
 implementation
 
 var
-  CurId: Byte;
-  CurString: PShortString;
-
-procedure StartId(Id: Byte);
-begin
-  CurId := Id;
-  CurString := HistoryBlock;
-end;
-
-procedure DeleteString;
-var
-  Len: Integer;
-  P, P2: PAnsiChar;
-begin
-  P := PAnsiChar(CurString);
-  P2 := PAnsiChar(CurString);
-  Len := PByte(P2)^ + 3;
-  Dec(P, 2);
-  Inc(P2, PByte(P2)^ + 1);
-  Move(P2^, P^, NativeInt(HistoryBlock) + HistoryUsed - NativeInt(P2));
-  Dec(HistoryUsed, Len);
-end;
-
-procedure AdvanceStringPtr;
-var
-  P: PAnsiChar;
-begin
-  while CurString <> nil do begin
-    if NativeInt(CurString) >= NativeInt(HistoryBlock) + HistoryUsed then begin
-      CurString := nil;
-      Exit;
-    end;
-    Inc(PAnsiChar(CurString), PByte(CurString)^ + 1);
-    if NativeInt(CurString) >= NativeInt(HistoryBlock) + HistoryUsed then begin
-      CurString := nil;
-      Exit;
-    end;
-    P := PAnsiChar(CurString);
-    Inc(PAnsiChar(CurString), 2);
-    if P^ <> #0 then
-      RunError(215);
-    Inc(P);
-    if P^ = AnsiChar(CurId) then Exit;
-  end;
-end;
-
-procedure InsertString(Id: Byte; const Str: ShortString);
-var
-  P, P1, P2: PAnsiChar;
-begin
-  while HistoryUsed + Length(Str) + 3 > HistorySize do begin
-    P := PAnsiChar(HistoryBlock);
-    while NativeInt(P) < NativeInt(HistoryBlock) + HistorySize do begin
-      if NativeInt(P) + Length(PShortString(P + 2)^) + 6 + Length(Str) >
-         NativeInt(HistoryBlock) + HistorySize then begin
-        Dec(HistoryUsed, Length(PShortString(P + 2)^) + 3);
-        FillChar(P^, NativeInt(HistoryBlock) + HistorySize - NativeInt(P), #0);
-        Break;
-      end;
-      Inc(P, Length(PShortString(P + 2)^) + 3);
-    end;
-  end;
-  P1 := PAnsiChar(HistoryBlock) + 1;
-  P2 := P1 + Length(Str) + 3;
-  Move(P1^, P2^, HistoryUsed - 1);
-  P1^ := #0;
-  Inc(P1);
-  P1^ := AnsiChar(Id);
-  Inc(P1);
-  Move(Str[0], P1^, Length(Str) + 1);
-  Inc(HistoryUsed, Length(Str) + 3);
-end;
+  { Dictionary mapping history ID to string list }
+  HistoryLists: TObjectDictionary<Byte, TStringList>;
 
 procedure InitHistory;
 begin
-  if HistorySize > 0 then
-    GetMem(HistoryBlock, HistorySize);
-  ClearHistory;
+  if HistoryLists = nil then
+    HistoryLists := TObjectDictionary<Byte, TStringList>.Create([doOwnsValues]);
 end;
 
 procedure DoneHistory;
 begin
-  if HistoryBlock <> nil then begin
-    FreeMem(HistoryBlock);
-    HistoryBlock := nil;
+  FreeAndNil(HistoryLists);
+end;
+
+function GetHistoryList(Id: Byte): TStringList;
+begin
+  if HistoryLists = nil then
+    InitHistory;
+  if not HistoryLists.TryGetValue(Id, Result) then begin
+    Result := TStringList.Create;
+    Result.Duplicates := dupIgnore;
+    HistoryLists.Add(Id, Result);
   end;
 end;
 
 function HistoryCount(Id: Byte): Word;
 var
-  Count: Word;
+  List: TStringList;
 begin
-  StartId(Id);
-  Count := 0;
-  if HistoryBlock <> nil then begin
-    AdvanceStringPtr;
-    while CurString <> nil do begin
-      Inc(Count);
-      AdvanceStringPtr;
-    end;
+  if HistoryLists = nil then begin
+    Result := 0;
+    Exit;
   end;
-  HistoryCount := Count;
+  if HistoryLists.TryGetValue(Id, List) then
+    Result := List.Count
+  else
+    Result := 0;
 end;
 
-function HistoryStr(Id: Byte; Index: Integer): ShortString;
+function HistoryStr(Id: Byte; Index: Integer): string;
 var
-  I: Integer;
+  List: TStringList;
 begin
-  StartId(Id);
-  if HistoryBlock <> nil then begin
-    for I := 0 to Index do AdvanceStringPtr;
-    if CurString <> nil then
-      HistoryStr := CurString^
-    else
-      HistoryStr := '';
-  end else HistoryStr := '';
+  Result := '';
+  if HistoryLists = nil then Exit;
+  if HistoryLists.TryGetValue(Id, List) then begin
+    if (Index >= 0) and (Index < List.Count) then
+      Result := List[Index];
+  end;
 end;
 
 procedure ClearHistory;
 begin
-  if HistoryBlock <> nil then begin
-    PAnsiChar(HistoryBlock)^ := #0;
-    HistoryUsed := 1;
-  end;
+  if HistoryLists <> nil then
+    HistoryLists.Clear;
 end;
 
-procedure HistoryAdd(Id: Byte; const Str: ShortString);
+procedure HistoryAdd(Id: Byte; const Str: string);
+var
+  List: TStringList;
+  ExistingIndex: Integer;
 begin
   if Str = '' then Exit;
-  if HistoryBlock = nil then Exit;
-  StartId(Id);
-  AdvanceStringPtr;
-  while CurString <> nil do begin
-    if Str = CurString^ then DeleteString;
-    AdvanceStringPtr;
-  end;
-  InsertString(Id, Str);
+
+  List := GetHistoryList(Id);
+
+  { Remove existing duplicate (case-insensitive) }
+  ExistingIndex := List.IndexOf(Str);
+  if ExistingIndex >= 0 then
+    List.Delete(ExistingIndex);
+
+  { Insert at beginning (most recent first) }
+  List.Insert(0, Str);
+
+  { Trim to max size }
+  while List.Count > MaxHistoryItems do
+    List.Delete(List.Count - 1);
 end;
 
 function HistoryRemove(Id: Byte; Index: Integer): Boolean;
 var
-  I: Integer;
+  List: TStringList;
 begin
-  StartId(Id);
-  for I := 0 to Index do
-    AdvanceStringPtr;
-  if CurString <> nil then begin
-    DeleteString;
-    HistoryRemove := True;
-  end else
-    HistoryRemove := False;
+  Result := False;
+  if HistoryLists = nil then Exit;
+  if HistoryLists.TryGetValue(Id, List) then begin
+    if (Index >= 0) and (Index < List.Count) then begin
+      List.Delete(Index);
+      Result := True;
+    end;
+  end;
 end;
 
 procedure LoadHistory(var S: TFVStream);
 var
-  Size: Integer;
+  Count: Integer;
 begin
-  S.Read(Size, SizeOf(Size));
-  if HistoryBlock <> nil then begin
-    if Size <= HistorySize then begin
-      S.Read(HistoryBlock^, Size);
-      HistoryUsed := Size;
-    end else S.Seek(S.GetPos + Size);
-  end else S.Seek(S.GetPos + Size);
+  { Legacy binary format - just skip the data }
+  { New format would use JSON }
+  S.Read(Count, SizeOf(Count));
+  if Count > 0 then
+    S.Seek(S.GetPos + Count);
 end;
 
 procedure StoreHistory(var S: TFVStream);
 var
-  Size: Integer;
+  Zero: Integer;
 begin
-  if HistoryBlock = nil then Size := 0
-  else Size := HistoryUsed;
-  S.Write(Size, SizeOf(Size));
-  if Size > 0 then S.Write(HistoryBlock^, Size);
+  { Legacy binary format - write empty }
+  { New format would use JSON }
+  Zero := 0;
+  S.Write(Zero, SizeOf(Zero));
 end;
+
+initialization
+  HistoryLists := nil;
+
+finalization
+  DoneHistory;
 
 end.

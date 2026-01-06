@@ -5,8 +5,6 @@
 
 unit FVSerialization;
 
-{$I platform.inc}
-
 interface
 
 uses

@@ -5,8 +5,6 @@
 
 unit FVInterfaces;
 
-{$I platform.inc}
-
 interface
 
 uses

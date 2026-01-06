@@ -12,12 +12,10 @@
 
 unit ColorSel;
 
-{$I platform.inc}
-
 interface
 
 uses
-  FVCommon, FVConsts, Objects, Drivers, Views, Dialogs;
+  FVCommon, FVConsts, Objects, Drivers, Views, Dialogs, FVBoxChars;
 
 const
   { Color selector palettes }
@@ -43,14 +41,14 @@ type
 
   { TColorItem - Record for individual color settings }
   TColorItem = record
-    Name: Objects.PString;
+    Name: string;
     Index: Byte;
     Next: PColorItem;
   end;
 
   { TColorGroup - Record for groups of color settings }
   TColorGroup = record
-    Name: Objects.PString;
+    Name: string;
     Index: Byte;
     Items: PColorItem;
     Next: PColorGroup;
@@ -94,18 +92,17 @@ type
   TColorDisplay = class(TView)
   private
     FColor: PByte;
-    FText: Objects.PString;
+    FText: string;
     function GetPalette: PPalette; override;
   public
-    constructor Create(var Bounds: TRect; const AText: ShortString); reintroduce; virtual;
+    constructor Create(var Bounds: TRect; const AText: string); reintroduce; virtual;
     constructor Load(var S: TFVStream); override;
-    destructor Destroy; override;
     procedure Draw; override;
     procedure HandleEvent(var Event: TEvent); override;
     procedure SetColor(AColor: PByte); virtual;
     procedure Store(var S: TFVStream);
     property Color: PByte read FColor write FColor;
-    property Text: Objects.PString read FText write FText;
+    property Text: string read FText write FText;
   end;
 
   { TColorGroupList - List of color groups }
@@ -175,8 +172,8 @@ type
   end;
 
 { Helper functions to create color items and groups }
-function ColorItem(const Name: ShortString; Index: Byte; Next: PColorItem): PColorItem;
-function ColorGroup(const Name: ShortString; Items: PColorItem; Next: PColorGroup): PColorGroup;
+function ColorItem(const Name: string; Index: Byte; Next: PColorItem): PColorItem;
+function ColorGroup(const Name: string; Items: PColorItem; Next: PColorGroup): PColorGroup;
 
 { Dispose functions }
 procedure DisposeColorItem(Item: PColorItem);
@@ -205,23 +202,23 @@ uses
 { Helper Functions                                                           }
 {****************************************************************************}
 
-function ColorItem(const Name: ShortString; Index: Byte; Next: PColorItem): PColorItem;
+function ColorItem(const Name: string; Index: Byte; Next: PColorItem): PColorItem;
 var
   Item: PColorItem;
 begin
   New(Item);
-  Item^.Name := Objects.NewStr(Name);
+  Item^.Name := Name;
   Item^.Index := Index;
   Item^.Next := Next;
   Result := Item;
 end;
 
-function ColorGroup(const Name: ShortString; Items: PColorItem; Next: PColorGroup): PColorGroup;
+function ColorGroup(const Name: string; Items: PColorItem; Next: PColorGroup): PColorGroup;
 var
   Group: PColorGroup;
 begin
   New(Group);
-  Group^.Name := Objects.NewStr(Name);
+  Group^.Name := Name;
   Group^.Items := Items;
   Group^.Next := Next;
   Group^.Index := 0;
@@ -235,8 +232,7 @@ begin
   while Item <> nil do
   begin
     Next := Item^.Next;
-    if Item^.Name <> nil then
-      Objects.DisposeStr(Item^.Name);
+    { Name is now a managed string }
     Dispose(Item);
     Item := Next;
   end;
@@ -249,8 +245,7 @@ begin
   while Group <> nil do
   begin
     Next := Group^.Next;
-    if Group^.Name <> nil then
-      Objects.DisposeStr(Group^.Name);
+    { Name is now a managed string }
     DisposeColorItem(Group^.Items);
     Dispose(Group);
     Group := Next;
@@ -370,12 +365,13 @@ end;
 
 procedure TColorSelector.Draw;
 const
-  Icon: AnsiChar = #219;  { Full block character }
+  Icon: Char = BlockFull;  { Full block character }
 var
   B: TDrawBuffer;
   C, I, J: Integer;
+  MarkerAttr: Byte;
 begin
-  MoveChar(B, ' ', $70, Size.X);
+  DrawChar(B, 0, ' ', $70, Size.X);
   for I := 0 to Size.Y - 1 do
   begin
     if I < 4 then
@@ -384,13 +380,15 @@ begin
       begin
         C := I * 4 + J;
         { Each color cell is 3 characters wide }
-        MoveChar(B[J * 3], Icon, Byte(C), 3);
+        DrawChar(B, J * 3, Icon, Byte(C), 3);
         if C = FColor then
         begin
-          { Mark selected color with character 8 (bullet) }
-          WordRec(B[J * 3 + 1]).Lo := 8;
+          { Mark selected color with bullet - use DrawChar for proper Unicode }
           if C = 0 then
-            WordRec(B[J * 3 + 1]).Hi := $70;  { Visible marker on black }
+            MarkerAttr := $70  { Visible marker on black }
+          else
+            MarkerAttr := Byte(C);
+          DrawChar(B, J * 3 + 1, BulletPt, MarkerAttr, 1);
         end;
       end;
     end;
@@ -526,18 +524,19 @@ const
   Button = ' ( ) ';
 var
   B: TDrawBuffer;
-  C, I: Integer;
-  S: ShortString;
+  I: Integer;
+  S: string;
 begin
-  MoveChar(B, ' ', $07, Size.X);
+  DrawChar(B, 0, ' ', $07, Size.X);
   for I := 0 to 4 do
   begin
     if I < Size.Y then
     begin
-      MoveChar(B, ' ', $07, Size.X);
-      MoveStr(B[0], Button, $07);
+      DrawChar(B, 0, ' ', $07, Size.X);
+      DrawStr(B, 0, Button, $07);
       if I = FColor then
-        WordRec(B[2]).Lo := Byte(#7);  { Bullet marker }
+        { Use DrawChar for proper Unicode bullet display }
+        DrawChar(B, 2, BulletPt, $07, 1);
       case I of
         0: S := 'Normal';
         1: S := 'Highlight';
@@ -547,7 +546,7 @@ begin
       else
         S := '';
       end;
-      MoveStr(B[Length(Button)], S, $07);
+      DrawStr(B, Length(Button), S, $07);
       WriteLine(0, I, Size.X, 1, B);
     end;
   end;
@@ -600,14 +599,14 @@ end;
 { TColorDisplay Class                                                        }
 {****************************************************************************}
 
-constructor TColorDisplay.Create(var Bounds: TRect; const AText: ShortString);
+constructor TColorDisplay.Create(var Bounds: TRect; const AText: string);
 begin
   inherited Create(Bounds);
   EventMask := EventMask or evBroadcast;
   if AText <> '' then
-    FText := Objects.NewStr(AText)
+    FText := AText
   else
-    FText := Objects.NewStr('Text Text ');
+    FText := 'Text Text ';
   FColor := nil;
 end;
 
@@ -615,14 +614,9 @@ constructor TColorDisplay.Load(var S: TFVStream);
 begin
   inherited Load(S);
   FText := S.ReadStr;
+  if FText = '' then
+    FText := 'Text Text ';
   FColor := nil;
-end;
-
-destructor TColorDisplay.Destroy;
-begin
-  if FText <> nil then
-    Objects.DisposeStr(FText);
-  inherited Destroy;
 end;
 
 procedure TColorDisplay.Store(var S: TFVStream);
@@ -642,7 +636,7 @@ procedure TColorDisplay.Draw;
 var
   B: TDrawBuffer;
   C: Byte;
-  S: ShortString;
+  S: string;
   I, Len: Integer;
 begin
   if FColor <> nil then
@@ -653,8 +647,8 @@ begin
   if C = 0 then
     C := $4E;  { Error attribute if color is 0 }
 
-  if FText <> nil then
-    S := FText^
+  if FText <> '' then
+    S := FText
   else
     S := 'Text';
 
@@ -667,7 +661,7 @@ begin
 
   { Fill buffer by repeating text pattern }
   for I := 0 to (Size.X div Len) do
-    MoveStr(B[I * Len], S, C);
+    DrawStr(B, I * Len, S, C);
 
   WriteLine(0, 0, Size.X, Size.Y, B);
 end;
@@ -797,8 +791,8 @@ var
   G: PColorGroup;
 begin
   G := GetGroup(Item);
-  if (G <> nil) and (G^.Name <> nil) then
-    Result := Copy(G^.Name^, 1, MaxLen)
+  if (G <> nil) and (G^.Name <> '') then
+    Result := Copy(G^.Name, 1, MaxLen)
   else
     Result := '';
 end;
@@ -889,8 +883,8 @@ var
   P: PColorItem;
 begin
   P := GetItem(Item);
-  if (P <> nil) and (P^.Name <> nil) then
-    Result := Copy(P^.Name^, 1, MaxLen)
+  if (P <> nil) and (P^.Name <> '') then
+    Result := Copy(P^.Name, 1, MaxLen)
   else
     Result := '';
 end;
@@ -989,9 +983,13 @@ begin
 end;
 
 constructor TColorDialog.Load(var S: TFVStream);
+var
+  Temp: string;
 begin
   inherited Load(S);
-  FPal := S.ReadStr^;
+  Temp := S.ReadStr;
+  { TPalette stores color bytes, not text - use AnsiString conversion }
+  FPal := AnsiString(Temp);
   FGroups := nil;
 end;
 
@@ -1002,12 +1000,9 @@ begin
 end;
 
 procedure TColorDialog.Store(var S: TFVStream);
-var
-  P: Objects.PString;
 begin
   inherited Store(S);
-  P := @FPal;
-  S.WriteStr(P);
+  S.WriteStr(string(FPal));  { TPalette stores color bytes, not text }
 end;
 
 function TColorDialog.GetPalette: PPalette;

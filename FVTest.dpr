@@ -1,4 +1,4 @@
-program FVTest;
+﻿program FVTest;
 
 {$APPTYPE CONSOLE}
 
@@ -7,7 +7,9 @@ uses
   FVInterfaces in 'src\FVInterfaces.pas',
   FVSerialization in 'src\FVSerialization.pas',
   Objects in 'src\Objects.pas',
-  Video in 'src\Video.pas',
+  FVScreen in 'src\FVScreen.pas',
+  FVBoxChars in 'src\FVBoxChars.pas',
+  FVUTF8 in 'src\FVUTF8.pas',
   Drivers in 'src\Drivers.pas',
   Views in 'src\Views.pas',
   Menus in 'src\Menus.pas',
@@ -84,6 +86,7 @@ begin
   Flush(ExceptionLog);
 end;
 
+
 type
   TMyStatusLine = class;
   TMyApp = class;
@@ -94,7 +97,7 @@ type
   TTabTestDialog = class;
 
   TMyStatusLine = class(TStatusLine)
-    function Hint(AHelpCtx: Word): ShortString; override;
+    function Hint(AHelpCtx: Word): string; override;
   end;
 
   TMyApp = class(TApplication)
@@ -170,7 +173,7 @@ type
 
   TMyWindow = class(TWindow)
   public
-    constructor Create(var Bounds: TRect; ATitle: ShortString; ANumber: Integer); reintroduce; virtual;
+    constructor Create(var Bounds: TRect; const ATitle: string; ANumber: Integer); reintroduce; virtual;
   end;
 
   { Custom dialog for testing dynamic tab add/remove }
@@ -179,7 +182,7 @@ type
     FTabCtrl: TTab;
     FTabCounter: Integer;
   public
-    constructor Create(var Bounds: TRect; ATitle: ShortString); reintroduce; virtual;
+    constructor Create(var Bounds: TRect; const ATitle: string); reintroduce; virtual;
     procedure HandleEvent(var Event: TEvent); override;
     procedure AddNewTab;
     procedure RemoveCurrentTab;
@@ -191,12 +194,12 @@ var
   MyApp: TMyApp;
   WindowCount: Integer;
 
-function TMyStatusLine.Hint(AHelpCtx: Word): ShortString;
+function TMyStatusLine.Hint(AHelpCtx: Word): string;
 begin
-  Result := ShortString(FormatDateTime('hh:nn:ss', Now));
+  Result := FormatDateTime('hh:nn:ss', Now);
 end;
 
-constructor TMyWindow.Create(var Bounds: TRect; ATitle: ShortString; ANumber: Integer);
+constructor TMyWindow.Create(var Bounds: TRect; const ATitle: string; ANumber: Integer);
 begin
   inherited Create(Bounds, ATitle, ANumber);
   Options := Options or ofTileable;
@@ -208,7 +211,7 @@ var
   R: TRect;
   CalView: TCalendarView;
   Y, M, D: Word;
-  S: ShortString;
+  S: string;
 begin
   inherited Create(Bounds, 'Calendar (Broadcast)', wnNoNumber);
   Options := Options or ofTileable;
@@ -224,7 +227,7 @@ begin
 
   { Add label to show selected date }
   CalView.GetDate(Y, M, D);
-  S := ShortString(Format('Selected: %d/%d/%d', [M, D, Y]));
+  S := Format('Selected: %d/%d/%d', [M, D, Y]);
   R.Assign(2, 10, 26, 11);
   FDateLabel := TStaticText.Create(R, S);
   Insert(FDateLabel);
@@ -240,7 +243,7 @@ procedure TCalendarWindow.HandleEvent(var Event: TEvent);
 var
   Cal: TCalendarView;
   Y, M, D: Word;
-  S: ShortString;
+  S: string;
 begin
   inherited HandleEvent(Event);
 
@@ -249,10 +252,8 @@ begin
     Cal := TCalendarView(Event.InfoPtr);
     if (Cal <> nil) and (FDateLabel <> nil) then begin
       Cal.GetDate(Y, M, D);
-      S := ShortString(Format('Selected: %d/%d/%d', [M, D, Y]));
-      if FDateLabel.Text <> nil then
-        DisposeStr(FDateLabel.Text);
-      FDateLabel.Text := NewStr(S);
+      S := Format('Selected: %d/%d/%d', [M, D, Y]);
+      FDateLabel.Text := S;
       FDateLabel.DrawView;
     end;
     ClearEvent(Event);
@@ -323,9 +324,9 @@ begin
   { Add test data - start at row 1 (row 0 is header) }
   FGrid.RowCount := 16;  { 1 header + 15 data rows }
   for I := 1 to 15 do begin
-    FGrid[0, I] := ShortString(IntToStr(I));
-    FGrid[1, I] := ShortString('Item ' + IntToStr(I));
-    FGrid[2, I] := ShortString(Format('%.2f', [Random * 100]));
+    FGrid[0, I] := IntToStr(I);
+    FGrid[1, I] := 'Item ' + IntToStr(I);
+    FGrid[2, I] := Format('%.2f', [Random * 100]);
     case I mod 3 of
       0: FGrid[3, I] := 'Active';
       1: FGrid[3, I] := 'Pending';
@@ -358,9 +359,9 @@ end;
 procedure TGridTestWindow.HandleEvent(var Event: TEvent);
 var
   G: TStringGrid;
-  S: ShortString;
+  S: string;
   Col, Row: Integer;
-  CellText: ShortString;
+  CellText: string;
 begin
   inherited HandleEvent(Event);
 
@@ -371,10 +372,8 @@ begin
       Col := G.FocusedCol;
       Row := G.FocusedRow;
       CellText := G[Col, Row];
-      S := ShortString(Format('%d,%d: %s', [Col, Row, string(CellText)]));
-      if FCellLabel.Text <> nil then
-        DisposeStr(FCellLabel.Text);
-      FCellLabel.Text := NewStr(S);
+      S := Format('%d,%d: %s', [Col, Row, CellText]);
+      FCellLabel.Text := S;
       FCellLabel.DrawView;
     end;
     ClearEvent(Event);
@@ -382,7 +381,7 @@ begin
 end;
 
 { TTabTestDialog }
-constructor TTabTestDialog.Create(var Bounds: TRect; ATitle: ShortString);
+constructor TTabTestDialog.Create(var Bounds: TRect; const ATitle: string);
 begin
   inherited Create(Bounds, ATitle);
   FTabCtrl := nil;
@@ -451,18 +450,18 @@ var
   B: TDrawBuffer;
   C: Byte;
   I, J: Integer;
-  S: ShortString;
+  S: string;
 begin
   C := GetColor(1);  { Normal color }
   for I := 0 to Size.Y - 1 do begin
-    MoveChar(B, ' ', C, Size.X);
+    DrawChar(B, 0, ' ', C, Size.X);
     J := Delta.Y + I;
     if J < Limit.Y then begin
-      S := ShortString(Format('Line %3d: ', [J + 1]));
+      S := Format('Line %3d: ', [J + 1]);
       { Add some content to show horizontal scrolling }
       S := S + 'The quick brown fox jumps over the lazy dog. ABCDEFGHIJKLMNOP';
       if Delta.X < Length(S) then begin
-        MoveStr(B, Copy(S, Delta.X + 1, Size.X), C);
+        DrawStr(B, 0, Copy(S, Delta.X + 1, Size.X), C);
       end;
     end;
     WriteLine(0, I, Size.X, 1, B);
@@ -646,7 +645,7 @@ begin
   Inc(WindowCount);
   R.Assign(0, 0, 40, 12);
   R.Move((WindowCount mod 5) * 2, (WindowCount mod 5));
-  Win := TMyWindow.Create(R, 'Window ' + ShortString(IntToStr(WindowCount)), WindowCount);
+  Win := TMyWindow.Create(R, 'Window ' + IntToStr(WindowCount), WindowCount);
   if Desktop <> nil then Desktop.Insert(Win);
 end;
 
@@ -851,19 +850,19 @@ end;
 procedure TMyApp.TestMsgBox;
 begin
   { Test Warning message }
-  MessageBox('This is a warning message.', nil, mfWarning + mfOKButton);
+  MessageBox('This is a warning message.', mfWarning + mfOKButton);
 
   { Test Error message with OK/Cancel }
   MessageBox('An error has occurred!'#13#10'Do you want to continue?',
-    nil, mfError + mfOKCancel);
+    mfError + mfOKCancel);
 
   { Test Information message }
   MessageBox('This is an information message.'#13#10 +
-    'It can have multiple lines.', nil, mfInformation + mfOKButton);
+    'It can have multiple lines.', mfInformation + mfOKButton);
 
   { Test Confirmation with Yes/No/Cancel }
   MessageBox('Do you want to save changes before exiting?',
-    nil, mfConfirmation + mfYesNoCancel);
+    mfConfirmation + mfYesNoCancel);
 end;
 
 procedure TMyApp.TestInputBox;
@@ -874,9 +873,9 @@ begin
   UserInput := 'Default Value';
   Result := InputBox('Enter Value', '~V~alue:', UserInput, 50);
   if Result = cmOK then
-    MessageBox('You entered: ' + UserInput, nil, mfInformation + mfOKButton)
+    MessageBox('You entered: ' + UserInput, mfInformation + mfOKButton)
   else
-    MessageBox('Input was cancelled.', nil, mfInformation + mfOKButton);
+    MessageBox('Input was cancelled.', mfInformation + mfOKButton);
 end;
 
 procedure TMyApp.TestFileOpen;
@@ -924,7 +923,7 @@ begin
       end;
     end;
     if C = cmFileOpen then
-      MessageBox('Selected file: ' + FileName, nil, mfInformation + mfOKButton);
+      MessageBox('Selected file: ' + FileName, mfInformation + mfOKButton);
   end;
 end;
 
@@ -935,7 +934,7 @@ begin
   Dlg := TChDirDialog.Create(cdNormal, 2);
   if Dlg <> nil then begin
     if ExecuteDialog(Dlg, nil) = cmOK then
-      MessageBox('Directory changed successfully.', nil, mfInformation + mfOKButton);
+      MessageBox('Directory changed successfully.', mfInformation + mfOKButton);
   end;
 end;
 
@@ -1022,7 +1021,7 @@ begin
 
     if Desktop.ExecView(Dlg) = cmOK then begin
       InputLine.GetData(Value);
-      MessageBox('First value entered: ' + IntToStr(Value), nil, mfInformation + mfOKButton);
+      MessageBox('First value entered: ' + IntToStr(Value), mfInformation + mfOKButton);
     end;
     Dlg.Free;
   end;
@@ -1050,7 +1049,6 @@ begin
   TimedMessageBox(
     'This message will close automatically in 5 seconds.'#13#10 +
     'Or click a button to close it now.',
-    nil,
     mfInformation + mfOKCancel,
     5);
 end;
@@ -1299,7 +1297,7 @@ begin
     if Result = cmOK then begin
       { Get the modified palette }
       Dlg.GetData(Pal);
-      MessageBox('Colors dialog completed (OK)', nil, mfInformation + mfOKButton);
+      MessageBox('Colors dialog completed (OK)', mfInformation + mfOKButton);
     end;
     Dlg.Free;
   end;
@@ -1469,7 +1467,7 @@ begin
     CalView.GetDate(Y, M, D);
     S := Format('Selected: %d/%d/%d', [M, D, Y]);
     R.Assign(2, 10, 26, 11);
-    FCalendarDateLabel := TStaticText.Create(R, ShortString(S));
+    FCalendarDateLabel := TStaticText.Create(R, S);
     Win.Insert(FCalendarDateLabel);
 
     { Instructions }
@@ -1490,9 +1488,7 @@ begin
     Calendar.GetDate(Y, M, D);
     S := ShortString(Format('Selected: %d/%d/%d', [M, D, Y]));
     { Update the label text }
-    if FCalendarDateLabel.Text <> nil then
-      DisposeStr(FCalendarDateLabel.Text);
-    FCalendarDateLabel.Text := NewStr(S);
+    FCalendarDateLabel.Text := string(S);
     FCalendarDateLabel.DrawView;
   end;
 end;
@@ -1550,7 +1546,7 @@ begin
     R.A.Y := 1;
     R.B.X := R.B.X - 2;
     R.B.Y := R.B.Y - 2;
-    Grid := TStringGrid.Create(R, 5, HScrollBar, VScrollBar);
+    Grid := TStringGrid.Create(R, 6, HScrollBar, VScrollBar);
     Grid.GrowMode := gfGrowHiX + gfGrowHiY;
 
     { Configure columns }
@@ -1570,9 +1566,13 @@ begin
     Grid.Columns[3].Width := 12;
     Grid.Columns[3].Alignment := gaCenter;
 
-    Grid.Columns[4].Title := 'Notes';
-    Grid.Columns[4].Width := 20;
+    Grid.Columns[4].Title := 'Unicode';
+    Grid.Columns[4].Width := 16;
     Grid.Columns[4].Alignment := gaLeft;
+
+    Grid.Columns[5].Title := 'Notes';
+    Grid.Columns[5].Width := 20;
+    Grid.Columns[5].Alignment := gaLeft;
 
     { Set grid options }
     Grid.FixedRows := 1;
@@ -1582,16 +1582,29 @@ begin
     { Add some test data - start at row 1 (row 0 is header) }
     Grid.RowCount := 21;  { 1 header + 20 data rows }
     for I := 1 to 20 do begin
-      Grid[0, I] := ShortString(IntToStr(I));
-      Grid[1, I] := ShortString('Item ' + IntToStr(I));
-      Grid[2, I] := ShortString(Format('%.2f', [Random * 1000]));
+      Grid[0, I] := IntToStr(I);
+      Grid[1, I] := 'Item ' + IntToStr(I);
+      Grid[2, I] := Format('%.2f', [Random * 1000]);
       case I mod 4 of
         0: Grid[3, I] := 'Active';
         1: Grid[3, I] := 'Pending';
         2: Grid[3, I] := 'Completed';
         3: Grid[3, I] := 'Cancelled';
       end;
-      Grid[4, I] := ShortString('Note for item ' + IntToStr(I));
+      { Unicode test data - various scripts and symbols }
+      case I mod 10 of
+        1: Grid[4, I] := 'Grüß Gott 🦚';        { German }
+        2: Grid[4, I] := 'Café français';    { French }
+        3: Grid[4, I] := 'Señor España';     { Spanish }
+        4: Grid[4, I] := 'Привет мир';       { Russian }
+        5: Grid[4, I] := 'Ελληνικά';         { Greek }
+        6: Grid[4, I] := '日本語テスト';      { Japanese }
+        7: Grid[4, I] := '中文测试';          { Chinese }
+        8: Grid[4, I] := '한국어';            { Korean }
+        9: Grid[4, I] := '★♠♥♦♣';            { Symbols }
+        0: Grid[4, I] := 'αβγδεζηθ';         { Greek letters }
+      end;
+      Grid[5, I] := 'Note for item ' + IntToStr(I);
     end;
 
     Win.Insert(Grid);
@@ -1676,9 +1689,9 @@ begin
     { Add test data }
     Grid.RowCount := 11;
     for I := 1 to 10 do begin
-      Grid[0, I] := ShortString(Format('R%d C0', [I]));
-      Grid[1, I] := ShortString(Format('Row %d Col 1', [I]));
-      Grid[2, I] := ShortString(Format('Data %d', [I]));
+      Grid[0, I] := Format('R%d C0', [I]);
+      Grid[1, I] := Format('Row %d Col 1', [I]);
+      Grid[2, I] := Format('Data %d', [I]);
     end;
 
     Win.Insert(Grid);
@@ -1708,16 +1721,14 @@ end;
 procedure TMyApp.OnGridCellFocused(Sender: TObject; Col, Row: Integer);
 var
   Grid: TStringGrid;
-  S: ShortString;
-  CellText: ShortString;
+  S: string;
+  CellText: string;
 begin
   if (Sender = FCallbackGrid) and (FGridCellLabel <> nil) then begin
     Grid := TStringGrid(Sender);
     CellText := Grid[Col, Row];
-    S := ShortString(Format('CB: %d,%d: %s', [Col, Row, string(CellText)]));
-    if FGridCellLabel.Text <> nil then
-      DisposeStr(FGridCellLabel.Text);
-    FGridCellLabel.Text := NewStr(S);
+    S := Format('CB: %d,%d: %s', [Col, Row, CellText]);
+    FGridCellLabel.Text := S;
     FGridCellLabel.DrawView;
   end;
 end;
@@ -1774,7 +1785,7 @@ begin
                  'Press Ctrl+Q F to Find'#13#10 +
                  'Press Ctrl+Q A to Replace'#13#10 +
                  'Try searching for "apple"',
-                 nil, mfInformation or mfOKButton);
+                 mfInformation or mfOKButton);
     end;
   end;
 end;
@@ -1815,7 +1826,7 @@ begin
                  'Press Ctrl+K F to Save As'#13#10 +
                  'Press Ctrl+K D to Save and Close'#13#10 +
                  'Edit the text and save to test file operations.',
-                 nil, mfInformation or mfOKButton);
+                 mfInformation or mfOKButton);
     end;
   end;
 end;
@@ -1881,7 +1892,7 @@ begin
                #13#10 +
                'In Destination window:'#13#10 +
                '  Paste: Shift+Ins or Ctrl+K C',
-               nil, mfInformation or mfOKButton);
+               mfInformation or mfOKButton);
   end;
 end;
 

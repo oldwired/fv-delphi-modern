@@ -6,37 +6,33 @@
 
 unit Menus;
 
-{$I platform.inc}
 {$R-}  { Disable range checking for legacy buffer operations }
 
 interface
 
 uses
-  {$IFDEF OS_WINDOWS}
   Winapi.Windows,
-  {$ENDIF}
   System.SysUtils,
-  Objects, Drivers, Views, fvconsts;
+  Objects, Drivers, Views, fvconsts, FVBoxChars;
 
 const
   CMenuView   = #2#3#4#5#6#7;
   CStatusLine = #2#3#4#5#6#7;
 
 type
-  TMenuStr = ShortString;
+  TMenuStr = string;
   PMenu = ^TMenu;
 
   PMenuItem = ^TMenuItem;
   TMenuItem = record
     Next: PMenuItem;
-    Name: PString;
+    Name: string;
     Command: Word;
     Disabled: Boolean;
     KeyCode: Word;
     HelpCtx: Word;
-    case SmallInt of
-      0: (Param: PString);
-      1: (SubMenu: PMenu);
+    Param: string;     { Used when Command <> 0 }
+    SubMenu: PMenu;    { Used when Command = 0 }
   end;
 
   TMenu = record
@@ -47,7 +43,7 @@ type
   PStatusItem = ^TStatusItem;
   TStatusItem = record
     Next: PStatusItem;
-    Text: PString;
+    Text: string;
     KeyCode: Word;
     Command: Word;
   end;
@@ -69,7 +65,7 @@ type
     function Execute: Word; override;
     function GetHelpCtx: Word; override;
     function GetPalette: PPalette; override;
-    function FindItem(Ch: AnsiChar): PMenuItem;
+    function FindItem(Ch: Char): PMenuItem;
     function HotKey(KeyCode: Word): PMenuItem;
     function NewSubView(var Bounds: TRect; AMenu: PMenu;
       AParentMenu: TMenuView): TMenuView; virtual;
@@ -108,7 +104,7 @@ type
     constructor Load(var S: TFVStream); override;
     destructor Destroy; override;
     function GetPalette: PPalette; override;
-    function Hint(AHelpCtx: Word): ShortString; virtual;
+    function Hint(AHelpCtx: Word): string; virtual;
     procedure Draw; override;
     procedure Update; virtual;
     procedure Store(var S: TFVStream);
@@ -127,7 +123,7 @@ function NewSubMenu(Name: TMenuStr; AHelpCtx: Word; SubMenu: PMenu;
   Next: PMenuItem): PMenuItem;
 function NewStatusDef(AMin, AMax: Word; AItems: PStatusItem;
   ANext: PStatusDef): PStatusDef;
-function NewStatusKey(AText: ShortString; AKeyCode: Word; ACommand: Word;
+function NewStatusKey(const AText: string; AKeyCode: Word; ACommand: Word;
   ANext: PStatusItem): PStatusItem;
 procedure RegisterMenus;
 
@@ -139,10 +135,10 @@ const
 
 implementation
 
-uses Video;
+uses FVScreen;
 
 const
-  SubMenuChar: array[Boolean] of AnsiChar = ('>', #16);
+  SubMenuChar: array[Boolean] of Char = ('>', SmallArrowRight);
 
 constructor TMenuView.Create(var Bounds: TRect);
 begin inherited Create(Bounds); EventMask := EventMask or evBroadcast; end;
@@ -152,7 +148,7 @@ begin inherited Load(S); Menu := nil; end;
 
 function TMenuView.Execute: Word;
 type MenuAction = (DoNothing, DoSelect, DoReturn);
-var AutoSelect, MouseActive: Boolean; Action: MenuAction; Ch: AnsiChar; Res: Word; R: TRect;
+var AutoSelect, MouseActive: Boolean; Action: MenuAction; Ch: Char; Res: Word; R: TRect;
   ItemShown, P: PMenuItem; Target: TMenuView; E: TEvent;
 
   procedure TrackMouse;
@@ -166,7 +162,7 @@ var AutoSelect, MouseActive: Boolean; Action: MenuAction; Ch: AnsiChar; Res: Wor
   procedure TrackKey(FindNext: Boolean);
     procedure NextItem; begin Current := Current.Next; if (Current = nil) and (Menu <> nil) then Current := Menu^.Items; end;
     procedure PrevItem; var Prv: PMenuItem; begin Prv := Current; if (Menu <> nil) and (Prv = Menu^.Items) then Prv := nil; repeat NextItem until (Current = nil) or (Current.Next = Prv); end;
-  begin if (Current <> nil) and (Menu <> nil) then repeat if FindNext then NextItem else PrevItem until (Current = nil) or (Current.Name <> nil); end;
+  begin if (Current <> nil) and (Menu <> nil) then repeat if FindNext then NextItem else PrevItem until (Current = nil) or (Current.Name <> ''); end;
 
   function MouseInOwner: Boolean;
   var Mouse: TPoint;
@@ -190,7 +186,7 @@ begin
       evMouseDown: if MouseInView(E.Where) or MouseInOwner then begin TrackMouse; if Size.Y = 1 then AutoSelect := True; end else Action := DoReturn;
       evMouseUp: begin TrackMouse;
         if MouseInOwner then Current := Menu^.Default
-        else if (Current <> nil) and (Current.Name <> nil) then Action := DoSelect
+        else if (Current <> nil) and (Current.Name <> '') then Action := DoSelect
         else if MouseActive or MouseInView(E.Where) then Action := DoReturn
         else begin Current := Menu^.Default; if Current = nil then Current := Menu^.Items; Action := DoNothing; end; end;
       evMouseMove: if E.Buttons <> 0 then begin TrackMouse; if not (MouseInView(E.Where) or MouseInOwner) and MouseInMenus then Action := DoReturn; end;
@@ -200,7 +196,7 @@ begin
         kbHome, kbEnd: if Size.Y <> 1 then begin Current := Menu^.Items; if E.KeyCode = kbEnd then TrackKey(False); end;
         kbEnter: begin if Size.Y = 1 then AutoSelect := True; Action := DoSelect; end;
         kbEsc: begin Action := DoReturn; if (ParentMenu = nil) or (ParentMenu.Size.Y <> 1) then ClearEvent(E); end;
-        else Target := Self; Ch := GetAltChar(E.KeyCode); if Ch = #0 then Ch := E.CharCode else Target := TopMenu;
+        else Target := Self; Ch := GetAltChar(E.KeyCode); if Ch = #0 then Ch := Char(E.CharCode) else Target := TopMenu;
           P := Target.FindItem(Ch);
           if P = nil then begin P := TopMenu.HotKey(E.KeyCode); if (P <> nil) and CommandEnabled(P.Command) then begin Res := P.Command; Action := DoReturn; end; end
           else if Target = Self then begin if Size.Y = 1 then AutoSelect := True; Action := DoSelect; Current := P; end
@@ -209,7 +205,7 @@ begin
       evCommand: if E.Command = cmMenu then begin AutoSelect := False; if ParentMenu <> nil then Action := DoReturn; end else Action := DoReturn;
     end;
     if ItemShown <> Current then begin OldItem := ItemShown; ItemShown := Current; DrawView; OldItem := nil; end;
-    if (Action = DoSelect) or ((Action = DoNothing) and AutoSelect) then if Current <> nil then with Current^ do if Name <> nil then
+    if (Action = DoSelect) or ((Action = DoNothing) and AutoSelect) then if Current <> nil then with Current^ do if Name <> '' then
       if Command = 0 then begin if E.What and (evMouseDown + evMouseMove) <> 0 then PutEvent(E);
         GetItemRectX(Current, R); R.A.X := R.A.X + Origin.X; R.A.Y := R.B.Y + Origin.Y; R.B.X := Owner.Size.X; R.B.Y := Owner.Size.Y;
         Target := TopMenu.NewSubView(R, SubMenu, Self); Res := Owner.ExecView(Target); FreeAndNil(Target);
@@ -223,21 +219,21 @@ end;
 
 function TMenuView.GetHelpCtx: Word;
 var C: TMenuView;
-begin C := Self; while (C <> nil) and ((C.Current = nil) or (C.Current.HelpCtx = hcNoContext) or (C.Current.Name = nil)) do C := C.ParentMenu;
+begin C := Self; while (C <> nil) and ((C.Current = nil) or (C.Current.HelpCtx = hcNoContext) or (C.Current.Name = '')) do C := C.ParentMenu;
   if C <> nil then GetHelpCtx := C.Current.HelpCtx else GetHelpCtx := hcNoContext; end;
 
 function TMenuView.GetPalette: PPalette; const P: String[Length(CMenuView)] = CMenuView; begin GetPalette := PPalette(@P); end;
 
-function TMenuView.FindItem(Ch: AnsiChar): PMenuItem;
+function TMenuView.FindItem(Ch: Char): PMenuItem;
 var I: SmallInt; P: PMenuItem;
 begin Ch := UpCase(Ch); P := Menu^.Items;
-  while P <> nil do begin if (P.Name <> nil) and (not P.Disabled) then begin I := Pos('~', P.Name^);
-    if (I <> 0) and (Ch = UpCase(P.Name^[I + 1])) then begin FindItem := P; Exit; end; end; P := P.Next; end;
+  while P <> nil do begin if (P.Name <> '') and (not P.Disabled) then begin I := Pos('~', P.Name);
+    if (I <> 0) and (Ch = UpCase(Char(P.Name[I + 1]))) then begin FindItem := P; Exit; end; end; P := P.Next; end;
   FindItem := nil; end;
 
 function TMenuView.HotKey(KeyCode: Word): PMenuItem;
   function FindHotKey(P: PMenuItem): PMenuItem; var T: PMenuItem;
-  begin while P <> nil do begin if P.Name <> nil then if P.Command = 0 then begin T := FindHotKey(P.SubMenu^.Items); if T <> nil then begin FindHotKey := T; Exit; end; end
+  begin while P <> nil do begin if P.Name <> '' then if P.Command = 0 then begin T := FindHotKey(P.SubMenu^.Items); if T <> nil then begin FindHotKey := T; Exit; end; end
     else if not P.Disabled and (P.KeyCode <> kbNoKey) and (P.KeyCode = KeyCode) then begin FindHotKey := P; Exit; end; P := P.Next; end; FindHotKey := nil; end;
 begin HotKey := FindHotKey(Menu^.Items); end;
 
@@ -249,7 +245,7 @@ procedure TMenuView.Store(var S: TFVStream); begin inherited Store(S); end;
 procedure TMenuView.HandleEvent(var Event: TEvent);
 var CallDraw: Boolean; P: PMenuItem;
   procedure UpdateMenu(AMenu: PMenu); var MI: PMenuItem; CommandState: Boolean;
-  begin MI := AMenu^.Items; while MI <> nil do begin if MI.Name <> nil then if MI.Command = 0 then UpdateMenu(MI.SubMenu)
+  begin MI := AMenu^.Items; while MI <> nil do begin if MI.Name <> '' then if MI.Command = 0 then UpdateMenu(MI.SubMenu)
     else begin CommandState := CommandEnabled(MI.Command); if MI.Disabled = CommandState then begin MI.Disabled := not CommandState; CallDraw := True; end; end; MI := MI.Next; end; end;
   procedure DoSelect; begin PutEvent(Event); Event.Command := Owner.ExecView(Self);
     if (Event.Command <> 0) and CommandEnabled(Event.Command) then begin Event.What := evCommand; Event.InfoPtr := nil; PutEvent(Event); end; ClearEvent(Event); end;
@@ -272,12 +268,12 @@ destructor TMenuBar.Destroy; begin if Menu <> nil then DisposeMenu(Menu); inheri
 procedure TMenuBar.Draw;
 var I, J: Integer; CNormal, CSelect, CNormDisabled, CSelDisabled, Color: Word; P: PMenuItem; B: TDrawBuffer;
 begin CNormal := GetColor($0301); CSelect := GetColor($0604); CNormDisabled := GetColor($0202); CSelDisabled := GetColor($0505);
-  MoveChar(B, ' ', Byte(CNormal), Size.X);
-  if Menu <> nil then begin I := 0; P := Menu^.Items; while P <> nil do begin if P.Name <> nil then begin
+  DrawChar(B, 0, ' ', Byte(CNormal), Size.X);
+  if Menu <> nil then begin I := 0; P := Menu^.Items; while P <> nil do begin if P.Name <> '' then begin
     if P.Disabled then begin if P = Current then Color := CSelDisabled else Color := CNormDisabled; end else begin if P = Current then Color := CSelect else Color := CNormal; end;
-    J := CStrLen(P.Name^);
+    J := CStrLen(P.Name);
     if I + J + 2 < MaxViewWidth then begin
-      MoveChar(B[I], ' ', Byte(Color), 1); MoveCStr(B[I + 1], P.Name^, Color); MoveChar(B[I + 1 + J], ' ', Byte(Color), 1);
+      DrawChar(B, I, ' ', Byte(Color), 1); DrawCStr(B, I + 1, P.Name, Color); DrawChar(B, I + 1 + J, ' ', Byte(Color), 1);
     end;
     Inc(I, J + 2); end; P := P.Next; end; end;
   WriteBuf(0, 0, Size.X, 1, B); end;
@@ -287,28 +283,32 @@ var I: SmallInt; P: PMenuItem;
 begin I := 0; R.Assign(0, 0, 0, 1);
   if Menu = nil then Exit;
   P := Menu^.Items;
-  while P <> nil do begin R.A.X := I; if P.Name <> nil then begin R.B.X := R.A.X + CStrLen(P.Name^) + 2; I := I + CStrLen(P.Name^) + 2; end else R.B.X := R.A.X; if P = Item then Break; P := P.Next; end; end;
+  while P <> nil do begin R.A.X := I; if P.Name <> '' then begin R.B.X := R.A.X + CStrLen(P.Name) + 2; I := I + CStrLen(P.Name) + 2; end else R.B.X := R.A.X; if P = Item then Break; P := P.Next; end; end;
 
 constructor TMenuBox.Create(var Bounds: TRect; AMenu: PMenu; AParentMenu: TMenuView);
-var W, H, L: SmallInt; P: PMenuItem; R: TRect; S: ShortString;
+var W, H, L: SmallInt; P: PMenuItem; R: TRect; S: string;
 begin W := 0; H := 2; if AMenu <> nil then begin P := AMenu^.Items;
-  while P <> nil do begin if P.Name <> nil then begin S := ' ' + P.Name^ + ' '; if (P.Command <> 0) and (P.Param <> nil) then S := S + ' - ' + P.Param^; end;
+  while P <> nil do begin if P.Name <> '' then begin S := ' ' + P.Name + ' '; if (P.Command <> 0) and (P.Param <> '') then S := S + ' - ' + P.Param; end;
     L := CStrLen(S); if L > W then W := L; Inc(H); P := P.Next; end; end;
   W := 5 + W; R.Copy(Bounds); if R.A.X + W < R.B.X then R.B.X := R.A.X + W else R.A.X := R.B.X - W; R.B.X := R.A.X + W;
   if R.A.Y + H < R.B.Y then R.B.Y := R.A.Y + H else R.A.Y := R.B.Y - H;
   inherited Create(R); State := State or sfShadow; Options := Options or ofFramed or ofPreProcess; Menu := AMenu; ParentMenu := AParentMenu; end;
 
 procedure TMenuBox.Draw;
-var CNormal, CSelect, CSelectDisabled, CDisabled, Color: Word; Index, Y: SmallInt; P: PMenuItem; B: TDrawBuffer; S: ShortString;
+var CNormal, CSelect, CSelectDisabled, CDisabled, Color: Word; Index, Y: SmallInt; P: PMenuItem; B: TDrawBuffer; S: string;
     W: Integer;
-type FrameLineType = (UpperLine, NormalLine, SeparationLine, LowerLine); FrameLineChars = array[0..2] of AnsiChar;
-const FrameLines: array[FrameLineType] of FrameLineChars = ((#218, #196, #191), (#179, #32, #179), (#195, #196, #180), (#192, #196, #217));
+type FrameLineType = (UpperLine, NormalLine, SeparationLine, LowerLine); FrameLineChars = array[0..2] of Char;
+const FrameLines: array[FrameLineType] of FrameLineChars = (
+    (BoxTopLeft, BoxHoriz, BoxTopRight),         { UpperLine }
+    (BoxVert, ' ', BoxVert),                     { NormalLine }
+    (BoxVertRight, BoxHoriz, BoxVertLeft),       { SeparationLine }
+    (BoxBottomLeft, BoxHoriz, BoxBottomRight));  { LowerLine }
   procedure CreateBorder(LineType: FrameLineType);
   begin
     if (W < 5) or (W >= MaxViewWidth) then Exit;
-    MoveChar(B, ' ', CNormal, 1); MoveChar(B[1], FrameLines[LineType][0], CNormal, 1);
-    if W > 4 then MoveChar(B[2], FrameLines[LineType][1], Color, W - 4);
-    MoveChar(B[W - 2], FrameLines[LineType][2], CNormal, 1); MoveChar(B[W - 1], ' ', CNormal, 1);
+    DrawChar(B, 0, ' ', CNormal, 1); DrawChar(B, 1, FrameLines[LineType][0], CNormal, 1);
+    if W > 4 then DrawChar(B, 2, FrameLines[LineType][1], Byte(Color), W - 4);
+    DrawChar(B, W - 2, FrameLines[LineType][2], CNormal, 1); DrawChar(B, W - 1, ' ', CNormal, 1);
   end;
 begin
   W := Size.X;
@@ -316,13 +316,13 @@ begin
   CNormal := GetColor($0301); CSelect := GetColor($0604); CDisabled := GetColor($0202); CSelectDisabled := GetColor($0505);
   Color := CNormal; CreateBorder(UpperLine); WriteBuf(0, 0, W, 1, B); Y := 1;
   if Menu <> nil then begin P := Menu^.Items; while P <> nil do begin Color := CNormal;
-    if P.Name <> nil then begin if P.Disabled then begin if P = Current then Color := CSelectDisabled else Color := CDisabled; end else if P = Current then Color := CSelect;
-      CreateBorder(NormalLine); Index := 2; S := ' ' + P.Name^ + ' ';
-      if Index < MaxViewWidth then MoveCStr(B[Index], S, Color);
-      if P.Command = 0 then begin if W - 4 < MaxViewWidth then MoveChar(B[W - 4], SubMenuChar[LowAscii], Byte(Color), 1); end
-      else if (P.Command <> 0) and (P.Param <> nil) then begin
-        Index := W - 3 - CStrLen(P.Param^);
-        if (Index > 0) and (Index < MaxViewWidth) then MoveCStr(B[Index], P.Param^, Color);
+    if P.Name <> '' then begin if P.Disabled then begin if P = Current then Color := CSelectDisabled else Color := CDisabled; end else if P = Current then Color := CSelect;
+      CreateBorder(NormalLine); Index := 2; S := ' ' + P.Name + ' ';
+      if Index < MaxViewWidth then DrawCStr(B, Index, S, Color);
+      if P.Command = 0 then begin if W - 4 < MaxViewWidth then DrawChar(B, W - 4, SubMenuChar[LowAscii], Byte(Color), 1); end
+      else if (P.Command <> 0) and (P.Param <> '') then begin
+        Index := W - 3 - CStrLen(P.Param);
+        if (Index > 0) and (Index < MaxViewWidth) then DrawCStr(B, Index, P.Param, Color);
       end;
       if (OldItem = nil) or (OldItem = P) or (Current = P) then WriteBuf(0, Y, W, 1, B);
     end else begin Color := CNormal; CreateBorder(SeparationLine); WriteBuf(0, Y, W, 1, B); end;
@@ -354,11 +354,11 @@ constructor TStatusLine.Load(var S: TFVStream); begin inherited Load(S); Defs :=
 
 destructor TStatusLine.Destroy;
 var T: PStatusDef;
-  procedure DisposeItems(Item: PStatusItem); var SI: PStatusItem; begin while Item <> nil do begin SI := Item; Item := Item.Next; DisposeStr(SI.Text); Dispose(SI); end; end;
+  procedure DisposeItems(Item: PStatusItem); var SI: PStatusItem; begin while Item <> nil do begin SI := Item; Item := Item.Next; { Text is now a managed string } Dispose(SI); end; end;
 begin while Defs <> nil do begin T := Defs; Defs := Defs.Next; DisposeItems(T.Items); Dispose(T); end; inherited Destroy; end;
 
 function TStatusLine.GetPalette: PPalette; const P: String[Length(CStatusLine)] = CStatusLine; begin GetPalette := PPalette(@P); end;
-function TStatusLine.Hint(AHelpCtx: Word): ShortString; begin Hint := ''; end;
+function TStatusLine.Hint(AHelpCtx: Word): string; begin Result := ''; end;
 procedure TStatusLine.Draw; begin DrawSelect(nil); end;
 
 procedure TStatusLine.Update; var H: Word; P: TView;
@@ -370,7 +370,7 @@ procedure TStatusLine.HandleEvent(var Event: TEvent);
 var Mouse: TPoint; T, Tt: PStatusItem;
   function ItemMouseIsIn: PStatusItem; var X, Xi: Word; SI: PStatusItem;
   begin ItemMouseIsIn := nil; if (Mouse.Y < 0) or (Mouse.Y > 1) then Exit; X := 0; SI := Items;
-    while SI <> nil do begin if SI.Text <> nil then begin Xi := X; X := Xi + CStrLen(' ' + SI.Text^ + ' ');
+    while SI <> nil do begin if SI.Text <> '' then begin Xi := X; X := Xi + CStrLen(' ' + SI.Text + ' ');
       if (Mouse.X >= Xi) and (Mouse.X < X) then begin ItemMouseIsIn := SI; Exit; end; end; SI := SI.Next; end; end;
 begin inherited HandleEvent(Event);
   case Event.What of
@@ -386,18 +386,18 @@ procedure TStatusLine.FindItems; var P: PStatusDef;
 begin P := Defs; while (P <> nil) and ((HelpCtx < P.Min) or (HelpCtx > P.Max)) do P := P.Next; if P = nil then Items := nil else Items := P.Items; end;
 
 procedure TStatusLine.DrawSelect(Selected: PStatusItem);
-var I, L: SmallInt; Color, CSelect, CNormal, CSelDisabled, CNormDisabled: Word; B: TDrawBuffer; T: PStatusItem; HintBuf: ShortString;
+var I, L: SmallInt; Color, CSelect, CNormal, CSelDisabled, CNormDisabled: Word; B: TDrawBuffer; T: PStatusItem; HintBuf: string;
 begin CNormal := GetColor($0301); CSelect := GetColor($0604); CNormDisabled := GetColor($0202); CSelDisabled := GetColor($0505);
-  MoveChar(B, ' ', Byte(CNormal), Size.X); T := Items; I := 0; L := 0;
-  while T <> nil do begin if T.Text <> nil then begin L := CStrLen(' ' + T.Text^ + ' ');
+  DrawChar(B, 0, ' ', Byte(CNormal), Size.X); T := Items; I := 0; L := 0;
+  while T <> nil do begin if T.Text <> '' then begin L := CStrLen(' ' + T.Text + ' ');
     if I + L >= MaxViewWidth then Break; { Prevent buffer overflow }
     if CommandEnabled(T.Command) then begin if T = Selected then Color := CSelect else Color := CNormal; end
     else begin if T = Selected then Color := CSelDisabled else Color := CNormDisabled; end;
-    MoveCStr(B[I], ' ' + T.Text^ + ' ', Color); Inc(I, L); end; T := T.Next; end;
+    DrawCStr(B, I, ' ' + T.Text + ' ', Color); Inc(I, L); end; T := T.Next; end;
   HintBuf := Hint(HelpCtx);
   if (HintBuf <> '') and (I + 2 + Length(HintBuf) < MaxViewWidth) then begin
-    MoveChar(B[I], #179, Byte(CNormal), 1); Inc(I, 2);
-    MoveStr(B[I], HintBuf, Byte(CNormal)); I := I + Length(HintBuf);
+    DrawChar(B, I, BoxVert, Byte(CNormal), 1); Inc(I, 2);
+    DrawStr(B, I, HintBuf, Byte(CNormal)); I := I + Length(HintBuf);
   end;
   WriteLine(0, 0, Size.X, 1, B); end;
 
@@ -406,7 +406,7 @@ begin New(P); FillChar(P^, SizeOf(TMenu), 0); if P <> nil then begin P^.Items :=
 
 procedure DisposeMenu(Menu: PMenu); var P, Q: PMenuItem;
 begin if Menu <> nil then begin P := Menu^.Items;
-  while P <> nil do begin if P.Name <> nil then begin DisposeStr(P.Name); if P.Command <> 0 then DisposeStr(P.Param) else DisposeMenu(P.SubMenu); end;
+  while P <> nil do begin if P.Name <> '' then begin { Name/Param are now managed strings } if P.Command = 0 then DisposeMenu(P.SubMenu); end;
     Q := P; P := P.Next; Dispose(Q); end; Dispose(Menu); end; end;
 
 function NewLine(Next: PMenuItem): PMenuItem; var P: PMenuItem;
@@ -415,24 +415,24 @@ begin New(P); FillChar(P^, SizeOf(TMenuItem), 0); if P <> nil then P.Next := Nex
 function NewItem(Name, Param: TMenuStr; KeyCode: Word; Command: Word; AHelpCtx: Word; Next: PMenuItem): PMenuItem;
 var P: PMenuItem; R: TRect; T: TView;
 begin if (Name <> '') and (Command <> 0) then begin New(P); FillChar(P^, SizeOf(TMenuItem), 0);
-  if P <> nil then begin P.Next := Next; P.Name := NewStr(Name); P.Command := Command;
+  if P <> nil then begin P.Next := Next; P.Name := string(Name); P.Command := Command;
     R.Assign(1, 1, 10, 10); T := TView.Create(R); if T <> nil then begin P.Disabled := not T.CommandEnabled(Command); FreeAndNil(T); end else P.Disabled := True;
-    P.KeyCode := KeyCode; P.HelpCtx := AHelpCtx; P.Param := NewStr(Param); end;
+    P.KeyCode := KeyCode; P.HelpCtx := AHelpCtx; P.Param := string(Param); end;
   NewItem := P; end else NewItem := Next; end;
 
 function NewSubMenu(Name: TMenuStr; AHelpCtx: Word; SubMenu: PMenu; Next: PMenuItem): PMenuItem;
 var P: PMenuItem;
 begin if (Name <> '') and (SubMenu <> nil) then begin New(P); FillChar(P^, SizeOf(TMenuItem), 0);
-  if P <> nil then begin P.Next := Next; P.Name := NewStr(Name); P.HelpCtx := AHelpCtx; P.SubMenu := SubMenu; end; NewSubMenu := P;
+  if P <> nil then begin P.Next := Next; P.Name := string(Name); P.HelpCtx := AHelpCtx; P.SubMenu := SubMenu; end; NewSubMenu := P;
   end else NewSubMenu := Next; end;
 
 function NewStatusDef(AMin, AMax: Word; AItems: PStatusItem; ANext: PStatusDef): PStatusDef;
 var T: PStatusDef;
 begin New(T); if T <> nil then begin T.Next := ANext; T.Min := AMin; T.Max := AMax; T.Items := AItems; end; NewStatusDef := T; end;
 
-function NewStatusKey(AText: ShortString; AKeyCode: Word; ACommand: Word; ANext: PStatusItem): PStatusItem;
+function NewStatusKey(const AText: string; AKeyCode: Word; ACommand: Word; ANext: PStatusItem): PStatusItem;
 var T: PStatusItem;
-begin New(T); if T <> nil then begin T.Text := NewStr(AText); T.KeyCode := AKeyCode; T.Command := ACommand; T.Next := ANext; end; NewStatusKey := T; end;
+begin New(T); if T <> nil then begin T.Text := AText; T.KeyCode := AKeyCode; T.Command := ACommand; T.Next := ANext; end; Result := T; end;
 
 procedure RegisterMenus; begin RegisterType(RMenuBar); RegisterType(RMenuBox); RegisterType(RStatusLine); RegisterType(RMenuPopup); end;
 

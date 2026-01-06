@@ -6,8 +6,6 @@
 
 unit MsgBox;
 
-{$I platform.inc}
-
 interface
 
 uses
@@ -33,19 +31,18 @@ const
   mfOKCancel     = mfOKButton + mfCancelButton;
 
 var
-  MsgBoxTitles: array[0..3] of string[40];
+  MsgBoxTitles: array[0..3] of string;
 
 procedure InitMsgBox;
 procedure DoneMsgBox;
 
-function MessageBox(const Msg: string; Params: Pointer;
-  AOptions: Word): Word;
+function MessageBox(const Msg: string; AOptions: Word): Word;
 
-function MessageBoxRect(var R: TRect; const Msg: string; Params: Pointer;
+function MessageBoxRect(var R: TRect; const Msg: string;
   AOptions: Word): Word;
 
 function MessageBoxRectDlg(Dlg: TDialog; var R: TRect; const Msg: string;
-  Params: Pointer; AOptions: Word): Word;
+  AOptions: Word): Word;
 
 function InputBox(const Title, ALabel: string; var S: string;
   Limit: Byte): Word;
@@ -62,7 +59,7 @@ const
   Commands: array[0..3] of Word = (cmYes, cmNo, cmOK, cmCancel);
 
 var
-  ButtonName: array[0..3] of string[40];
+  ButtonName: array[0..3] of string;
 
 resourcestring
   sConfirm = 'Confirm';
@@ -74,7 +71,7 @@ resourcestring
   slOk = '~O~k';
   slCancel = 'Cancel';
 
-function MessageBox(const Msg: string; Params: Pointer; AOptions: Word): Word;
+function MessageBox(const Msg: string; AOptions: Word): Word;
 var
   R: TRect;
 begin
@@ -85,21 +82,19 @@ begin
   else
     R.Move((Application.Size.X - R.B.X) div 2,
       (Application.Size.Y - R.B.Y) div 2);
-  Result := MessageBoxRect(R, Msg, Params, AOptions);
+  Result := MessageBoxRect(R, Msg, AOptions);
 end;
 
 function MessageBoxRectDlg(Dlg: TDialog; var R: TRect; const Msg: string;
-  Params: Pointer; AOptions: Word): Word;
+  AOptions: Word): Word;
 var
   I, X, ButtonCount: SmallInt;
-  S: ShortString;
   Control: TView;
   ButtonList: array[0..4] of TView;
 begin
   with Dlg do
   begin
-    FormatStr(S, ShortString(Msg), Params^);
-    Control := TStaticText.Create(R, S);
+    Control := TStaticText.Create(R, Msg);
     Insert(Control);
     X := -2;
     ButtonCount := 0;
@@ -129,7 +124,7 @@ begin
     Result := Application.ExecView(Dlg);
 end;
 
-function MessageBoxRect(var R: TRect; const Msg: string; Params: Pointer;
+function MessageBoxRect(var R: TRect; const Msg: string;
   AOptions: Word): Word;
 var
   Dialog: TDialog;
@@ -137,7 +132,7 @@ begin
   Dialog := TDialog.Create(R, MsgBoxTitles[AOptions and $3]);
   with Dialog do
     R.Assign(3, 2, Size.X - 2, Size.Y - 3);
-  Result := MessageBoxRectDlg(Dialog, R, Msg, Params, AOptions);
+  Result := MessageBoxRectDlg(Dialog, R, Msg, AOptions);
   FreeAndNil(Dialog);
 end;
 

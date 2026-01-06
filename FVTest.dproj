@@ -85,7 +85,9 @@
         <DCCReference Include="src\FVInterfaces.pas"/>
         <DCCReference Include="src\FVSerialization.pas"/>
         <DCCReference Include="src\Objects.pas"/>
-        <DCCReference Include="src\Video.pas"/>
+        <DCCReference Include="src\FVScreen.pas"/>
+        <DCCReference Include="src\FVBoxChars.pas"/>
+        <DCCReference Include="src\FVUTF8.pas"/>
         <DCCReference Include="src\Drivers.pas"/>
         <DCCReference Include="src\Views.pas"/>
         <DCCReference Include="src\Menus.pas"/>
@@ -108,6 +110,8 @@
         <DCCReference Include="src\ColorSel.pas"/>
         <DCCReference Include="src\Outline.pas"/>
         <DCCReference Include="src\Editors.pas"/>
+        <DCCReference Include="src\Calendar.pas"/>
+        <DCCReference Include="src\Grid.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

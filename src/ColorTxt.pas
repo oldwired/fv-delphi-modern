@@ -15,8 +15,6 @@
 
 unit ColorTxt;
 
-{$I platform.inc}
-
 interface
 
 uses
@@ -84,7 +82,7 @@ var
   Center: Boolean;
   I, J, L, P, Y: Integer;
   B: TDrawBuffer;
-  S: ShortString;
+  S: string;
 begin
   Color := GetTheColor;
   GetText(S);
@@ -94,7 +92,7 @@ begin
   Center := False;
   while Y < Size.Y do
   begin
-    MoveChar(B, ' ', Color, Size.X);
+    DrawChar(B, 0, ' ', Color, Size.X);
     if P <= L then
     begin
       if S[P] = #3 then
@@ -111,7 +109,7 @@ begin
       if P > I + Size.X then
         if J > I then P := J else P := I + Size.X;
       if Center then J := (Size.X - P + I) div 2 else J := 0;
-      MoveStr(B[J], Copy(S, I, P - I), Color);
+      DrawStr(B, J, Copy(S, I, P - I), Color);
       while (P <= L) and (S[P] = ' ') do Inc(P);
       if (P <= L) and (S[P] = #13) then
       begin

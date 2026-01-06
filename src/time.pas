@@ -10,8 +10,6 @@
 
 unit Time;
 
-{$I platform.inc}
-
 interface
 
 { Returns the number of minutes since midnight of current system time.

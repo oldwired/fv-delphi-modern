@@ -5,16 +5,12 @@
 
 unit Drivers;
 
-{$I platform.inc}
-
 interface
 
 uses
-  {$IFDEF OS_WINDOWS}
   Winapi.Windows,
-  {$ENDIF}
   System.SysUtils,
-  Objects, Video, fvconsts;
+  Objects, FVScreen, FVCommon, fvconsts;
 
 {***************************************************************************}
 {                              PUBLIC CONSTANTS                             }
@@ -125,20 +121,9 @@ const
 {                          PUBLIC TYPE DEFINITIONS                          }
 {***************************************************************************}
 
-const
-  MaxWords = 16384;
-  MaxBytes = 65520;
+{ TWordArray, PWordArray, TByteArray, PByteArray are defined in FVCommon.pas }
 
 type
-  Sw_Word = Word;
-  Sw_Integer = Integer;
-  Sw_String = ShortString;
-
-  TWordArray = array[0..MaxWords - 1] of Word;
-  PWordArray = ^TWordArray;
-  TByteArray = array[0..MaxBytes - 1] of Byte;
-  PByteArray = ^TByteArray;
-
   TPoint = record
     X, Y: Integer;
   end;
@@ -165,12 +150,11 @@ type
         Double: Boolean;
         Where: TPoint);
       evKeyDown: (
-        case Integer of
-          0: (KeyCode: Word);
-          1: (
-            CharCode: AnsiChar;
-            ScanCode: Byte;
-            KeyShift: Word));
+        KeyCode: Word;            { Combined: high byte = scan code, low byte = ASCII char }
+        KeyShift: Word;           { Shift state }
+        CharCode: AnsiChar;       { ASCII character (copy of Lo(KeyCode) for compatibility) }
+        ScanCode: Byte;           { Scan code (copy of Hi(KeyCode) for compatibility) }
+        UnicodeChar: Char);       { Full Unicode character }
       evMessage: (
         Command: Word;
         case Word of
@@ -179,13 +163,23 @@ type
           2: (InfoWord: Word);
           3: (InfoInt: SmallInt);
           4: (InfoByte: Byte);
-          5: (InfoChar: AnsiChar));
+          5: (InfoChar: Char));   { Unicode character }
   end;
   PEvent = ^TEvent;
 
-  TDriversVideoMode = Video.TVideoMode;
+  TDriversVideoMode = FVScreen.TVideoMode;
 
   TSysErrorFunc = function(ErrorCode: Integer; Drive: Byte): Integer;
+
+const
+  { Maximum width for draw buffers }
+  MaxViewWidth = 255;
+
+type
+  { Draw buffer - array of draw cells for line-based drawing }
+  { Uses TDrawCell from FVCommon.pas - holds Unicode char and attribute }
+  TDrawBuffer = array[0..MaxViewWidth - 1] of TDrawCell;
+  PDrawBuffer = ^TDrawBuffer;
 
 {***************************************************************************}
 {                            INTERFACE ROUTINES                             }
@@ -194,19 +188,22 @@ type
 function GetDosTicks: LongInt;
 procedure GiveUpTimeSlice;
 
-{ Buffer move routines }
-function StrWidth(const S: ShortString): Integer;
-function CStrLen(const S: ShortString): Integer;
-procedure MoveStr(var Dest; const Str: ShortString; Attr: Byte);
-procedure MoveCStr(var Dest; const Str: ShortString; Attrs: Word);
-procedure MoveBuf(var Dest, Source; Attr: Byte; Count: Word);
-procedure MoveChar(var Dest; C: AnsiChar; Attr: Byte; Count: Word);
+{ Draw buffer routines - unified Unicode support }
+procedure DrawCell(var Buf: TDrawBuffer; Pos: Integer; Ch: Char; Attr: Byte); inline;
+procedure DrawChar(var Buf: TDrawBuffer; Pos: Integer; Ch: Char; Attr: Byte; Count: Integer);
+procedure DrawStr(var Buf: TDrawBuffer; Pos: Integer; const S: string; Attr: Byte);
+procedure DrawCStr(var Buf: TDrawBuffer; Pos: Integer; const S: string; Attrs: Word);
+procedure DrawBuf(var Dest: TDrawBuffer; DestPos: Integer; const Source: TDrawBuffer; SourcePos: Integer; Count: Integer);
+
+{ String measurement }
+function StrWidth(const S: string): Integer;
+function CStrLen(const S: string): Integer;
 
 { Keyboard support routines }
-function GetAltCode(Ch: AnsiChar): Word;
-function GetCtrlCode(Ch: AnsiChar): Word;
-function GetAltChar(KeyCode: Word): AnsiChar;
-function GetCtrlChar(KeyCode: Word): AnsiChar;
+function GetAltCode(Ch: Char): Word;
+function GetCtrlCode(Ch: Char): Word;
+function GetAltChar(KeyCode: Word): Char;
+function GetCtrlChar(KeyCode: Word): Char;
 function CtrlToArrow(KeyCode: Word): Word;
 
 { Keyboard control routines }
@@ -239,9 +236,8 @@ procedure InitSysError;
 procedure DoneSysError;
 function SystemError(ErrorCode: Integer; Drive: Byte): Integer;
 
-{ String format routines }
+{ String output routine }
 procedure PrintStr(const S: String);
-procedure FormatStr(var Result: ShortString; const Format: ShortString; var Params);
 
 { Queued event handler routines }
 function PutEventInQueue(var Event: TEvent): Boolean;
@@ -348,7 +344,6 @@ end;
 const
   QueueMax = 64;
   EventQSize = 16;
-  MaxViewWidth = 255;
 
   { Windows console constants not always defined in Delphi }
   MOUSE_WHEELED = $0004;
@@ -397,9 +392,22 @@ var
   KeyboardInitialized: Boolean;
   EventsInitialized: Boolean;
   StartupScreenMode: TDriversVideoMode;
+  DebugLogFile: TextFile;
+  DebugLogOpen: Boolean = False;
   { Resize detection }
   LastScreenWidth: Word;
   LastScreenHeight: Word;
+
+procedure DebugLog(const Msg: string);
+begin
+  if not DebugLogOpen then begin
+    AssignFile(DebugLogFile, 'keyboard_debug.log');
+    Rewrite(DebugLogFile);
+    DebugLogOpen := True;
+  end;
+  WriteLn(DebugLogFile, FormatDateTime('hh:nn:ss.zzz', Now) + ' ' + Msg);
+  Flush(DebugLogFile);
+end;
 
 function GetDosTicks: LongInt;
 begin
@@ -411,12 +419,100 @@ begin
   SleepEx(10, True);
 end;
 
-function StrWidth(const S: ShortString): Integer;
+{ New unified draw buffer routines }
+
+procedure DrawCell(var Buf: TDrawBuffer; Pos: Integer; Ch: Char; Attr: Byte);
+begin
+  if (Pos >= 0) and (Pos < MaxViewWidth) then
+  begin
+    Buf[Pos].Ch := Ch;
+    Buf[Pos].Attr := Attr;
+  end;
+end;
+
+procedure DrawChar(var Buf: TDrawBuffer; Pos: Integer; Ch: Char; Attr: Byte; Count: Integer);
+var
+  I: Integer;
+begin
+  for I := 0 to Count - 1 do
+  begin
+    if Pos + I >= MaxViewWidth then Break;
+    if Pos + I >= 0 then
+    begin
+      Buf[Pos + I].Ch := Ch;
+      Buf[Pos + I].Attr := Attr;
+    end;
+  end;
+end;
+
+procedure DrawStr(var Buf: TDrawBuffer; Pos: Integer; const S: string; Attr: Byte);
+var
+  I, Len: Integer;
+begin
+  Len := Length(S);
+  for I := 1 to Len do
+  begin
+    if Pos + I - 1 >= MaxViewWidth then Break;
+    if Pos + I - 1 >= 0 then
+    begin
+      Buf[Pos + I - 1].Ch := S[I];
+      Buf[Pos + I - 1].Attr := Attr;
+    end;
+  end;
+end;
+
+procedure DrawCStr(var Buf: TDrawBuffer; Pos: Integer; const S: string; Attrs: Word);
+var
+  I, J, Len: Integer;
+  B: Byte;
+  Ch: Char;
+  Attr: Byte;
+begin
+  Len := Length(S);
+  Attr := Lo(Attrs);
+  J := 0;
+  for I := 1 to Len do
+  begin
+    Ch := S[I];
+    if Ch = '~' then
+    begin
+      { Toggle between low and high attribute }
+      B := Hi(Attrs);
+      Attrs := (Lo(Attrs) shl 8) or B;
+      Attr := Lo(Attrs);
+    end
+    else
+    begin
+      if Pos + J >= MaxViewWidth then Break;
+      if Pos + J >= 0 then
+      begin
+        Buf[Pos + J].Ch := Ch;
+        Buf[Pos + J].Attr := Attr;
+      end;
+      Inc(J);
+    end;
+  end;
+end;
+
+procedure DrawBuf(var Dest: TDrawBuffer; DestPos: Integer; const Source: TDrawBuffer; SourcePos: Integer; Count: Integer);
+var
+  I: Integer;
+begin
+  for I := 0 to Count - 1 do
+  begin
+    if DestPos + I >= MaxViewWidth then Break;
+    if SourcePos + I >= MaxViewWidth then Break;
+    if (DestPos + I >= 0) and (SourcePos + I >= 0) then
+      Dest[DestPos + I] := Source[SourcePos + I];
+  end;
+end;
+
+function StrWidth(const S: string): Integer;
 begin
   Result := Length(S);
 end;
 
-function CStrLen(const S: ShortString): Integer;
+function CStrLen(const S: string): Integer;
 var
   I, J: Integer;
 begin
@@ -426,97 +522,22 @@ begin
   Result := J;
 end;
 
-procedure MoveStr(var Dest; const Str: ShortString; Attr: Byte);
-var
-  I: Word;
-  P: PWord;
-  Len: Word;
-begin
-  Len := Length(Str);
-  if Len > MaxViewWidth then Len := MaxViewWidth;
-  for I := 1 to Len do begin
-    P := @TWordArray(Dest)[I - 1];
-    P^ := (Word(Attr) shl 8) or Byte(Str[I]);
-  end;
-end;
-
-procedure MoveCStr(var Dest; const Str: ShortString; Attrs: Word);
-var
-  B: Byte;
-  I, J: Word;
-  P: PWord;
-begin
-  J := 0;
-  for I := 1 to Length(Str) do begin
-    if J >= MaxViewWidth then Break;
-    if Str[I] <> '~' then begin
-      P := @TWordArray(Dest)[J];
-      P^ := (Word(Lo(Attrs)) shl 8) or Byte(Str[I]);
-      Inc(J);
-    end else begin
-      B := Hi(Attrs);
-      WordRec(Attrs).Hi := Lo(Attrs);
-      WordRec(Attrs).Lo := B;
-    end;
-  end;
-end;
-
-procedure MoveBuf(var Dest, Source; Attr: Byte; Count: Word);
-var
-  I: Word;
-  P: PWord;
-  Cnt: Word;
-begin
-  if Count = 0 then Exit;
-  Cnt := Count;
-  if Cnt > MaxViewWidth then Cnt := MaxViewWidth;
-  for I := 1 to Cnt do begin
-    P := @TWordArray(Dest)[I - 1];
-    P^ := (Word(Attr) shl 8) or TByteArray(Source)[I - 1];
-  end;
-end;
-
-procedure MoveChar(var Dest; C: AnsiChar; Attr: Byte; Count: Word);
-var
-  I: Word;
-  P: PWord;
-  W: Word;
-  Cnt: Word;
-begin
-  if Count = 0 then Exit;
-  Cnt := Count;
-  if Cnt > MaxViewWidth then Cnt := MaxViewWidth;
-  if C = #0 then begin
-    { When C is #0, only change the attribute, preserve existing character }
-    for I := 0 to Cnt - 1 do begin
-      P := @TWordArray(Dest)[I];
-      P^ := (Word(Attr) shl 8) or (P^ and $00FF);
-    end;
-  end else begin
-    W := (Word(Attr) shl 8) or Byte(C);
-    for I := 0 to Cnt - 1 do begin
-      P := @TWordArray(Dest)[I];
-      P^ := W;
-    end;
-  end;
-end;
-
-function GetAltCode(Ch: AnsiChar): Word;
+function GetAltCode(Ch: Char): Word;
 begin
   Result := 0;
   Ch := UpCase(Ch);
-  if Ch < #128 then
+  if Ord(Ch) < 128 then
     Result := AltCodes[Ord(Ch)] shl 8
   else if Ch = #240 then
     Result := $0200;
 end;
 
-function GetCtrlCode(Ch: AnsiChar): Word;
+function GetCtrlCode(Ch: Char): Word;
 begin
   Result := GetAltCode(Ch) or (Ord(Ch) - $40);
 end;
 
-function GetAltChar(KeyCode: Word): AnsiChar;
+function GetAltChar(KeyCode: Word): Char;
 var
   I: Integer;
 begin
@@ -525,23 +546,23 @@ begin
     if Hi(KeyCode) <= $83 then begin
       I := 0;
       while (I < 128) and (Hi(KeyCode) <> AltCodes[I]) do Inc(I);
-      if I < 128 then Result := AnsiChar(I);
+      if I < 128 then Result := Char(I);
     end else if Hi(KeyCode) = $02 then
       Result := #240;
   end;
 end;
 
-function GetCtrlChar(KeyCode: Word): AnsiChar;
+function GetCtrlChar(KeyCode: Word): Char;
 begin
   Result := #0;
   if (Lo(KeyCode) > 0) and (Lo(KeyCode) <= 26) then
-    Result := AnsiChar(Lo(KeyCode) + $40);
+    Result := Char(Lo(KeyCode) + $40);
 end;
 
 function CtrlToArrow(KeyCode: Word): Word;
 const
   NumCodes = 11;
-  CtrlCodes: array[0..NumCodes - 1] of AnsiChar =
+  CtrlCodes: array[0..NumCodes - 1] of Char =
     (#19, #4, #5, #24, #1, #6, #7, #22, #18, #3, #8);
   ArrowCodes: array[0..NumCodes - 1] of Word =
     (kbLeft, kbRight, kbUp, kbDown, kbHome, kbEnd, kbDel, kbIns,
@@ -551,7 +572,7 @@ var
 begin
   Result := KeyCode;
   for I := 0 to NumCodes - 1 do
-    if WordRec(KeyCode).Lo = Byte(CtrlCodes[I]) then begin
+    if WordRec(KeyCode).Lo = Ord(CtrlCodes[I]) then begin
       Result := ArrowCodes[I];
       Exit;
     end;
@@ -578,14 +599,27 @@ var
   ScanCode: Byte;
   VKey: Word;
   Ctrl, Alt, Shift: Boolean;
+  UChar: Char;
 begin
   Event.What := evNothing;
-  if (ConsoleInput = 0) or (ConsoleInput = INVALID_HANDLE_VALUE) then Exit;
+  if (ConsoleInput = 0) or (ConsoleInput = INVALID_HANDLE_VALUE) then begin
+    DebugLog('GetKeyEvent: ConsoleInput invalid');
+    Exit;
+  end;
 
-  while PeekConsoleInputA(ConsoleInput, InputRec, 1, NumRead) and (NumRead > 0) do begin
+  while PeekConsoleInputW(ConsoleInput, InputRec, 1, NumRead) and (NumRead > 0) do begin
+    DebugLog(Format('GetKeyEvent: Peeked EventType=%d', [InputRec.EventType]));
     { Only process keyboard events here - leave others for mouse handler }
-    if InputRec.EventType <> KEY_EVENT then Exit;
-    ReadConsoleInputA(ConsoleInput, InputRec, 1, NumRead);
+    if InputRec.EventType <> KEY_EVENT then begin
+      DebugLog('GetKeyEvent: Not KEY_EVENT, exiting');
+      Exit;
+    end;
+    ReadConsoleInputW(ConsoleInput, InputRec, 1, NumRead);
+    DebugLog(Format('GetKeyEvent: KeyDown=%d VKey=%d Scan=%d UChar=%d',
+      [Ord(InputRec.Event.KeyEvent.bKeyDown),
+       InputRec.Event.KeyEvent.wVirtualKeyCode,
+       InputRec.Event.KeyEvent.wVirtualScanCode,
+       Ord(InputRec.Event.KeyEvent.UnicodeChar)]));
     if InputRec.Event.KeyEvent.bKeyDown then begin
       VKey := InputRec.Event.KeyEvent.wVirtualKeyCode;
       ScanCode := InputRec.Event.KeyEvent.wVirtualScanCode;
@@ -593,7 +627,14 @@ begin
       Alt := (InputRec.Event.KeyEvent.dwControlKeyState and (LEFT_ALT_PRESSED or RIGHT_ALT_PRESSED)) <> 0;
       Shift := (InputRec.Event.KeyEvent.dwControlKeyState and SHIFT_PRESSED) <> 0;
 
-      KeyCode := (ScanCode shl 8) or Byte(InputRec.Event.KeyEvent.AsciiChar);
+      { Get the Unicode character }
+      UChar := InputRec.Event.KeyEvent.UnicodeChar;
+
+      { Build KeyCode - for ASCII chars, use the byte value; for Unicode, use 0 in low byte }
+      if Ord(UChar) <= 255 then
+        KeyCode := (ScanCode shl 8) or Ord(UChar)
+      else
+        KeyCode := (ScanCode shl 8); { Unicode char stored separately }
 
       { Handle Alt+letter and Alt+number combinations - clear the low byte }
       if Alt and not Ctrl then begin
@@ -680,14 +721,22 @@ begin
           if Alt then KeyCode := kbAltSpace
           else KeyCode := kbSpaceBar;
       else
-        if KeyCode = 0 then Continue; { Skip unknown keys }
+        if (KeyCode = 0) and (UChar = #0) then begin
+          DebugLog(Format('GetKeyEvent: Skipping unknown key VKey=%d', [VKey]));
+          Continue; { Skip unknown keys }
+        end;
       end;
 
+      DebugLog(Format('GetKeyEvent: Setting evKeyDown KeyCode=$%04X UChar=%d', [KeyCode, Ord(UChar)]));
       Event.What := evKeyDown;
       Event.KeyCode := KeyCode;
+      Event.CharCode := AnsiChar(Lo(KeyCode));  { Extract ASCII char from KeyCode }
+      Event.ScanCode := Hi(KeyCode);            { Extract scan code from KeyCode }
+      Event.UnicodeChar := UChar;               { Store full Unicode character }
       Exit;
     end;
   end;
+  DebugLog('GetKeyEvent: Loop ended, no key event');
 end;
 
 procedure ShowMouse;
@@ -721,15 +770,15 @@ begin
   if (ConsoleInput = 0) or (ConsoleInput = INVALID_HANDLE_VALUE) then Exit;
   if not MouseEvents then Exit;
 
-  while PeekConsoleInputA(ConsoleInput, InputRec, 1, NumRead) and (NumRead > 0) do begin
+  while PeekConsoleInputW(ConsoleInput, InputRec, 1, NumRead) and (NumRead > 0) do begin
     if InputRec.EventType <> _MOUSE_EVENT then begin
       { Not a mouse event, leave it in the queue for keyboard handler }
       if InputRec.EventType <> KEY_EVENT then
-        ReadConsoleInputA(ConsoleInput, InputRec, 1, NumRead); { Remove non-key/mouse events }
+        ReadConsoleInputW(ConsoleInput, InputRec, 1, NumRead); { Remove non-key/mouse events }
       Exit;
     end;
 
-    ReadConsoleInputA(ConsoleInput, InputRec, 1, NumRead);
+    ReadConsoleInputW(ConsoleInput, InputRec, 1, NumRead);
 
     NewButtons := 0;
     if (InputRec.Event.MouseEvent.dwButtonState and FROM_LEFT_1ST_BUTTON_PRESSED) <> 0 then
@@ -860,10 +909,14 @@ procedure GetEvent(var Event: TEvent);
 begin
   if QueueCount > 0 then begin
     NextQueuedEvent(Event);
+    DebugLog(Format('GetEvent: From queue What=$%04X', [Event.What]));
     Exit;
   end;
   GetKeyEvent(Event);
-  if Event.What <> evNothing then Exit;
+  if Event.What <> evNothing then begin
+    DebugLog(Format('GetEvent: Key event What=$%04X KeyCode=$%04X', [Event.What, Event.KeyCode]));
+    Exit;
+  end;
   GetMouseEvent(Event);
   if Event.What <> evNothing then Exit;
   GetSystemEvent(Event);
@@ -905,14 +958,14 @@ function InitDriversVideo: Boolean;
 begin
   Result := False;
   if VideoInitialized then begin
-    Video.DoneVideo;
+    FVScreen.DoneVideo;
   end;
 
-  Video.InitVideo;
-  if Video.ErrorCode <> vioOk then Exit;
+  FVScreen.InitVideo;
+  if FVScreen.ErrorCode <> vioOk then Exit;
 
-  DriversScreenWidth := Video.ScreenWidth;
-  DriversScreenHeight := Video.ScreenHeight;
+  DriversScreenWidth := FVScreen.ScreenWidth;
+  DriversScreenHeight := FVScreen.ScreenHeight;
   if DriversScreenWidth > MaxViewWidth then DriversScreenWidth := MaxViewWidth;
 
   StartupScreenMode.Col := DriversScreenWidth;
@@ -931,13 +984,13 @@ end;
 procedure DoneDriversVideo;
 begin
   if not VideoInitialized then Exit;
-  Video.DoneVideo;
+  FVScreen.DoneVideo;
   VideoInitialized := False;
 end;
 
 procedure ClearScreen;
 begin
-  Video.ClearScreen;
+  FVScreen.ClearScreen;
 end;
 
 procedure SetVideoMode(Mode: Word);
@@ -966,143 +1019,6 @@ end;
 procedure PrintStr(const S: String);
 begin
   Write(S);
-end;
-
-procedure FormatStr(var Result: ShortString; const Format: ShortString; var Params);
-type
-  TParamArray = array[0..15] of NativeInt;
-  PParamArray = ^TParamArray;
-var
-  W, ResultLength: Integer;
-  FormatIndex, Wth: Integer;
-  Justify: Integer;
-  Fill: AnsiChar;
-  S: ShortString;
-  ParamIndex: Integer;
-  ParamPtr: PParamArray;
-  UseParam: Boolean;
-
-  function LongToStr(L: LongInt; Radix: Byte): ShortString;
-  const
-    HexChars: array[0..15] of AnsiChar = '0123456789ABCDEF';
-  var
-    I: LongInt;
-    Res: ShortString;
-    Sign: ShortString;
-  begin
-    if L < 0 then begin
-      Sign := '-';
-      L := Abs(L);
-    end else
-      Sign := '';
-    Res := '';
-    repeat
-      I := L mod Radix;
-      Res := HexChars[I] + Res;
-      L := L div Radix;
-    until L = 0;
-    LongToStr := Sign + Res;
-  end;
-
-begin
-  Result := '';
-  ResultLength := 0;
-  FormatIndex := 1;
-  ParamIndex := 0;
-  ParamPtr := @Params;
-
-  while FormatIndex <= Length(Format) do begin
-    if ResultLength >= 255 then Break;
-
-    { Copy characters until we hit '%' }
-    while (FormatIndex <= Length(Format)) and (Format[FormatIndex] <> '%') do begin
-      Inc(ResultLength);
-      Result[ResultLength] := Format[FormatIndex];
-      Inc(FormatIndex);
-      if ResultLength >= 255 then Break;
-    end;
-
-    { Process format specifier }
-    if (FormatIndex < Length(Format)) and (Format[FormatIndex] = '%') then begin
-      Fill := ' ';
-      Justify := 0;
-      Wth := 0;
-      Inc(FormatIndex);
-      UseParam := True;
-
-      { Check for '0' fill }
-      if (FormatIndex <= Length(Format)) and (Format[FormatIndex] = '0') then
-        Fill := '0';
-
-      { Check for '-' (right justify) }
-      if (FormatIndex <= Length(Format)) and (Format[FormatIndex] = '-') then begin
-        Justify := 1;
-        Inc(FormatIndex);
-      end;
-
-      { Parse width }
-      while (FormatIndex <= Length(Format)) and
-            (Format[FormatIndex] >= '0') and (Format[FormatIndex] <= '9') do begin
-        Wth := Wth * 10 + Ord(Format[FormatIndex]) - Ord('0');
-        Inc(FormatIndex);
-      end;
-
-      { Process format character }
-      S := '';
-      if FormatIndex <= Length(Format) then begin
-        case Format[FormatIndex] of
-          '%': begin
-            S := '%';
-            UseParam := False;
-          end;
-          'c': S := AnsiChar(ParamPtr^[ParamIndex]);
-          'd': S := LongToStr(LongInt(ParamPtr^[ParamIndex]), 10);
-          's': begin
-            if ParamPtr^[ParamIndex] <> 0 then
-              S := PShortString(ParamPtr^[ParamIndex])^
-            else
-              S := '';
-          end;
-          'x': S := LongToStr(LongInt(ParamPtr^[ParamIndex]), 16);
-        else
-          UseParam := False;
-        end;
-        Inc(FormatIndex);
-
-        { Only increment param index if we used a parameter }
-        if UseParam then
-          Inc(ParamIndex);
-
-        { Apply width formatting }
-        if Wth > 0 then begin
-          if Length(S) > Wth then begin
-            if Justify = 1 then
-              S := Copy(S, Length(S) - Wth + 1, Wth)
-            else
-              S := Copy(S, 1, Wth);
-          end else begin
-            if Justify = 1 then begin
-              while Length(S) < Wth do S := S + Fill;
-            end else begin
-              while Length(S) < Wth do S := Fill + S;
-            end;
-          end;
-        end;
-
-        { Append S to Result }
-        W := Length(S);
-        if W > 0 then begin
-          if W + ResultLength > 255 then W := 255 - ResultLength;
-          if W > 0 then begin
-            Move(S[1], Result[ResultLength + 1], W);
-            Inc(ResultLength, W);
-          end;
-        end;
-      end;
-    end;
-  end;
-
-  Result[0] := AnsiChar(ResultLength);
 end;
 
 function PutEventInQueue(var Event: TEvent): Boolean;

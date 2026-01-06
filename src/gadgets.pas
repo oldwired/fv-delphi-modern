@@ -12,8 +12,6 @@
 
 unit Gadgets;
 
-{$I platform.inc}
-
 interface
 
 uses
@@ -147,8 +145,8 @@ begin
       end;
   end;
   C := GetColor(2);
-  MoveChar(B, ' ', C, Size.X);
-  MoveStr(B, S, C);
+  DrawChar(B, 0, ' ', C, Size.X);
+  DrawStr(B, 0, S, C);
   WriteLine(0, 0, Size.X, 1, B);
 end;
 
@@ -218,8 +216,8 @@ var
   B: TDrawBuffer;
 begin
   C := GetColor(2);
-  MoveChar(B, ' ', C, Size.X);
-  MoveStr(B, FTimeStr, C);
+  DrawChar(B, 0, ' ', C, Size.X);
+  DrawStr(B, 0, FTimeStr, C);
   WriteLine(0, 0, Size.X, 1, B);
 end;
 

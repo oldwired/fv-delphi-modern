@@ -5,14 +5,10 @@
 
 unit FVCommon;
 
-{$I platform.inc}
-
 interface
 
 uses
-  {$IFDEF OS_WINDOWS}
   Winapi.Windows,
-  {$ENDIF}
   System.SysUtils;
 
 {***************************************************************************}
@@ -47,10 +43,30 @@ type
   Sw_Word = Cardinal;
   Sw_Integer = LongInt;
 
-  { String types (non-Unicode mode for compatibility) }
-  Sw_String = ShortString;
-  Sw_Char = AnsiChar;
-  Sw_PString = PShortString;
+  { Modern Unicode string types }
+  Sw_String = string;           // UnicodeString (was ShortString)
+  Sw_Char = Char;               // WideChar (was AnsiChar)
+  FVString = string;            // UnicodeString - preferred alias
+  FVChar = Char;                // WideChar - preferred alias
+
+  { Screen cell for VT-based virtual screen buffer }
+  TScreenCell = record
+    Ch: string;                // Grapheme cluster (1+ code points)
+    FG: Byte;                  // Foreground color (0-15 classic, 0-255 extended)
+    BG: Byte;                  // Background color (0-15 classic, 0-255 extended)
+    Bold: Boolean;
+    Underline: Boolean;
+    Inverse: Boolean;
+    class function Empty: TScreenCell; static;
+  end;
+
+  { Draw buffer cell for rendering }
+  TDrawCell = record
+    Ch: string;                // Character/grapheme to display
+    Attr: Word;                // Color attribute (legacy format: hi=BG, lo=FG)
+    class operator Equal(const A, B: TDrawCell): Boolean;
+  end;
+  PDrawCell = ^TDrawCell;
 
   { Path types - using regular string for modern Delphi }
   PathStr = string;
@@ -105,14 +121,31 @@ function MaxLongIntOf(A, B: LongInt): LongInt;
 function MemAvail: LongInt;
 function MaxAvail: LongInt;
 
-const
-  Sw_PString_Empty: Sw_PString = nil;
 
 var
   ErrorCode: LongInt = errOk;
   ErrorInfo: Pointer = nil;
 
 implementation
+
+{ TScreenCell }
+
+class function TScreenCell.Empty: TScreenCell;
+begin
+  Result.Ch := ' ';
+  Result.FG := 7;   // Light gray (default foreground)
+  Result.BG := 0;   // Black (default background)
+  Result.Bold := False;
+  Result.Underline := False;
+  Result.Inverse := False;
+end;
+
+{ TDrawCell }
+
+class operator TDrawCell.Equal(const A, B: TDrawCell): Boolean;
+begin
+  Result := (A.Ch = B.Ch) and (A.Attr = B.Attr);
+end;
 
 function GetErrorCode: LongInt;
 begin

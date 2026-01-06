@@ -348,6 +348,67 @@ TApplication.GetPalette (96+ colors)
 
 Each view's `GetColor(Index)` resolves through the palette chain to the application's master palette.
 
+## Unicode Drawing System
+
+The framework uses a Unicode-capable drawing system based on `TDrawCell`:
+
+### Core Types
+
+```pascal
+type
+  TDrawCell = record
+    Ch: string;   // Unicode character (can be multi-byte)
+    Attr: Word;   // Color attribute (foreground + background)
+  end;
+
+  TDrawBuffer = array[0..MaxViewWidth-1] of TDrawCell;
+```
+
+### Drawing Routines (Drivers.pas)
+
+| Routine | Purpose | Parameters |
+|---------|---------|------------|
+| `DrawChar` | Fill cells with a character | `Buf, Pos, Ch, Attr, Count` |
+| `DrawStr` | Draw a string | `Buf, Pos, Str, Attr` |
+| `DrawCStr` | Draw string with `~` highlight markers | `Buf, Pos, Str, Attrs` |
+| `DrawBuf` | Copy between draw buffers | `Dest, DestPos, Source, SourcePos, Count` |
+
+### Rendering Flow
+
+```
+Draw routines     WriteBuf/WriteLine     WriteView        Video.pas
+(DrawChar, etc.)  (in TView)            (clips to owner)  (console output)
+     |                  |                     |                |
+     v                  v                     v                v
+TDrawBuffer  -->  Screen coords  -->  Clipped region  -->  Console API
+```
+
+1. **Views build content**: `Draw` method fills a `TDrawBuffer` using `DrawChar`/`DrawStr`/`DrawCStr`
+2. **Views output to screen**: Call `WriteBuf` or `WriteLine` with coordinates and buffer
+3. **Clipping applied**: `WriteView` clips output to visible region within parent groups
+4. **Console output**: `Video.pas` writes cells to Windows Console via `WriteConsoleOutputW`
+
+### Example: TView.Draw
+
+```pascal
+procedure TView.Draw;
+var
+  B: TDrawBuffer;
+begin
+  DrawChar(B, 0, ' ', GetColor($01), Size.X);  // Fill with spaces
+  WriteLine(0, 0, Size.X, Size.Y, B);          // Output to screen
+end;
+```
+
+### Helper Methods in TView
+
+| Method | Purpose |
+|--------|---------|
+| `WriteStr(X, Y, Str, Color)` | Draw a string at position |
+| `WriteChar(X, Y, Ch, Color, Count)` | Draw repeated character |
+| `WriteBuf(X, Y, W, H, Buf)` | Output buffer region |
+| `WriteLine(X, Y, W, H, Buf)` | Output buffer as repeated lines |
+
 ## Serialization Architecture
 
 ```mermaid
@@ -396,7 +457,6 @@ src/
   Gadgets.pas         Clock, heap views
   HistList.pas        Input history management
   fvconsts.pas        String constants
-  platform.inc        Compiler/platform detection
 ```
 
 ## Memory Management
@@ -406,19 +466,7 @@ src/
 | `TClass.Create(...)` | Object creation |
 | `Object.Free` or `FreeAndNil(Object)` | Object destruction |
 | `TGroup` ownership | Views freed when parent group destroyed |
-| `NewStr(S)` / `DisposeStr(P)` | Legacy `PString` (ShortString pointer) |
 | `TObjectList<T>` with `OwnsObjects=False` | Collections of record pointers |
-
-## Platform Abstraction
-
-`platform.inc` defines:
-
-| Define | Meaning |
-|--------|---------|
-| `PPC_DELPHI` | Compiling with Delphi |
-| `PPC_FPC` | Compiling with Free Pascal |
-| `BIT_32` / `BIT_64` | CPU architecture |
-| `OS_WINDOWS` | Windows target |
 
 ## Build Configuration
 

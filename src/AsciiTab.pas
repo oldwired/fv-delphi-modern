@@ -10,8 +10,6 @@
 
 unit AsciiTab;
 
-{$I platform.inc}
-
 interface
 
 uses
@@ -120,12 +118,24 @@ var
   NormColor: Byte;
   B: TDrawBuffer;
   X, Y: Integer;
+  CharCode: Integer;
+  Ch: Char;
 begin
   NormColor := GetColor(1);
   for Y := 0 to Size.Y - 1 do
   begin
+    { Set each cell using new TDrawCell format }
     for X := 0 to Size.X - 1 do
-      B[X] := (NormColor shl 8) or ((Y * Size.X + X) and $FF);
+    begin
+      CharCode := (Y * Size.X + X) and $FF;
+      { Use space for char 0 since it's invisible }
+      if CharCode = 0 then
+        Ch := ' '
+      else
+        Ch := Char(CharCode);
+      B[X].Ch := Ch;
+      B[X].Attr := NormColor;
+    end;
     WriteLine(0, Y, Size.X, 1, B);
   end;
   DrawCurPos(True);
@@ -134,13 +144,22 @@ end;
 procedure TTable.DrawCurPos(Enable: Boolean);
 var
   Color: Byte;
-  B: Word;
+  B: TDrawBuffer;
+  CharCode: Integer;
+  Ch: Char;
 begin
   Color := GetColor(1);
-  { Add blinking if enable }
+  { Add highlight if enable (swap foreground and background) }
   if Enable then
     Color := ((Color and $F) shl 4) or (Color shr 4);
-  B := (Color shl 8) or ((Cursor.Y * Size.X + Cursor.X) and $FF);
+  CharCode := (Cursor.Y * Size.X + Cursor.X) and $FF;
+  { Use space for char 0 since it's invisible }
+  if CharCode = 0 then
+    Ch := ' '
+  else
+    Ch := Char(CharCode);
+  B[0].Ch := Ch;
+  B[0].Attr := Color;
   WriteLine(Cursor.X, Cursor.Y, 1, 1, B);
 end;
 

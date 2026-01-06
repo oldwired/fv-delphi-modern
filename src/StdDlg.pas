@@ -6,14 +6,12 @@
 
 unit StdDlg;
 
-{$I platform.inc}
-
 interface
 
 uses
   Winapi.Windows, System.SysUtils, System.Classes, System.Generics.Collections,
   System.Generics.Defaults,
-  FVConsts, Objects, FVCommon, Drivers, Views, Dialogs, Validate;
+  FVConsts, Objects, FVCommon, Drivers, Views, Dialogs, Validate, FVBoxChars;
 
 const
   MaxDir   = 255;
@@ -97,7 +95,7 @@ type
 
   { TFileHistory }
   TFileHistory = class(THistory)
-    CurDir: PString;
+    CurDir: string;
     constructor Create(var Bounds: TRect; ALink: TInputLine; AHistoryId: Word); override;
     procedure HandleEvent(var Event: TEvent); override;
     destructor Destroy; override;
@@ -110,7 +108,7 @@ type
     FileList: TFileList;
     FileHistory: TFileHistory;
     WildCard: TWildStr;
-    Directory: PString;
+    Directory: string;
     constructor Create(AWildCard: TWildStr; const ATitle, InputName: String;
       AOptions: Word; HistoryId: Byte); reintroduce; virtual;
     constructor Load(var S: TFVStream); override;
@@ -128,8 +126,8 @@ type
   { TDirEntry }
   PDirEntry = ^TDirEntry;
   TDirEntry = record
-    DisplayText: PString;
-    Directory: PString;
+    DisplayText: string;
+    Directory: string;
   end;
 
   { TDirCollection - type-safe list of directory entries }
@@ -512,10 +510,10 @@ begin
      (State and sfSelected = 0) then
   begin
     if PSearchRec(Event.InfoPtr)^.Attr and Directory <> 0 then
-      Data^ := ShortString(PSearchRec(Event.InfoPtr)^.Name + DirSeparator +
-        TFileDialog(Owner).WildCard)
+      Data := PSearchRec(Event.InfoPtr)^.Name + DirSeparator +
+        TFileDialog(Owner).WildCard
     else
-      Data^ := ShortString(PSearchRec(Event.InfoPtr)^.Name);
+      Data := PSearchRec(Event.InfoPtr)^.Name;
     DrawView;
   end;
 end;
@@ -866,7 +864,7 @@ end;
 procedure TFileList.SetData(var Rec);
 begin
   with TFileDialog(Owner) do
-    Self.ReadDirectory(Directory^ + WildCard);
+    Self.ReadDirectory(Directory + WildCard);
 end;
 
 { TFileInfoPane }
@@ -891,63 +889,36 @@ end;
 procedure TFileInfoPane.Draw;
 var
   B: TDrawBuffer;
-  D: String[9];
-  M: String[3];
-  N: String[12];
-  PM: Boolean;
+  IsPM: Boolean;
   Color: Word;
   Time: TDateTime;
   Year, Mon, Day, Hour, Min, Sec, MSec: Word;
   Path: PathStr;
-  FmtId: ShortString;
-  Params: array[0..7] of PtrInt;
-  Str: String[80];
-  Month: array[1..12] of String[3];
+  Str, FileName, MonthStr: string;
+  AMPMStr: string;
 const
-  sDirectoryLine = ' %-12s %-9s %3s %2d, %4d  %2d:%02d%cm';
-  sFileLine = ' %-12s %-9d %3s %2d, %4d  %2d:%02d%cm';
+  MonthNames: array[1..12] of string = (
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec');
+  sDirectoryLine = ' %-12s %-9s %3s %2d, %4d  %2d:%02d%s';
+  sFileLine = ' %-12s %-9d %3s %2d, %4d  %2d:%02d%s';
 begin
-  Month[1] := smJan;
-  Month[2] := smFeb;
-  Month[3] := smMar;
-  Month[4] := smApr;
-  Month[5] := smMay;
-  Month[6] := smJun;
-  Month[7] := smJul;
-  Month[8] := smAug;
-  Month[9] := smSep;
-  Month[10] := smOct;
-  Month[11] := smNov;
-  Month[12] := smDec;
-
-  if TFileDialog(Owner).Directory <> nil then
-    Path := TFileDialog(Owner).Directory^
+  if TFileDialog(Owner).Directory <> '' then
+    Path := TFileDialog(Owner).Directory
   else
     Path := '';
   Path := FExpand(Path + TFileDialog(Owner).WildCard);
   Path := ShrinkPath(Path, Size.X - 1);
   Color := GetColor($01);
-  MoveChar(B, ' ', Color, Size.X);
+  DrawChar(B, 0, ' ', Color, Size.X);
   WriteLine(0, 0, Size.X, Size.Y, B);
-  MoveStr(B[1], ShortString(Path), Color);
+  DrawStr(B, 1, Path, Color);
   WriteLine(0, 0, Size.X, 1, B);
 
   if (S.Name = '') or (S.Name = '.') or (S.Name = '..') then
     Exit;
 
-  N := ShortString(Copy(S.Name, 1, 12));
-  Params[0] := PtrInt(@N);
-  if S.Attr and Directory <> 0 then
-  begin
-    FmtId := sDirectoryLine;
-    D := sDirectory;
-    Params[1] := PtrInt(@D);
-  end
-  else
-  begin
-    FmtId := sFileLine;
-    Params[1] := S.Size;
-  end;
+  FileName := Copy(S.Name, 1, 12);
 
   try
     Time := FileDateToDateTime(S.Time);
@@ -961,26 +932,25 @@ begin
     Min := 0;
   end;
 
-  M := Month[Mon];
-  Params[2] := PtrInt(@M);
-  Params[3] := Day;
-  Params[4] := Year;
-  PM := Hour >= 12;
+  MonthStr := MonthNames[Mon];
+  IsPM := Hour >= 12;
   Hour := Hour mod 12;
   if Hour = 0 then
     Hour := 12;
-  Params[5] := Hour;
-  Params[6] := Min;
-  if PM then
-    Params[7] := Byte('p')
+  if IsPM then
+    AMPMStr := 'pm'
   else
-    Params[7] := Byte('a');
+    AMPMStr := 'am';
 
-  FormatStr(Str, FmtId, Params);
-  MoveStr(B, Str, Color);
+  if S.Attr and Directory <> 0 then
+    Str := Format(sDirectoryLine, [FileName, sDirectory, MonthStr, Day, Year, Hour, Min, AMPMStr])
+  else
+    Str := Format(sFileLine, [FileName, S.Size, MonthStr, Day, Year, Hour, Min, AMPMStr]);
+
+  DrawStr(B, 0, Str, Color);
   WriteLine(0, 1, Size.X, 1, B);
 
-  MoveChar(B, ' ', Color, Size.X);
+  DrawChar(B, 0, ' ', Color, Size.X);
   WriteLine(0, 2, Size.X, Size.Y - 2, B);
 end;
 
@@ -1057,7 +1027,7 @@ end;
 constructor TFileHistory.Create(var Bounds: TRect; ALink: TInputLine; AHistoryId: Word);
 begin
   inherited Create(Bounds, ALink, AHistoryId);
-  CurDir := nil;
+  CurDir := '';
 end;
 
 procedure TFileHistory.HandleEvent(var Event: TEvent);
@@ -1077,14 +1047,14 @@ begin
       ClearEvent(Event);
       Exit;
     end;
-    if Assigned(CurDir) then
-      Rslt := string(CurDir^)
+    if CurDir <> '' then
+      Rslt := CurDir
     else
       Rslt := '';
-    Rslt := Simplify(Rslt, string(Link.Data^));
+    Rslt := Simplify(Rslt, string(Link.Data));
     RemoveDoubleDirSep(Rslt);
     if IsWild(Rslt) then
-      RecordHistory(ShortString(Rslt));
+      RecordHistory(Rslt);
     Link.GetBounds(R);
     Dec(R.A.X);
     Inc(R.B.X);
@@ -1102,7 +1072,7 @@ begin
         Rslt := string(HistoryWindow.GetSelection);
         if Length(Rslt) > Link.MaxLen then
           SetLength(Rslt, Link.MaxLen);
-        Link.Data^ := ShortString(Rslt);
+        Link.Data := Rslt;
         Link.SelectAll(True);
         Link.DrawView;
       end;
@@ -1114,38 +1084,50 @@ begin
     if ((Event.Command = cmReleasedFocus) and (Event.InfoPtr = Pointer(Link))) or
        (Event.Command = cmRecordHistory) then
     begin
-      if Assigned(CurDir) then
-        Rslt := string(CurDir^)
+      if CurDir <> '' then
+        Rslt := CurDir
       else
         Rslt := '';
-      Rslt := Simplify(Rslt, string(Link.Data^));
+      Rslt := Simplify(Rslt, string(Link.Data));
       RemoveDoubleDirSep(Rslt);
       if IsWild(Rslt) then
-        RecordHistory(ShortString(Rslt));
+        RecordHistory(Rslt);
     end;
 end;
 
 procedure TFileHistory.AdaptHistoryToDir(Dir: string);
 var
   S, S2: String;
-  I, Count: Sw_Word;
+  I, Count: Integer;
+  Items: array of string;
 begin
-  if Assigned(CurDir) then
+  if CurDir <> '' then
   begin
-    S := CurDir^;
+    S := CurDir;
     if S = Dir then
       Exit;
-    DisposeStr(CurDir);
   end
   else
     S := '';
-  CurDir := NewStr(Simplify(S, Dir));
+  CurDir := Simplify(S, Dir);
 
+  { Collect all items first }
   Count := HistoryCount(HistoryId);
-  for I := 1 to Count do
+  if Count = 0 then
+    Exit;
+
+  SetLength(Items, Count);
+  for I := 0 to Count - 1 do
+    Items[I] := HistoryStr(HistoryId, I);
+
+  { Remove all items }
+  for I := Count - 1 downto 0 do
+    HistoryRemove(HistoryId, I);
+
+  { Transform and re-add in reverse order (so first item ends up at front) }
+  for I := Count - 1 downto 0 do
   begin
-    S2 := HistoryStr(HistoryId, 1);
-    HistoryRemove(HistoryId, 1);
+    S2 := Items[I];
     if RelativePath(S2) then
       if S <> '' then
         S2 := S + S2
@@ -1157,8 +1139,7 @@ end;
 
 destructor TFileHistory.Destroy;
 begin
-  if Assigned(CurDir) then
-    DisposeStr(CurDir);
+  { CurDir is now a managed string - no need to free }
   inherited Destroy;
 end;
 
@@ -1175,11 +1156,11 @@ begin
   inherited Create(R, ATitle);
   Options := Options or ofCentered;
   WildCard := AWildCard;
-  Directory := nil;
+  Directory := '';
 
   R.Assign(3, 3, 31, 4);
   FileName := TFileInputLine.Create(R, 79);
-  FileName.Data^ := WildCard;
+  FileName.Data := WildCard;
   Insert(FileName);
   R.Assign(2, 2, 3 + CStrLen(InputName), 3);
   Control := TLabel.Create(R, InputName, FileName);
@@ -1252,7 +1233,7 @@ end;
 
 destructor TFileDialog.Destroy;
 begin
-  DisposeStr(Directory);
+  { Directory is now a managed string - no need to free }
   inherited Destroy;
 end;
 
@@ -1277,11 +1258,11 @@ var
   TExt: NameStr;
   I: Integer;
 begin
-  S := FileName.Data^;
+  S := FileName.Data;
   if RelativePath(S) then
   begin
-    if Directory <> nil then
-      S := FExpand(Directory^ + S);
+    if Directory <> '' then
+      S := FExpand(Directory + S);
   end
   else
     S := FExpand(S);
@@ -1356,7 +1337,7 @@ procedure TFileDialog.ReadDirectory;
 begin
   FileList.ReadDirectory(WildCard);
   FileHistory.AdaptHistoryToDir(GetCurDir);
-  Directory := NewStr(GetCurDir);
+  Directory := GetCurDir;
 end;
 
 procedure TFileDialog.Store(var S: TFVStream);
@@ -1379,7 +1360,7 @@ var
   begin
     if not PathValid(S) then
     begin
-      MessageBox(sInvalidDriveOrDir, nil, mfError + mfOkButton);
+      MessageBox(sInvalidDriveOrDir, mfError + mfOkButton);
       FileName.Select;
       Result := False;
     end
@@ -1430,15 +1411,14 @@ begin
         if CheckDirectory(Dir) then
         begin
           FileHistory.AdaptHistoryToDir(Dir);
-          DisposeStr(Directory);
-          Directory := NewStr(Dir);
+          Directory := Dir;
           if Pos(ListSeparator, FName) > 0 then
             WildCard := Copy(FName, Length(Dir) + 1, 255)
           else
             WildCard := Name + Ext;
           if Command <> cmFileInit then
             FileList.Select;
-          FileList.ReadDirectory(Directory^ + WildCard);
+          FileList.ReadDirectory(Directory + WildCard);
         end;
       end
       else
@@ -1449,18 +1429,17 @@ begin
           if CheckDirectory(FName) then
           begin
             FileHistory.AdaptHistoryToDir(CompleteDir(FName));
-            DisposeStr(Directory);
-            Directory := NewStr(CompleteDir(FName));
+            Directory := CompleteDir(FName);
             if Command <> cmFileInit then
               FileList.Select;
-            FileList.ReadDirectory(Directory^ + WildCard);
+            FileList.ReadDirectory(Directory + WildCard);
           end;
         end
         else if ValidFileName(FName) then
           Result := True
         else
         begin
-          MessageBox(^C + sInvalidFileName, nil, mfError + mfOkButton);
+          MessageBox(^C + sInvalidFileName, mfError + mfOkButton);
           Result := False;
         end;
       end;
@@ -1481,8 +1460,7 @@ end;
 procedure TDirCollection.FreeDirEntry(Item: PDirEntry);
 begin
   if Item = nil then Exit;
-  DisposeStr(Item^.DisplayText);
-  DisposeStr(Item^.Directory);
+  { DisplayText and Directory are now managed strings - Dispose will finalize them }
   Dispose(Item);
 end;
 
@@ -1498,12 +1476,11 @@ end;
 { TDirListBox }
 
 var
-  DrivesS: ShortString = '';
-  Drives: PString = @DrivesS;
+  DrivesStr: string = '';
 
 constructor TDirListBox.Create(var Bounds: TRect; AScrollBar: TScrollBar);
 begin
-  DrivesS := sDrives;
+  DrivesStr := sDrives;
   inherited Create(Bounds, 1, AScrollBar);
   Dir := '';
   Dirs := nil;
@@ -1521,7 +1498,7 @@ begin
   if (Dirs = nil) or (Item >= Dirs.Count) then
     Result := ''
   else
-    Result := Dirs[Item]^.DisplayText^;
+    Result := Dirs[Item]^.DisplayText;
 end;
 
 procedure TDirListBox.HandleEvent(var Event: TEvent);
@@ -1542,9 +1519,9 @@ begin
       if (Event.CharCode = AnsiChar(' ')) and (Dirs <> nil) and (Focused < Dirs.Count) then
       begin
         DirEntry := Dirs[Focused];
-        if (DirEntry <> nil) and (DirEntry^.Directory <> nil) then
+        if (DirEntry <> nil) and (DirEntry^.Directory <> '') then
         begin
-          DirName := DirEntry^.Directory^;
+          DirName := DirEntry^.Directory;
           if DirName = '..' then
             NewDirectory(DirName);
         end;
@@ -1560,17 +1537,17 @@ end;
 
 procedure TDirListBox.NewDirectory(var ADir: DirStr);
 const
-  PathDir = #192#196#194;
-  FirstDir = #192#194#196;
-  MiddleDir = ' '#195#196;
-  LastDir = ' '#192#196;
+  PathDir: string = BoxBottomLeft + BoxHoriz + BoxHorizDown;
+  FirstDir: string = BoxBottomLeft + BoxHorizDown + BoxHoriz;
+  MiddleDir: string = ' ' + BoxVertRight + BoxHoriz;
+  LastDir: string = ' ' + BoxBottomLeft + BoxHoriz;
   IndentSize = '  ';
 var
   AList: TDirCollection;
   NewDir, Dirct: DirStr;
   C, OldC: Char;
   S, Indent: string;
-  P: PString;
+  TempStr: string;
   NewCur: Word;
   IsFirst: Boolean;
   SR: TSearchRec;
@@ -1581,20 +1558,20 @@ var
     DirEntry: PDirEntry;
   begin
     New(DirEntry);
-    DirEntry^.DisplayText := NewStr(ShortString(DisplayText));
+    DirEntry^.DisplayText := DisplayText;
     if ADirectory = '' then
-      DirEntry^.Directory := NewStr(DirSeparator)
+      DirEntry^.Directory := DirSeparator
     else
-      DirEntry^.Directory := NewStr(ShortString(ADirectory));
+      DirEntry^.Directory := ADirectory;
     Result := DirEntry;
   end;
 
 begin
   Dir := ADir;
   AList := TDirCollection.Create;
-  AList.Add(NewDirEntry(Drives^, Drives^));
+  AList.Add(NewDirEntry(DrivesStr, DrivesStr));
 
-  if Dir = Drives^ then
+  if Dir = DrivesStr then
   begin
     IsFirst := True;
     OldC := ' ';
@@ -1670,18 +1647,18 @@ begin
     end;
     DosFindClose;
 
-    P := AList[AList.Count - 1]^.DisplayText;
-    I := System.Pos(AnsiString(#192), P^);
-    if I = 0 then
+    { Fix last directory entry's tree drawing characters }
+    { The last subdirectory should use LastDir (└─) instead of MiddleDir (├─) }
+    if (AList.Count > 0) and not IsFirst then
     begin
-      I := System.Pos(AnsiString(#195), P^);
-      if I <> 0 then
-        P^[I] := #192;
-    end
-    else
-    begin
-      P^[I + 1] := #196;
-      P^[I + 2] := #196;
+      TempStr := AList[AList.Count - 1]^.DisplayText;
+      { Find and replace the middle connector (├) with bottom corner (└) }
+      I := Pos(BoxVertRight, TempStr);
+      if I > 0 then
+      begin
+        TempStr[I] := BoxBottomLeft;
+        AList[AList.Count - 1]^.DisplayText := TempStr;
+      end;
     end;
   end;
 
@@ -1782,8 +1759,8 @@ begin
           cmChangeDir:
             begin
               P := DirList.Dirs[DirList.Focused];
-              if (P^.Directory^ = Drives^) or DriveValid(Char(P^.Directory^[1])) then
-                CurDir := P^.Directory^
+              if (P^.Directory = DrivesStr) or DriveValid(Char(P^.Directory[1])) then
+                CurDir := P^.Directory
               else
                 Exit;
             end;
@@ -1793,7 +1770,7 @@ begin
         if (Length(CurDir) > 3) and (CurDir[Length(CurDir)] = DirSeparator) then
           CurDir := Copy(CurDir, 1, Length(CurDir) - 1);
         DirList.NewDirectory(CurDir);
-        DirInput.Data^ := CurDir;
+        DirInput.Data := CurDir;
         DirInput.DrawView;
         DirList.Select;
         ClearEvent(Event);
@@ -1817,7 +1794,7 @@ begin
       CurDir := Copy(CurDir, 1, Length(CurDir) - 1);
     if DirInput <> nil then
     begin
-      DirInput.Data^ := CurDir;
+      DirInput.Data := CurDir;
       DirInput.DrawView;
     end;
   end;
@@ -1839,14 +1816,14 @@ begin
   Result := True;
   if Command = cmOk then
   begin
-    P := FExpand(DirInput.Data^);
+    P := FExpand(DirInput.Data);
     if (Length(P) > 3) and (P[Length(P)] = DirSeparator) then
       SetLength(P, Length(P) - 1);
     {$I-}
     System.ChDir(P);
     if IOResult <> 0 then
     begin
-      MessageBox(sInvalidDirectory, nil, mfError + mfOkButton);
+      MessageBox(sInvalidDirectory, mfError + mfOkButton);
       Result := False;
     end;
     {$I+}
@@ -1868,7 +1845,7 @@ begin
     CurDir := ''
   else
   begin
-    CurDir := DirInput.Data^;
+    CurDir := DirInput.Data;
     if CurDir[Length(CurDir)] <> DirSeparator then
       CurDir := CurDir + DirSeparator;
   end;
@@ -1884,9 +1861,9 @@ begin
     if DirInput <> nil then
     begin
       if (Length(CurDir) > 3) and (CurDir[Length(CurDir)] = DirSeparator) then
-        DirInput.Data^ := Copy(CurDir, 1, Length(CurDir) - 1)
+        DirInput.Data := Copy(CurDir, 1, Length(CurDir) - 1)
       else
-        DirInput.Data^ := CurDir;
+        DirInput.Data := CurDir;
       DirInput.DrawView;
     end;
   end;
@@ -1905,9 +1882,9 @@ end;
 
 procedure TSortedListBox.HandleEvent(var Event: TEvent);
 
-  function IsSpecialChar(C: AnsiChar): Boolean;
+  function IsSpecialChar(C: Char): Boolean;
   begin
-    Result := (C = AnsiChar(#0)) or (C = AnsiChar(#9)) or (C = AnsiChar(#27));
+    Result := (C = #0) or (C = #9) or (C = #27);
   end;
 
   function GetFileList: TFileCollection;
@@ -1935,7 +1912,7 @@ begin
   if Event.What = evKeyDown then
   begin
     FileList := GetFileList;
-    if not IsSpecialChar(Event.CharCode) and
+    if not IsSpecialChar(Char(Event.CharCode)) and
        (FileList <> nil) and (FileList.Count > 0) then
     begin
       Value := Focused;
@@ -2027,16 +2004,14 @@ end;
 
 function StdDeleteFile(AFile: FNameStr): Boolean;
 var
-  Params: array[0..0] of Pointer;
-  ShortFile: ShortString;
+  Msg: string;
 begin
   Result := False;
   if CheckOnDelete then
   begin
     AFile := ShrinkPath(AFile, 33);
-    ShortFile := ShortString(AFile);
-    Params[0] := @ShortFile;
-    Result := MessageBox(^C + sDeleteFile, @Params, mfConfirmation or mfOkCancel) = cmOk;
+    Msg := ^C + Format(sDeleteFile, [AFile]);
+    Result := MessageBox(Msg, mfConfirmation or mfOkCancel) = cmOk;
   end;
 end;
 
@@ -2199,15 +2174,13 @@ end;
 
 function StdReplaceFile(AFile: FNameStr): Boolean;
 var
-  Params: array[0..0] of Pointer;
-  ShortFile: ShortString;
+  Msg: string;
 begin
   if CheckOnReplace then
   begin
     AFile := ShrinkPath(AFile, 33);
-    ShortFile := ShortString(AFile);
-    Params[0] := @ShortFile;
-    Result := MessageBox(^C + sReplaceFile, @Params, mfConfirmation or mfOkCancel) = cmOk;
+    Msg := ^C + Format(sReplaceFile, [AFile]);
+    Result := MessageBox(Msg, mfConfirmation or mfOkCancel) = cmOk;
   end
   else
     Result := True;

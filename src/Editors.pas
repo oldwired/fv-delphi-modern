@@ -12,14 +12,12 @@
 
 unit Editors;
 
-{$I platform.inc}
-
 {$X+,R-,Q-}
 
 interface
 
 uses
-  Objects, Drivers, Views, Dialogs, FVCommon, FVConsts;
+  Objects, Drivers, Views, Dialogs, FVCommon, FVConsts, FVBoxChars, FVUTF8;
 
 const
   { Length constants. }
@@ -114,7 +112,7 @@ type
   end;
 
   PEditBuffer = ^TEditBuffer;
-  TEditBuffer = array[0..MaxBufLength] of AnsiChar;
+  TEditBuffer = array[0..MaxBufLength] of Byte;  { UTF-8 encoded bytes }
 
   TEditor = class;
 
@@ -211,7 +209,9 @@ type
     constructor Create(var Bounds: TRect; AHScrollBar, AVScrollBar: TScrollBar;
                      AIndicator: TIndicator; ABufSize: Sw_Word); reintroduce; virtual;
     destructor Destroy; override;
-    function   BufChar(P: Sw_Word): AnsiChar;
+    function   BufByte(P: Sw_Word): Byte;         { Raw byte at position }
+    function   BufChar(P: Sw_Word): Char;         { Decoded UTF-8 character }
+    function   BufCharLen(P: Sw_Word): Integer;   { Byte length of UTF-8 char at P }
     function   BufPtr(P: Sw_Word): Sw_Word;
     procedure  ChangeBounds(var Bounds: TRect); override;
     procedure  ConvertEvent(var Event: TEvent); virtual;
@@ -227,6 +227,7 @@ type
                             AllowUndo, SelectText: Boolean): Boolean;
     function   InsertFrom(Editor: TEditor): Boolean; virtual;
     function   InsertText(Text: Pointer; Length: Sw_Word; SelectText: Boolean): Boolean;
+    procedure  InsertUnicodeChar(C: Char);  { Insert Unicode char as UTF-8 }
     procedure  ScrollTo(X, Y: Sw_Integer);
     function   Search(const FindStr: String; Opts: Word): Boolean;
     function   SetBufSize(NewSize: Sw_Word): Boolean; virtual;
@@ -287,6 +288,7 @@ type
   TFileEditor = class(TEditor)
   private
     FFileName: FNameStr;
+    FHadBOM: Boolean;        { True if original file had UTF-8 BOM }
   public
     constructor Create(var Bounds: TRect; AHScrollBar, AVScrollBar: TScrollBar;
                      AIndicator: TIndicator; AFileName: FNameStr); reintroduce; virtual;
@@ -324,9 +326,10 @@ function RightMarginDialog: TDialog;
 function TabStopDialog: TDialog;
 function StdEditorDialog(Dialog: SmallInt; Info: Pointer): Word;
 
-const
-  WordChars: set of AnsiChar = ['!'..#255];
+{ Unicode-aware word character detection }
+function IsWordChar(C: Char): Boolean; inline;
 
+const
   LineBreak: String[2] = #13#10;
 
   Allow_Reformat: Boolean = True;
@@ -337,12 +340,7 @@ const
   ReplaceStr: String[80] = '';
   Clipboard: TEditor = nil;
 
-type
-  TEditorDebugLog = procedure(const Msg: string);
-
 var
-  EditorDebugLog: TEditorDebugLog = nil;
-
   ToClipCmds: TCommandSet = ([cmCut, cmCopy, cmClear]);
   FromClipCmds: TCommandSet = ([cmPaste]);
   UndoCmds: TCommandSet = ([cmUndo, cmRedo]);
@@ -412,7 +410,13 @@ const
 implementation
 
 uses
-  SysUtils, App, StdDlg, MsgBox;
+  SysUtils, System.Character, App, StdDlg, MsgBox;
+
+{ Unicode-aware word character detection }
+function IsWordChar(C: Char): Boolean;
+begin
+  Result := C.IsLetterOrDigit or (C = '_');
+end;
 
 const
   { Update flag constants. }
@@ -787,36 +791,36 @@ var
 begin
   case Dialog of
     edOutOfMemory:
-      Result := MessageBox(sOutOfMemory, nil, mfError + mfOkButton);
+      Result := MessageBox(sOutOfMemory, mfError + mfOkButton);
     edReadError:
       begin
         FormattedMsg := Format('Error reading file: %s', [GetFileNameFromInfo(Info)]);
-        Result := MessageBox(ShortString(FormattedMsg), nil, mfError + mfOkButton);
+        Result := MessageBox(FormattedMsg, mfError + mfOkButton);
       end;
     edWriteError:
       begin
         FormattedMsg := Format('Error writing file: %s', [GetFileNameFromInfo(Info)]);
-        Result := MessageBox(ShortString(FormattedMsg), nil, mfError + mfOkButton);
+        Result := MessageBox(FormattedMsg, mfError + mfOkButton);
       end;
     edCreateError:
       begin
         FormattedMsg := Format('Error creating file: %s', [GetFileNameFromInfo(Info)]);
-        Result := MessageBox(ShortString(FormattedMsg), nil, mfError + mfOkButton);
+        Result := MessageBox(FormattedMsg, mfError + mfOkButton);
       end;
     edSaveModify:
       begin
         FormattedMsg := Format('%s has been modified. Save?', [GetFileNameFromInfo(Info)]);
-        Result := MessageBox(ShortString(FormattedMsg), nil, mfInformation + mfYesNoCancel);
+        Result := MessageBox(FormattedMsg, mfInformation + mfYesNoCancel);
       end;
     edSaveUntitled:
-      Result := MessageBox(sFileUntitled, nil, mfInformation + mfYesNoCancel);
+      Result := MessageBox(sFileUntitled, mfInformation + mfYesNoCancel);
     edSaveAs:
       Result := Application.ExecuteDialog(TFileDialog.Create('*.*',
         slSaveFileAs, slName, fdOkButton, 101), Info);
     edFind:
       Result := Application.ExecuteDialog(CreateFindDialog, Info);
     edSearchFailed:
-      Result := MessageBox(sSearchStringNotFound, nil, mfError + mfOkButton);
+      Result := MessageBox(sSearchStringNotFound, mfError + mfOkButton);
     edReplace:
       Result := Application.ExecuteDialog(CreateReplaceDialog, Info);
     edReplacePrompt:
@@ -828,28 +832,28 @@ begin
         if PPoint(Info)^.Y <= T.Y then
           R.Move(0, Desktop.Size.Y - R.B.Y - 2);
         Result := MessageBoxRect(R, sReplaceThisOccurence,
-          nil, mfYesNoCancel + mfInformation);
+          mfYesNoCancel + mfInformation);
       end;
     edJumpToLine:
       Result := Application.ExecuteDialog(JumpLineDialog, Info);
     edSetTabStops:
       Result := Application.ExecuteDialog(TabStopDialog, Info);
     edPasteNotPossible:
-      Result := MessageBox(sPasteNotPossible, nil, mfError + mfOkButton);
+      Result := MessageBox(sPasteNotPossible, mfError + mfOkButton);
     edReformatDocument:
       Result := Application.ExecuteDialog(ReformDocDialog, Info);
     edReformatNotAllowed:
-      Result := MessageBox(sWordWrapOff, nil, mfError + mfOkButton);
+      Result := MessageBox(sWordWrapOff, mfError + mfOkButton);
     edReformNotPossible:
-      Result := MessageBox(sReformatNotPossible, nil, mfError + mfOkButton);
+      Result := MessageBox(sReformatNotPossible, mfError + mfOkButton);
     edReplaceNotPossible:
-      Result := MessageBox(sReplaceNotPossible, nil, mfError + mfOkButton);
+      Result := MessageBox(sReplaceNotPossible, mfError + mfOkButton);
     edRightMargin:
       Result := Application.ExecuteDialog(RightMarginDialog, Info);
     edWrapNotPossible:
-      Result := MessageBox(sWordWrapNotPossible, nil, mfError + mfOKButton);
+      Result := MessageBox(sWordWrapNotPossible, mfError + mfOKButton);
   else
-    Result := MessageBox(sUnknownDialog, nil, mfError + mfOkButton);
+    Result := MessageBox(sUnknownDialog, mfError + mfOkButton);
   end;
 end;
 
@@ -859,17 +863,17 @@ end;
 
 function CountLines(var Buf; Count: Sw_Word): Sw_Integer;
 var
-  P: PAnsiChar;
+  P: PByte;
   Lines: Sw_Word;
 begin
-  P := PAnsiChar(@Buf);
+  P := PByte(@Buf);
   Lines := 0;
   while Count > 0 do
   begin
-    if P^ in [AnsiChar(#10), AnsiChar(#13)] then
+    if P^ in [10, 13] then  { LF, CR }
     begin
       Inc(Lines);
-      if Ord((P + 1)^) + Ord(P^) = 23 then
+      if (P + 1)^ + P^ = 23 then  { CR+LF or LF+CR pair }
       begin
         Inc(P);
         Dec(Count);
@@ -885,21 +889,21 @@ end;
 
 procedure GetLimits(var Buf; Count: Sw_Word; var Lim: TPoint);
 var
-  P: PAnsiChar;
+  P: PByte;
   Len: Sw_Word;
 begin
   Lim.X := 0;
   Lim.Y := 0;
   Len := 0;
-  P := PAnsiChar(@Buf);
+  P := PByte(@Buf);
   while Count > 0 do
   begin
-    if P^ in [AnsiChar(#10), AnsiChar(#13)] then
+    if P^ in [10, 13] then  { LF, CR }
     begin
       if Sw_Integer(Len) > Lim.X then
         Lim.X := Len;
       Inc(Lim.Y);
-      if Ord((P + 1)^) + Ord(P^) = 23 then
+      if (P + 1)^ + P^ = 23 then  { CR+LF or LF+CR pair }
       begin
         Inc(P);
         Dec(Count);
@@ -938,111 +942,152 @@ end;
 type
   BTable = array[0..255] of Byte;
 
-procedure BMMakeTable(const S: String; var T: BTable);
+{ Boyer-Moore skip table for UTF-8 byte search }
+procedure BMMakeTableUTF8(const S: TBytes; var T: BTable);
 var
-  X: Sw_Integer;
+  X, Len: Integer;
 begin
-  FillChar(T, SizeOf(T), Length(S));
-  for X := Length(S) downto 1 do
-    if T[Ord(S[X])] = Length(S) then
-      T[Ord(S[X])] := Length(S) - X;
+  Len := Length(S);
+  FillChar(T, SizeOf(T), Len);
+  for X := Len - 1 downto 0 do
+    if T[S[X]] = Len then
+      T[S[X]] := Len - 1 - X;
 end;
 
+{ Case-sensitive search - searches for UTF-8 encoded string in buffer }
 function Scan(var Block; Size: Sw_Word; const Str: String): Sw_Word;
 var
   Buffer: array[0..MaxBufLength - 1] of Byte absolute Block;
-  S2: String;
-  Len, Numb: Sw_Word;
+  SearchBytes: TBytes;
+  Len, Numb: Integer;
   Found: Boolean;
   BT: BTable;
+  I: Integer;
 begin
-  BMMakeTable(Str, BT);
-  Len := Length(Str);
-  SetLength(S2, Len);
-  Found := False;
-  Numb := Pred(Len);
-  while (not Found) and (Numb < (Size - Len)) do
-  begin
-    if Buffer[Numb] = Ord(Str[Len]) then
-    begin
-      if Buffer[Numb - Pred(Len)] = Ord(Str[1]) then
-      begin
-        Move(Buffer[Numb - Pred(Len)], S2[1], Len);
-        if Str = S2 then
-        begin
-          Found := True;
-          Break;
-        end;
-      end;
-      Inc(Numb);
-    end
-    else
-      Inc(Numb, BT[Buffer[Numb]]);
-  end;
-  if not Found then
-    Result := NotFoundValue
-  else
-    Result := Numb - Pred(Len);
-end;
-
-function IScan(var Block; Size: Sw_Word; const Str: String): Sw_Word;
-var
-  Buffer: array[0..MaxBufLength - 1] of AnsiChar absolute Block;
-  S: AnsiString;
-  Len, Numb, X: Sw_Word;
-  Found: Boolean;
-  BT: BTable;
-  P: PAnsiChar;
-  C: AnsiChar;
-begin
-  Len := Length(Str);
-  if (Len = 0) or (Len > Size) then
+  { Convert search string to UTF-8 bytes }
+  SearchBytes := TEncoding.UTF8.GetBytes(Str);
+  Len := Length(SearchBytes);
+  if (Len = 0) or (Sw_Word(Len) > Size) then
   begin
     Result := NotFoundValue;
     Exit;
   end;
-  { Create uppercased string }
-  SetLength(S, Len);
-  for X := 1 to Len do
-  begin
-    if CharInSet(Str[X], ['a'..'z']) then
-      S[X] := AnsiChar(Ord(Str[X]) - 32)
-    else
-      S[X] := AnsiChar(Str[X]);
-  end;
-  BMMakeTable(String(S), BT);
+
+  BMMakeTableUTF8(SearchBytes, BT);
   Found := False;
-  Numb := Pred(Len);
-  while (not Found) and (Numb < (Size - Len)) do
+  Numb := Len - 1;
+
+  while (not Found) and (Numb < Integer(Size)) do
   begin
-    C := Buffer[Numb];
-    if C in [AnsiChar('a')..AnsiChar('z')] then
-      C := AnsiChar(Ord(C) - 32);
-    if C = S[Len] then
+    { Check last byte first }
+    if Buffer[Numb] = SearchBytes[Len - 1] then
     begin
-      P := @Buffer[Numb - Pred(Len)];
-      X := 1;
-      while X <= Len do
+      { Potential match - verify all bytes }
+      Found := True;
+      for I := 0 to Len - 1 do
       begin
-        if not (((P^ in [AnsiChar('a')..AnsiChar('z')]) and (AnsiChar(Ord(P^) - 32) = S[X])) or (P^ = S[X])) then
+        if Buffer[Numb - (Len - 1) + I] <> SearchBytes[I] then
+        begin
+          Found := False;
           Break;
-        Inc(P);
-        Inc(X);
+        end;
       end;
-      if X > Len then
-      begin
-        Found := True;
-        Break;
-      end;
-      Inc(Numb);
+      if not Found then
+        Inc(Numb);
     end
     else
-      Inc(Numb, BT[Ord(C)]);
+      Inc(Numb, BT[Buffer[Numb]]);
   end;
+
   if not Found then
     Result := NotFoundValue
   else
-    Result := Numb - Pred(Len);
+    Result := Numb - (Len - 1);
+end;
+
+{ Case-insensitive search - decodes UTF-8 and compares using Unicode case folding }
+function IScan(var Block; Size: Sw_Word; const Str: String): Sw_Word;
+var
+  Buffer: array[0..MaxBufLength - 1] of Byte absolute Block;
+  SearchUpper: String;
+  BufPos, SearchLen: Integer;
+  BufChar, SearchChar: Char;
+  CharLen, SearchIdx: Integer;
+  Found: Boolean;
+  MatchStart: Integer;
+begin
+  SearchUpper := UpperCase(Str);
+  SearchLen := Length(SearchUpper);
+
+  if (SearchLen = 0) or (Sw_Word(SearchLen) > Size) then
+  begin
+    Result := NotFoundValue;
+    Exit;
+  end;
+
+  BufPos := 0;
+  Found := False;
+
+  while (BufPos < Integer(Size)) and not Found do
+  begin
+    { Decode UTF-8 character from buffer }
+    BufChar := DecodeUTF8Char(@Buffer[BufPos], Integer(Size) - BufPos, CharLen);
+    if CharLen = 0 then
+    begin
+      Inc(BufPos);
+      Continue;
+    end;
+
+    { Check if first character matches (case-insensitive) }
+    if UpCase(BufChar) = SearchUpper[1] then
+    begin
+      { Potential match - verify remaining characters }
+      MatchStart := BufPos;
+      Found := True;
+      SearchIdx := 1;
+
+      while (SearchIdx <= SearchLen) and Found and (BufPos < Integer(Size)) do
+      begin
+        BufChar := DecodeUTF8Char(@Buffer[BufPos], Integer(Size) - BufPos, CharLen);
+        if CharLen = 0 then
+        begin
+          Found := False;
+          Break;
+        end;
+
+        SearchChar := SearchUpper[SearchIdx];
+        if UpCase(BufChar) <> SearchChar then
+          Found := False
+        else
+        begin
+          Inc(BufPos, CharLen);
+          Inc(SearchIdx);
+        end;
+      end;
+
+      { Check if we matched all search characters }
+      if Found and (SearchIdx <= SearchLen) then
+        Found := False;
+
+      if Found then
+      begin
+        Result := MatchStart;
+        Exit;
+      end;
+
+      { Reset to continue searching from next character after match start }
+      BufPos := MatchStart;
+      BufChar := DecodeUTF8Char(@Buffer[BufPos], Integer(Size) - BufPos, CharLen);
+      if CharLen > 0 then
+        Inc(BufPos, CharLen)
+      else
+        Inc(BufPos);
+    end
+    else
+      Inc(BufPos, CharLen);
+  end;
+
+  Result := NotFoundValue;
 end;
 
 {****************************************************************************
@@ -1058,39 +1103,36 @@ end;
 procedure TIndicator.Draw;
 var
   Color: Byte;
-  Frame: AnsiChar;
-  L: array[0..1] of NativeInt;
-  S: String[15];
+  Frame: Char;
+  S: string;
   B: TDrawBuffer;
 begin
   if State and sfDragging = 0 then
   begin
     Color := GetColor(1);
-    Frame := #205;
+    Frame := BoxDblHoriz;
   end
   else
   begin
     Color := GetColor(2);
-    Frame := #196;
+    Frame := BoxHoriz;
   end;
-  MoveChar(B, Frame, Color, Size.X);
+  DrawChar(B, 0, Frame, Color, Size.X);
   { If the text has been modified, put an 'M' in the TIndicator display. }
   if Modified then
-    WordRec(B[1]).Lo := 77;
+    DrawChar(B, 1, 'M', Color, 1);
   { If WordWrap is active put a 'W' in the TIndicator display. }
   if WordWrap then
-    WordRec(B[2]).Lo := 87
+    DrawChar(B, 2, 'W', Color, 1)
   else
-    WordRec(B[2]).Lo := Byte(Frame);
+    DrawChar(B, 2, Frame, Color, 1);
   { If AutoIndent is active put an 'I' in TIndicator display. }
   if AutoIndent then
-    WordRec(B[0]).Lo := 73
+    DrawChar(B, 0, 'I', Color, 1)
   else
-    WordRec(B[0]).Lo := Byte(Frame);
-  L[0] := Location.Y + 1;
-  L[1] := Location.X + 1;
-  FormatStr(S, ' %d:%d ', L);
-  MoveStr(B[9 - Pos(':', S)], S, Color);
+    DrawChar(B, 0, Frame, Color, 1);
+  S := Format(' %d:%d ', [Location.Y + 1, Location.X + 1]);
+  DrawStr(B, 9 - Pos(':', S), S, Color);
   WriteBuf(0, 0, Size.X, 1, B);
 end;
 
@@ -1241,11 +1283,68 @@ begin
   inherited Destroy;
 end;
 
-function TEditor.BufChar(P: Sw_Word): AnsiChar;
+function TEditor.BufByte(P: Sw_Word): Byte;
 begin
   if P >= CurPtr then
     Inc(P, GapLen);
   Result := Buffer^[P];
+end;
+
+function TEditor.BufChar(P: Sw_Word): Char;
+var
+  PhysP: Sw_Word;
+  Remaining: Integer;
+  CharLen: Integer;
+begin
+  if P >= BufLen then
+  begin
+    Result := #0;
+    Exit;
+  end;
+
+  PhysP := P;
+  if PhysP >= CurPtr then
+    Inc(PhysP, GapLen);
+
+  { Calculate remaining bytes in buffer }
+  Remaining := BufSize - PhysP;
+  if Remaining <= 0 then
+  begin
+    Result := #0;
+    Exit;
+  end;
+
+  { Decode UTF-8 character }
+  Result := DecodeUTF8Char(@Buffer^[PhysP], Remaining, CharLen);
+end;
+
+function TEditor.BufCharLen(P: Sw_Word): Integer;
+var
+  PhysP: Sw_Word;
+  B: Byte;
+begin
+  if P >= BufLen then
+  begin
+    Result := 1;  { Return 1 to prevent infinite loops in callers }
+    Exit;
+  end;
+
+  PhysP := P;
+  if PhysP >= CurPtr then
+    Inc(PhysP, GapLen);
+
+  B := Buffer^[PhysP];
+  Result := UTF8CharLen(B);
+
+  { Make sure we return at least 1 to prevent infinite loops }
+  if Result < 1 then
+    Result := 1;
+
+  { Make sure we don't exceed buffer length }
+  if P + Result > BufLen then
+    Result := BufLen - P;
+  if Result < 1 then
+    Result := 1;
 end;
 
 function TEditor.BufPtr(P: Sw_Word): Sw_Word;
@@ -1258,7 +1357,7 @@ end;
 
 procedure TEditor.Center_Text(Select_Mode: Byte);
 var
-  Spaces: array[1..80] of AnsiChar;
+  Spaces: array[1..80] of Byte;
   Index: Byte;
   Line_Length: Sw_Integer;
   E, S: Sw_Word;
@@ -1269,7 +1368,7 @@ begin
     Exit;
   SetCurPtr(S, Select_Mode);
   Remove_EOL_Spaces(Select_Mode);
-  if Buffer^[BufPtr(CurPtr)] = #32 then
+  if Buffer^[BufPtr(CurPtr)] = 32 then  { ASCII space }
   begin
     E := LineEnd(CurPtr);
     if NextWord(CurPtr) > E then
@@ -1285,7 +1384,7 @@ begin
       Exit;
   Line_Length := E - CurPtr;
   for Index := 1 to ((Right_Margin - Line_Length) shr 1) do
-    Spaces[Index] := #32;
+    Spaces[Index] := 32;  { ASCII space }
   InsertText(@Spaces, Index, False);
   SetCurPtr(LineEnd(CurPtr), Select_Mode);
 end;
@@ -1308,7 +1407,7 @@ begin
     if BufChar(P) = #9 then
       Pos := Pos or (TabSize - 1);
     Inc(Pos);
-    Inc(P);
+    Inc(P, BufCharLen(P));
   end;
   Result := Pos;
 end;
@@ -1316,17 +1415,19 @@ end;
 function TEditor.CharPtr(P: Sw_Word; Target: Sw_Integer): Sw_Word;
 var
   Pos: Sw_Integer;
+  CharLen: Integer;
 begin
   Pos := 0;
-  while (Pos < Target) and (P < BufLen) and not (BufChar(P) in [AnsiChar(#10), AnsiChar(#13)]) do
+  while (Pos < Target) and (P < BufLen) and not ((BufChar(P) = #10) or (BufChar(P) = #13)) do
   begin
     if BufChar(P) = #9 then
       Pos := Pos or (TabSize - 1);
     Inc(Pos);
-    Inc(P);
+    CharLen := BufCharLen(P);
+    Inc(P, CharLen);
   end;
   if Pos > Target then
-    Dec(P);
+    P := PrevChar(P);
   Result := P;
 end;
 
@@ -1339,35 +1440,17 @@ end;
 function TEditor.ClipCopy: Boolean;
 begin
   Result := False;
-  if Assigned(EditorDebugLog) then
-    EditorDebugLog(Format('ClipCopy: Clipboard=%p Self=%p HasSelection=%s SelStart=%d SelEnd=%d',
-      [Pointer(Clipboard), Pointer(Self), BoolToStr(HasSelection, True), SelStart, SelEnd]));
   if not Assigned(Clipboard) then
-  begin
-    if Assigned(EditorDebugLog) then
-      EditorDebugLog('ClipCopy: No clipboard assigned!');
     Exit;
-  end;
   if Clipboard = Self then
-  begin
-    if Assigned(EditorDebugLog) then
-      EditorDebugLog('ClipCopy: Cannot copy to self');
     Exit;
-  end;
   if not HasSelection then
-  begin
-    if Assigned(EditorDebugLog) then
-      EditorDebugLog('ClipCopy: No selection to copy');
     Exit;
-  end;
   { Clear existing clipboard content first }
   Clipboard.SetSelect(0, Clipboard.BufLen, True);
   Clipboard.DeleteSelect;
   { Copy selection to clipboard }
   Result := Clipboard.InsertFrom(Self);
-  if Assigned(EditorDebugLog) then
-    EditorDebugLog(Format('ClipCopy: InsertFrom result=%s, Clipboard now has SelStart=%d SelEnd=%d BufLen=%d',
-      [BoolToStr(Result, True), Clipboard.SelStart, Clipboard.SelEnd, Clipboard.BufLen]));
   { Select all in clipboard so paste can use it }
   Clipboard.SetSelect(0, Clipboard.BufLen, False);
   Selecting := False;
@@ -1376,12 +1459,8 @@ end;
 
 procedure TEditor.ClipCut;
 begin
-  if Assigned(EditorDebugLog) then
-    EditorDebugLog('ClipCut: Starting');
   if ClipCopy then
   begin
-    if Assigned(EditorDebugLog) then
-      EditorDebugLog('ClipCut: Copy succeeded, deleting selection');
     Update_FPlace_Markers(0, SelEnd - SelStart, SelStart, SelEnd);
     DeleteSelect;
   end;
@@ -1389,29 +1468,12 @@ end;
 
 procedure TEditor.ClipPaste;
 begin
-  if Assigned(EditorDebugLog) then
-    EditorDebugLog(Format('ClipPaste: Clipboard=%p Self=%p', [Pointer(Clipboard), Pointer(Self)]));
   if not Assigned(Clipboard) then
-  begin
-    if Assigned(EditorDebugLog) then
-      EditorDebugLog('ClipPaste: No clipboard assigned!');
     Exit;
-  end;
   if Clipboard = Self then
-  begin
-    if Assigned(EditorDebugLog) then
-      EditorDebugLog('ClipPaste: Cannot paste to self');
     Exit;
-  end;
-  if Assigned(EditorDebugLog) then
-    EditorDebugLog(Format('ClipPaste: Clipboard SelStart=%d SelEnd=%d BufLen=%d HasSelection=%s',
-      [Clipboard.SelStart, Clipboard.SelEnd, Clipboard.BufLen, BoolToStr(Clipboard.HasSelection, True)]));
   if not Clipboard.HasSelection then
-  begin
-    if Assigned(EditorDebugLog) then
-      EditorDebugLog('ClipPaste: Clipboard has no selection to paste');
     Exit;
-  end;
   if Word_Wrap and (FCurPos.X > Right_Margin) then
   begin
     EditorDialog(edPasteNotPossible, nil);
@@ -1421,8 +1483,6 @@ begin
     Update_FPlace_Markers(Clipboard.SelEnd - Clipboard.SelStart, 0,
                          Clipboard.SelStart, Clipboard.SelEnd);
   InsertFrom(Clipboard);
-  if Assigned(EditorDebugLog) then
-    EditorDebugLog('ClipPaste: InsertFrom completed');
 end;
 
 procedure TEditor.ConvertEvent(var Event: TEvent);
@@ -1546,12 +1606,7 @@ begin
     if Assigned(VScrollBar) then
       VScrollBar.SetParams(FDelta.Y, 0, FLimit.Y - Size.Y, Size.Y - 1, 1);
     if Assigned(Indicator) then
-    begin
-      if Assigned(EditorDebugLog) then
-        EditorDebugLog(Format('DoUpdate: Setting indicator to CurPos=(%d,%d)',
-          [FCurPos.X, FCurPos.Y]));
       Indicator.SetValue(CurPos, AutoIndent, Modified, Word_Wrap);
-    end;
     if State and sfActive <> 0 then
       UpdateCommands;
     FUpdateFlags := 0;
@@ -1570,7 +1625,7 @@ begin
   L := BufLen;
   S := LineStart(CurPtr);
 
-  if AutoIndent and (Buffer^[BufPtr(S)] = ' ') then
+  if AutoIndent and (Buffer^[BufPtr(S)] = 32) then  { space }
   begin
     if NextWord(S) > CurPtr then
       A := CurPtr
@@ -1589,10 +1644,10 @@ begin
   end;
 
   { Check for special conditions }
-  if Buffer^[BufPtr(CurPtr)] = ' ' then
+  if Buffer^[BufPtr(CurPtr)] = 32 then  { space }
   begin
     SetCurPtr(PrevChar(CurPtr), Select_Mode);
-    if Buffer^[BufPtr(CurPtr)] = ' ' then
+    if Buffer^[BufPtr(CurPtr)] = 32 then  { space }
     begin
       SetCurPtr(NextChar(CurPtr), Select_Mode);
       EditorDialog(edWrapNotPossible, nil);
@@ -1608,7 +1663,7 @@ begin
       Exit;
     end;
     SetCurPtr(P, Select_Mode);
-    if Buffer^[BufPtr(CurPtr)] = ' ' then
+    if Buffer^[BufPtr(CurPtr)] = 32 then  { space }
       SetCurPtr(NextChar(CurPtr), Select_Mode);
   end;
 
@@ -1642,7 +1697,7 @@ begin
   Color := GetColor($0201);
   while Count > 0 do
   begin
-    MoveChar(B, ' ', Byte(Color), Size.X);
+    DrawChar(B, 0, ' ', Byte(Color), Size.X);
     FormatLine(B, LinePtr, Size.X, Color);
     WriteLine(0, Y, Size.X, 1, B);
     LinePtr := NextLine(LinePtr);
@@ -1667,14 +1722,18 @@ end;
 
 procedure TEditor.FormatLine(var DrawBuf; LinePtr: Sw_Word; Width: Sw_Integer; Colors: Word);
 var
-  P: PWord;
+  Buf: PDrawBuffer;
   X: Sw_Integer;
-  C: AnsiChar;
+  OutPos: Sw_Integer;  { Position in output buffer }
+  C: Char;
+  CharLen: Integer;
   Color, SelColor: Byte;
   SelS, SelE: Sw_Integer;
+  CurColor: Byte;
 begin
-  P := @DrawBuf;
+  Buf := @DrawBuf;
   X := 0;
+  OutPos := 0;
   Color := Lo(Colors);
   SelColor := Hi(Colors);
 
@@ -1695,7 +1754,9 @@ begin
   while (X < Width + FDelta.X) and (LinePtr < BufLen) do
   begin
     C := BufChar(LinePtr);
-    if C in [AnsiChar(#10), AnsiChar(#13)] then
+    CharLen := BufCharLen(LinePtr);
+
+    if (C = #10) or (C = #13) then
       Break;
     if C = #9 then
     begin
@@ -1703,10 +1764,15 @@ begin
         if X >= FDelta.X then
         begin
           if (X >= SelS) and (X < SelE) then
-            P^ := (SelColor shl 8) or Ord(' ')
+            CurColor := SelColor
           else
-            P^ := (Color shl 8) or Ord(' ');
-          Inc(P);
+            CurColor := Color;
+          if OutPos < MaxViewWidth then
+          begin
+            Buf^[OutPos].Ch := ' ';
+            Buf^[OutPos].Attr := CurColor;
+          end;
+          Inc(OutPos);
         end;
         Inc(X);
       until (X mod TabSize = 0) or (X >= Width + FDelta.X);
@@ -1716,14 +1782,19 @@ begin
       if X >= FDelta.X then
       begin
         if (X >= SelS) and (X < SelE) then
-          P^ := (SelColor shl 8) or Ord(C)
+          CurColor := SelColor
         else
-          P^ := (Color shl 8) or Ord(C);
-        Inc(P);
+          CurColor := Color;
+        if OutPos < MaxViewWidth then
+        begin
+          Buf^[OutPos].Ch := C;
+          Buf^[OutPos].Attr := CurColor;
+        end;
+        Inc(OutPos);
       end;
       Inc(X);
     end;
-    Inc(LinePtr);
+    Inc(LinePtr, CharLen);  { Advance by UTF-8 character length }
   end;
 
   { Fill rest with spaces }
@@ -1731,8 +1802,12 @@ begin
   begin
     if X >= FDelta.X then
     begin
-      P^ := (Color shl 8) or Ord(' ');
-      Inc(P);
+      if OutPos < MaxViewWidth then
+      begin
+        Buf^[OutPos].Ch := ' ';
+        Buf^[OutPos].Attr := Color;
+      end;
+      Inc(OutPos);
     end;
     Inc(X);
   end;
@@ -1827,22 +1902,24 @@ begin
       end;
 
     evKeyDown:
-      case Event.CharCode of
-        #32..#255:
-          begin
-            Lock;
-            if Overwrite and not HasSelection then
-              if BufChar(CurPtr) <> #13 then
-                SetSelect(CurPtr, NextChar(CurPtr), True);
-            InsertText(@Event.CharCode, 1, False);
-            if Word_Wrap then
-              Check_For_Word_Wrap(SelectMode, CenterCursor);
-            TrackCursor(CenterCursor);
-            Unlock;
-            ClearEvent(Event);
-          end;
-      else
-        Exit;
+      begin
+        { Handle printable Unicode characters }
+        if Event.UnicodeChar >= ' ' then
+        begin
+          Lock;
+          if Overwrite and not HasSelection then
+            if BufChar(CurPtr) <> #13 then
+              SetSelect(CurPtr, NextChar(CurPtr), True);
+          { Convert Unicode char to UTF-8 and insert }
+          InsertUnicodeChar(Event.UnicodeChar);
+          if Word_Wrap then
+            Check_For_Word_Wrap(SelectMode, CenterCursor);
+          TrackCursor(CenterCursor);
+          Unlock;
+          ClearEvent(Event);
+        end
+        else
+          Exit;
       end;
 
     evCommand:
@@ -2002,10 +2079,6 @@ begin
   Selecting := False;
   SelLen := SelEnd - SelStart;
 
-  if Assigned(EditorDebugLog) then
-    EditorDebugLog(Format('InsertBuffer: CurPos=(%d,%d) CurPtr=%d Length=%d SelLen=%d',
-      [FCurPos.X, FCurPos.Y, CurPtr, Length, SelLen]));
-
   if (SelLen = 0) and (Length = 0) then
     Exit;
 
@@ -2060,22 +2133,7 @@ begin
   Lines := CountLines(Buffer^[CurPtr], Length);
   Inc(FCurPtr, Length);
 
-  { Update cursor position }
-  Inc(FCurPos.Y, Lines);
-  DrawLine := FCurPos.Y;
-  DrawPtr := LineStart(CurPtr);
-  FCurPos.X := CharPos(DrawPtr, CurPtr);
-
-  if Assigned(EditorDebugLog) then
-    EditorDebugLog(Format('InsertBuffer AFTER: CurPos=(%d,%d) Lines=%d CurPtr=%d',
-      [FCurPos.X, FCurPos.Y, Lines, CurPtr]));
-
-  { Update selection }
-  if not SelectText then
-    SelStart := CurPtr;
-  SelEnd := CurPtr;
-
-  { Update buffer length }
+  { Update buffer length BEFORE position calculations (BufCharLen needs correct BufLen) }
   if Length > SelLen then
   begin
     Inc(FBufLen, Length - SelLen);
@@ -2086,6 +2144,17 @@ begin
     Dec(FBufLen, SelLen - Length);
     Inc(FGapLen, SelLen - Length);
   end;
+
+  { Update cursor position (now BufLen is correct for BufCharLen) }
+  Inc(FCurPos.Y, Lines);
+  DrawLine := FCurPos.Y;
+  DrawPtr := LineStart(CurPtr);
+  FCurPos.X := CharPos(DrawPtr, CurPtr);
+
+  { Update selection }
+  if not SelectText then
+    SelStart := CurPtr;
+  SelEnd := CurPtr;
 
   { Update undo info }
   if AllowUndo then
@@ -2112,6 +2181,14 @@ end;
 function TEditor.InsertText(Text: Pointer; Length: Sw_Word; SelectText: Boolean): Boolean;
 begin
   Result := InsertBuffer(PEditBuffer(Text), 0, Length, CanUndo, SelectText);
+end;
+
+procedure TEditor.InsertUnicodeChar(C: Char);
+var
+  UTF8Bytes: TBytes;
+begin
+  UTF8Bytes := TEncoding.UTF8.GetBytes(C);
+  InsertText(@UTF8Bytes[0], System.Length(UTF8Bytes), False);
 end;
 
 function TEditor.IsClipboard: Boolean;
@@ -2151,8 +2228,8 @@ end;
 
 function TEditor.LineEnd(P: Sw_Word): Sw_Word;
 begin
-  while (P < BufLen) and not (BufChar(P) in [AnsiChar(#10), AnsiChar(#13)]) do
-    Inc(P);
+  while (P < BufLen) and not ((BufChar(P) = #10) or (BufChar(P) = #13)) do
+    Inc(P, BufCharLen(P));
   Result := P;
 end;
 
@@ -2196,7 +2273,7 @@ end;
 
 function TEditor.LineStart(P: Sw_Word): Sw_Word;
 begin
-  while (P > 0) and not (BufChar(P - 1) in [AnsiChar(#10), AnsiChar(#13)]) do
+  while (P > 0) and not ((BufChar(P - 1) = #10) or (BufChar(P - 1) = #13)) do
     Dec(P);
   Result := P;
 end;
@@ -2213,11 +2290,18 @@ begin
 end;
 
 function TEditor.NextChar(P: Sw_Word): Sw_Word;
+var
+  CharLen: Integer;
 begin
   if P < BufLen then
   begin
-    Inc(P);
-    if (P < BufLen) and (BufChar(P - 1) = #13) and (BufChar(P) = #10) then
+    { Get UTF-8 character length and advance by that many bytes }
+    CharLen := BufCharLen(P);
+    if CharLen < 1 then
+      CharLen := 1;  { Safety: always advance at least 1 byte }
+    Inc(P, CharLen);
+    { Handle CRLF as single line ending }
+    if (P < BufLen) and (BufByte(P - 1) = 13) and (BufByte(P) = 10) then
       Inc(P);
   end;
   Result := P;
@@ -2229,11 +2313,23 @@ begin
 end;
 
 function TEditor.NextWord(P: Sw_Word): Sw_Word;
+var
+  CharLen: Integer;
 begin
-  while (P < BufLen) and (BufChar(P) in WordChars) do
-    Inc(P);
-  while (P < BufLen) and not (BufChar(P) in WordChars) do
-    Inc(P);
+  { Skip word characters }
+  while (P < BufLen) and IsWordChar(BufChar(P)) do
+  begin
+    CharLen := BufCharLen(P);
+    if CharLen < 1 then CharLen := 1;
+    Inc(P, CharLen);
+  end;
+  { Skip non-word characters }
+  while (P < BufLen) and not IsWordChar(BufChar(P)) do
+  begin
+    CharLen := BufCharLen(P);
+    if CharLen < 1 then CharLen := 1;
+    Inc(P, CharLen);
+  end;
   Result := P;
 end;
 
@@ -2242,7 +2338,11 @@ begin
   if P > 0 then
   begin
     Dec(P);
-    if (P > 0) and (BufChar(P) = #10) and (BufChar(P - 1) = #13) then
+    { Handle CRLF as single line ending }
+    if (P > 0) and (BufByte(P) = 10) and (BufByte(P - 1) = 13) then
+      Dec(P);
+    { Scan backwards past UTF-8 trail bytes to find lead byte }
+    while (P > 0) and IsUTF8TrailByte(BufByte(P)) do
       Dec(P);
   end;
   Result := P;
@@ -2254,11 +2354,25 @@ begin
 end;
 
 function TEditor.PrevWord(P: Sw_Word): Sw_Word;
+var
+  PrevP: Sw_Word;
 begin
-  while (P > 0) and not (BufChar(P - 1) in WordChars) do
-    Dec(P);
-  while (P > 0) and (BufChar(P - 1) in WordChars) do
-    Dec(P);
+  { Skip non-word characters going backwards }
+  while P > 0 do
+  begin
+    PrevP := PrevChar(P);
+    if IsWordChar(BufChar(PrevP)) then
+      Break;
+    P := PrevP;
+  end;
+  { Skip word characters going backwards }
+  while P > 0 do
+  begin
+    PrevP := PrevChar(P);
+    if not IsWordChar(BufChar(PrevP)) then
+      Break;
+    P := PrevP;
+  end;
   Result := P;
 end;
 
@@ -2381,9 +2495,9 @@ begin
       Inc(I, Pos);
       { Check for whole words only if option is set }
       if (Opts and efWholeWordsOnly = 0) or
-         not (((I <> 0) and (BufChar(I - 1) in WordChars)) or
+         not (((I <> 0) and IsWordChar(BufChar(I - 1))) or
               ((I + Sw_Word(Length(FindStr)) <> BufLen) and
-               (BufChar(I + Sw_Word(Length(FindStr))) in WordChars))) then
+               IsWordChar(BufChar(I + Sw_Word(Length(FindStr)))))) then
       begin
         Lock;
         SetSelect(I, I + Sw_Word(Length(FindStr)), False);
@@ -2403,11 +2517,11 @@ var
   S, E: Sw_Word;
 begin
   S := CurPtr;
-  while (S > 0) and (BufChar(S - 1) in WordChars) do
+  while (S > 0) and IsWordChar(BufChar(S - 1)) do
     Dec(S);
   E := CurPtr;
-  while (E < BufLen) and (BufChar(E) in WordChars) do
-    Inc(E);
+  while (E < BufLen) and IsWordChar(BufChar(E)) do
+    Inc(E, BufCharLen(E));
   SetSelect(S, E, False);
 end;
 
@@ -2498,10 +2612,6 @@ begin
     if (NewStart <> NewEnd) or (SelStart <> SelEnd) then
       UFlags := ufView;
 
-  if Assigned(EditorDebugLog) then
-    EditorDebugLog(Format('SetSelect BEFORE: CurPos=(%d,%d) CurPtr=%d P=%d',
-      [FCurPos.X, FCurPos.Y, CurPtr, P]));
-
   if P <> CurPtr then
   begin
     if P > CurPtr then
@@ -2528,10 +2638,6 @@ begin
     DelCount := 0;
     InsCount := 0;
     SetBufSize(BufLen);
-
-    if Assigned(EditorDebugLog) then
-      EditorDebugLog(Format('SetSelect AFTER: CurPos=(%d,%d) CurPtr=%d',
-        [FCurPos.X, FCurPos.Y, CurPtr]));
   end;
   SelStart := NewStart;
   SelEnd := NewEnd;
@@ -2783,9 +2889,15 @@ var
   FSize: LongInt;
   FRead: Integer;
   F: File;
+  RawData: TBytes;
+  UTF8Data: TBytes;
+  Encoding: TFileEncoding;
+  BOMLen: Integer;
 begin
   Result := False;
   FLength := 0;
+  FHadBOM := False;
+
   AssignFile(F, FileName);
   {$I-}
   Reset(F, 1);
@@ -2795,19 +2907,58 @@ begin
   else
   begin
     FSize := FileSize(F);
-    if (FSize > MaxBufLength) or not SetBufSize(FSize) then
+    if FSize > MaxBufLength then
       EditorDialog(edOutOfMemory, nil)
+    else if FSize = 0 then
+    begin
+      { Empty file - nothing to load }
+      Result := True;
+      CloseFile(F);
+      SetBufLen(0);
+      Exit;
+    end
     else
     begin
+      { Read raw file data }
+      SetLength(RawData, FSize);
       {$I-}
-      BlockRead(F, Buffer^[BufSize - FSize], FSize, FRead);
+      BlockRead(F, RawData[0], FSize, FRead);
       {$I+}
       if (IOResult <> 0) or (FRead <> FSize) then
         EditorDialog(edReadError, @FileName)
       else
       begin
-        Result := True;
-        FLength := FRead;
+        { Detect encoding and convert to UTF-8 }
+        Encoding := DetectEncoding(RawData, FSize);
+        FHadBOM := Encoding in [feUTF8BOM, feUTF16LE, feUTF16BE];
+
+        if Encoding in [feUTF8, feUTF8BOM] then
+        begin
+          { Already UTF-8, just strip BOM if present }
+          BOMLen := GetBOMLength(Encoding);
+          if BOMLen > 0 then
+          begin
+            SetLength(UTF8Data, FSize - BOMLen);
+            if Length(UTF8Data) > 0 then
+              Move(RawData[BOMLen], UTF8Data[0], Length(UTF8Data));
+          end
+          else
+            UTF8Data := RawData;
+        end
+        else
+          { Convert from other encoding to UTF-8 }
+          UTF8Data := ConvertToUTF8(RawData, Encoding);
+
+        { Allocate buffer and copy data }
+        FLength := Length(UTF8Data);
+        if (FLength > MaxBufLength) or not SetBufSize(FLength) then
+          EditorDialog(edOutOfMemory, nil)
+        else
+        begin
+          if FLength > 0 then
+            Move(UTF8Data[0], Buffer^[BufSize - FLength], FLength);
+          Result := True;
+        end;
       end;
     end;
     CloseFile(F);
@@ -2837,12 +2988,15 @@ begin
 end;
 
 function TFileEditor.SaveFile: Boolean;
+const
+  UTF8BOM: array[0..2] of Byte = ($EF, $BB, $BF);
 var
   F: File;
   BackupName: FNameStr;
   D: DirStr;
   N: NameStr;
   E: ExtStr;
+  WriteError: Boolean;
 begin
   Result := False;
   if Flags and efBackupFiles <> 0 then
@@ -2865,11 +3019,30 @@ begin
     EditorDialog(edCreateError, @FileName)
   else
   begin
+    WriteError := False;
     {$I-}
-    BlockWrite(F, Buffer^, CurPtr);
-    BlockWrite(F, Buffer^[CurPtr + GapLen], BufLen - CurPtr);
+    { Write UTF-8 BOM if original file had one }
+    if FHadBOM then
+    begin
+      BlockWrite(F, UTF8BOM, 3);
+      if IOResult <> 0 then
+        WriteError := True;
+    end;
+    { Write buffer contents (already UTF-8) }
+    if not WriteError then
+    begin
+      BlockWrite(F, Buffer^, CurPtr);
+      if IOResult <> 0 then
+        WriteError := True;
+    end;
+    if not WriteError then
+    begin
+      BlockWrite(F, Buffer^[CurPtr + GapLen], BufLen - CurPtr);
+      if IOResult <> 0 then
+        WriteError := True;
+    end;
     {$I+}
-    if IOResult <> 0 then
+    if WriteError then
       EditorDialog(edWriteError, @FileName)
     else
     begin

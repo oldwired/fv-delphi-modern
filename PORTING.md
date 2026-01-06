@@ -354,6 +354,7 @@ type
 
 ## Porting Checklist
 
+### Object → Class Conversion
 - [ ] Replace all `New(P, Init(` with `P := TType.Create(`
 - [ ] Replace all `Dispose(P, Done)` / `P.Done` with `FreeAndNil(P)`
 - [ ] Change `PView`, `PDialog`, etc. to `TView`, `TDialog`, etc.
@@ -365,7 +366,17 @@ type
 - [ ] Replace `TStringCollection` with `TStringList`
 - [ ] Add `System.Generics.Collections` to uses clause
 - [ ] Remove `^` dereference operators (e.g., `P^.Show` → `P.Show`)
+
+### Unicode Migration
+- [ ] Replace `MoveChar`/`MoveStr`/`MoveCStr` with `DrawChar`/`DrawStr`/`DrawCStr`
+- [ ] Replace `set of AnsiChar` with Unicode-aware functions where needed
+- [ ] Replace `PAnsiChar` byte iteration with `PByte`
+- [ ] Update custom search code to handle UTF-8 encoding
+- [ ] Test with Unicode text files (UTF-8, UTF-16)
+
+### Final Testing
 - [ ] Test all menu options and dialogs after porting
+- [ ] Test editor with Unicode characters (e.g., émojis, CJK, accented chars)
 
 ---
 
@@ -382,9 +393,99 @@ Watch for compiler warnings - especially:
 
 ---
 
+## 11. Unicode Support
+
+The modern version is fully Unicode-enabled. Key changes:
+
+### String Types
+
+| Classic | Modern |
+|---------|--------|
+| `Char` (AnsiChar) | `Char` (WideChar) |
+| `String` (ShortString) | `String` (UnicodeString) |
+| `PChar` (PAnsiChar) | `PChar` (PWideChar) |
+
+**Note:** `ShortString` is still used for fixed-size dialog data records.
+
+### Drawing System
+
+The drawing system uses Unicode-capable cells:
+
+```pascal
+// CLASSIC - Word-based buffer (char + attr packed)
+type
+  TDrawBuffer = array[0..MaxViewWidth-1] of Word;
+// MoveChar(B, Ch, Attr, Count);
+// MoveStr(B[Pos], Str, Attr);
+
+// MODERN - TDrawCell with Unicode string
+type
+  TDrawCell = record
+    Ch: string;   // Unicode character
+    Attr: Word;   // Color attribute
+  end;
+  TDrawBuffer = array[0..MaxViewWidth-1] of TDrawCell;
+
+// DrawChar(B, Pos, Ch, Attr, Count);
+// DrawStr(B, Pos, Str, Attr);
+```
+
+**Search & Replace:**
+- `MoveChar(B, ...)` → `DrawChar(B, 0, ...)`
+- `MoveChar(B[Pos], ...)` → `DrawChar(B, Pos, ...)`
+- `MoveStr(B, ...)` → `DrawStr(B, 0, ...)`
+- `MoveStr(B[Pos], ...)` → `DrawStr(B, Pos, ...)`
+- `MoveCStr(...)` → `DrawCStr(...)`
+
+### Text Editor (TEditor)
+
+The editor stores text as UTF-8 bytes with full encoding support:
+
+```pascal
+// Buffer is UTF-8 encoded bytes
+TEditBuffer = array[0..MaxBufLength] of Byte;
+
+// Character access decodes UTF-8
+function BufChar(P: Sw_Word): Char;      // Returns Unicode char
+function BufCharLen(P: Sw_Word): Integer; // Byte length of UTF-8 char
+```
+
+**File encoding support:**
+- Load: UTF-8, UTF-8 with BOM, UTF-16LE, UTF-16BE, ANSI (auto-detected)
+- Save: UTF-8 (preserves BOM if original had one)
+
+### Word Character Detection
+
+```pascal
+// CLASSIC - ASCII-only set
+WordChars: set of AnsiChar = ['!'..#255];
+if CharInSet(C, WordChars) then ...
+
+// MODERN - Unicode-aware function
+function IsWordChar(C: Char): Boolean;
+begin
+  Result := C.IsLetterOrDigit or (C = '_');
+end;
+if IsWordChar(C) then ...
+```
+
+### Search Functions
+
+```pascal
+// CLASSIC - ASCII byte search
+function Scan(var Block; Size: Sw_Word; const Str: String): Sw_Word;
+function IScan(var Block; Size: Sw_Word; const Str: String): Sw_Word;
+
+// MODERN - Same signatures, but:
+// - Scan: Converts search string to UTF-8 bytes, searches byte-by-byte
+// - IScan: Decodes UTF-8 chars, uses Unicode case folding (UpCase)
+```
+
+---
+
 ## Reference
 
 - Original FV: `C:\projects\fv-delphi` (object syntax)
-- Modern FV: `C:\projects\fv-delphi-modern` (class syntax)
+- Modern FV: `C:\projects\fv-delphi-modern-unicode` (class syntax + Unicode)
 - Architecture: See `ARCHITECTURE.md`
 - Claude Code guidance: See `CLAUDE.md`

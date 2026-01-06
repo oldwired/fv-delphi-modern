@@ -11,8 +11,6 @@
 
 unit TimedDlg;
 
-{$I platform.inc}
-
 interface
 
 uses
@@ -38,7 +36,7 @@ type
   TTimedDialogText = class(TStaticText)
   public
     constructor Create(var Bounds: TRect); reintroduce; virtual;
-    procedure GetText(var S: ShortString); override;
+    procedure GetText(var S: string); override;
   end;
 
 const
@@ -58,11 +56,11 @@ const
 
 procedure RegisterTimedDialog;
 
-function TimedMessageBox(const Msg: ShortString; Params: Pointer;
+function TimedMessageBox(const Msg: string;
   AOptions: Word; ASecs: Word): Word;
 
-function TimedMessageBoxRect(var R: TRect; const Msg: ShortString;
-  Params: Pointer; AOptions: Word; ASecs: Word): Word;
+function TimedMessageBoxRect(var R: TRect; const Msg: string;
+  AOptions: Word; ASecs: Word): Word;
 
 implementation
 
@@ -76,13 +74,10 @@ begin
   inherited Create(Bounds, '');
 end;
 
-procedure TTimedDialogText.GetText(var S: ShortString);
+procedure TTimedDialogText.GetText(var S: string);
 begin
   if Owner <> nil then
-  begin
-    Str(TTimedDialog(Owner).Secs, S);
-    S := #3 + S;  { #3 = center text }
-  end
+    S := #3 + IntToStr(TTimedDialog(Owner).Secs)  { #3 = center text }
   else
     S := '';
 end;
@@ -147,7 +142,7 @@ end;
 
 { Helper functions }
 
-function TimedMessageBox(const Msg: ShortString; Params: Pointer;
+function TimedMessageBox(const Msg: string;
   AOptions: Word; ASecs: Word): Word;
 var
   R: TRect;
@@ -159,11 +154,11 @@ begin
   else
     R.Move((Application.Size.X - R.B.X) div 2,
            (Application.Size.Y - R.B.Y) div 2);
-  Result := TimedMessageBoxRect(R, Msg, Params, AOptions, ASecs);
+  Result := TimedMessageBoxRect(R, Msg, AOptions, ASecs);
 end;
 
-function TimedMessageBoxRect(var R: TRect; const Msg: ShortString;
-  Params: Pointer; AOptions: Word; ASecs: Word): Word;
+function TimedMessageBoxRect(var R: TRect; const Msg: string;
+  AOptions: Word; ASecs: Word): Word;
 var
   Dlg: TTimedDialog;
   TimedText: TTimedDialogText;
@@ -177,7 +172,7 @@ begin
     Insert(TimedText);
     TextR.Assign(3, 2, Size.X - 2, Size.Y - 5);
   end;
-  Result := MessageBoxRectDlg(Dlg, TextR, Msg, Params, AOptions);
+  Result := MessageBoxRectDlg(Dlg, TextR, Msg, AOptions);
   FreeAndNil(Dlg);
 end;
 

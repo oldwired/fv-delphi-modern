@@ -5,8 +5,6 @@
 
 unit Calendar;
 
-{$I platform.inc}
-
 interface
 
 uses
@@ -38,7 +36,7 @@ type
     procedure ClampDay;
     procedure ShowMonthMenu;
     procedure ShowYearMenu;
-    function GetDayHeaderStr: ShortString;
+    function GetDayHeaderStr: string;
   public
     constructor Create(var Bounds: TRect); reintroduce; virtual;
     constructor CreateWithDate(var Bounds: TRect; AYear, AMonth, ADay: Word); virtual;
@@ -64,7 +62,7 @@ const
   CCalendarView = #6#7#8#4#5;  { Normal, Selected, Title, Arrow, Weekend }
 
   { Short day names for headers }
-  DayNamesShort: array[0..6] of string[2] = (
+  DayNamesShort: array[0..6] of string = (
     'Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'
   );
 
@@ -74,7 +72,7 @@ uses
   SysUtils, App;
 
 const
-  MonthNames: array[1..12] of string[9] = (
+  MonthNames: array[1..12] of string = (
     'January', 'February', 'March', 'April',
     'May', 'June', 'July', 'August',
     'September', 'October', 'November', 'December'
@@ -88,18 +86,18 @@ type
   { Simple list menu for month/year selection }
   TCalendarMenu = class(TView)
   private
-    FItems: array[0..15] of ShortString;
+    FItems: array[0..15] of string;
     FItemCount: Integer;
     FSelected: Integer;
     FSelection: Integer;
     FEndState: Word;
   public
-    constructor Create(var Bounds: TRect; AItems: array of ShortString); reintroduce; virtual;
+    constructor Create(var Bounds: TRect; const AItems: array of string); reintroduce; virtual;
     procedure Draw; override;
     procedure HandleEvent(var Event: TEvent); override;
     function Execute: Word; override;
     function GetPalette: PPalette; override;
-    property Items: ShortString read FItems[0];
+    property Items: string read FItems[0];
     property ItemCount: Integer read FItemCount write FItemCount;
     property Selected: Integer read FSelected write FSelected;
     property Selection: Integer read FSelection write FSelection;
@@ -110,7 +108,7 @@ const
   { Use same palette as menus: indices 2,3,4,5,6,7 from app palette }
   CCalendarMenu = #2#3#4#5#6#7;
 
-constructor TCalendarMenu.Create(var Bounds: TRect; AItems: array of ShortString);
+constructor TCalendarMenu.Create(var Bounds: TRect; const AItems: array of string);
 var
   I: Integer;
 begin
@@ -157,11 +155,11 @@ begin
   CSelect := GetColor($0604);  { Selected: indices 4 and 6 }
 
   for I := 0 to FItemCount - 1 do begin
-    MoveChar(B, ' ', Byte(CNormal), Size.X);
+    DrawChar(B, 0, ' ', Byte(CNormal), Size.X);
     if I = FSelected then
-      MoveStr(B[1], FItems[I], CSelect)
+      DrawStr(B, 1, FItems[I], Byte(CSelect))
     else
-      MoveStr(B[1], FItems[I], CNormal);
+      DrawStr(B, 1, FItems[I], Byte(CNormal));
     WriteLine(0, I, Size.X, 1, B);
   end;
 end;
@@ -313,10 +311,10 @@ begin
   end;
 end;
 
-function TCalendarView.GetDayHeaderStr: ShortString;
+function TCalendarView.GetDayHeaderStr: string;
 var
   I, D: Integer;
-  S: ShortString;
+  S: string;
 begin
   S := '';
   for I := 0 to 6 do begin
@@ -324,7 +322,7 @@ begin
     if I > 0 then S := S + ' ';
     S := S + DayNamesShort[D];
   end;
-  GetDayHeaderStr := S;
+  Result := S;
 end;
 
 procedure TCalendarView.Draw;
@@ -332,8 +330,8 @@ var
   B: TDrawBuffer;
   CTitle, CNormal, CSelected, CArrow: Word;
   FirstDay, Days, Row, Col, D, ActualDOW: Integer;
-  S: string[20];
-  TitleStr, MonthStr, YearStr: ShortString;
+  S: string;
+  TitleStr, MonthStr, YearStr: string;
   Y, MonthX, YearX, ArrowLeftX, ArrowRightX: Integer;
   DayColor: Word;
 begin
@@ -347,11 +345,11 @@ begin
   YearStr := IntToStr(FYear);
   TitleStr := MonthStr + ' ' + YearStr;
 
-  MoveChar(B, ' ', Byte(CTitle), Size.X);
+  DrawChar(B, 0, ' ', Byte(CTitle), Size.X);
 
   { Left arrow at position 0 }
   ArrowLeftX := 0;
-  MoveStr(B[ArrowLeftX], '<', CArrow);
+  DrawStr(B, ArrowLeftX, '<', Byte(CArrow));
 
   { Center the month + year title }
   Col := (Size.X - Length(TitleStr)) div 2;
@@ -359,20 +357,20 @@ begin
 
   { Remember positions for click detection }
   MonthX := Col;
-  MoveStr(B[MonthX], ShortString(MonthStr), CTitle);
+  DrawStr(B, MonthX, MonthStr, Byte(CTitle));
 
   YearX := MonthX + Length(MonthStr) + 1;
-  MoveStr(B[YearX], ShortString(YearStr), CTitle);
+  DrawStr(B, YearX, YearStr, Byte(CTitle));
 
   { Right arrow at end }
   ArrowRightX := Size.X - 1;
-  MoveStr(B[ArrowRightX], '>', CArrow);
+  DrawStr(B, ArrowRightX, '>', Byte(CArrow));
 
   WriteLine(0, 0, Size.X, 1, B);
 
   { Line 1: Day headers (adjusted for FirstDayOfWeek) }
-  MoveChar(B, ' ', Byte(CNormal), Size.X);
-  MoveStr(B[0], GetDayHeaderStr, CNormal);
+  DrawChar(B, 0, ' ', Byte(CNormal), Size.X);
+  DrawStr(B, 0, GetDayHeaderStr, Byte(CNormal));
   WriteLine(0, 1, Size.X, 1, B);
 
   { Lines 2-7: Calendar days }
@@ -385,7 +383,7 @@ begin
   D := 1;
 
   for Row := 0 to 5 do begin
-    MoveChar(B, ' ', Byte(CNormal), Size.X);
+    DrawChar(B, 0, ' ', Byte(CNormal), Size.X);
     Y := Row + 2;
 
     for Col := 0 to 6 do begin
@@ -394,7 +392,7 @@ begin
       else if D > Days then
         Break
       else begin
-        Str(D:2, S);
+        S := Format('%2d', [D]);
 
         { Determine color for this day }
         if D = FDay then
@@ -406,7 +404,7 @@ begin
         end else
           DayColor := CNormal;
 
-        MoveStr(B[Col * 3], ShortString(S), DayColor);
+        DrawStr(B, Col * 3, S, Byte(DayColor));
         Inc(D);
       end;
     end;
@@ -421,7 +419,7 @@ var
   Menu: TCalendarMenu;
   GX, GY: Integer;
   V: TView;
-  MonthItems: array[0..11] of ShortString;
+  MonthItems: array[0..11] of string;
   I: Integer;
   Cmd: Word;
 begin
@@ -461,7 +459,7 @@ var
   Menu: TCalendarMenu;
   GX, GY: Integer;
   V: TView;
-  YearItems: array[0..9] of ShortString;
+  YearItems: array[0..9] of string;
   I, StartYear, SelectedIdx: Integer;
   Cmd: Word;
 begin
@@ -503,7 +501,7 @@ procedure TCalendarView.HandleEvent(var Event: TEvent);
 var
   Mouse: TPoint;
   Row, Col, FirstDay, ClickedDay: Integer;
-  MonthStr, YearStr, TitleStr: ShortString;
+  MonthStr, YearStr, TitleStr: string;
   MonthX, YearX, MonthEndX, YearEndX: Integer;
 begin
   inherited HandleEvent(Event);

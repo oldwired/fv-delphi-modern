@@ -16,12 +16,10 @@
 
 unit Statuses;
 
-{$I platform.inc}
-
 interface
 
 uses
-  FVCommon, FVConsts, Objects, Drivers, Views, Dialogs;
+  FVCommon, FVConsts, Objects, Drivers, Views, Dialogs, FVBoxChars;
 
 const
   { Event class for status views }
@@ -43,8 +41,8 @@ const
   sdResumeButton = $0004;
   sdAllButtons   = sdCancelButton or sdPauseButton or sdResumeButton;
 
-  { Spinner animation characters: | / - \ }
-  SpinChars: ShortString = #179'/'#196'\';
+  { Spinner animation characters: | / - \ using Unicode box drawing }
+  SpinChars: string = #$2502'/'#$2500'\';
 
   { State flag for paused status }
   sfPause = $F000;
@@ -306,11 +304,10 @@ end;
 
 procedure TStatus.Update(Data: Pointer);
 begin
-  Objects.DisposeStr(Text);
   if Data <> nil then
-    Text := Objects.NewStr(ShortString(PAnsiChar(Data)))
+    Text := string(PAnsiChar(Data))
   else
-    Text := nil;
+    Text := '';
   DrawView;
 end;
 
@@ -489,14 +486,14 @@ end;
 
 procedure TGauge.Draw;
 var
-  S: ShortString;
+  S: string;
   B: TDrawBuffer;
 begin
   { Blank the gauge }
-  MoveChar(B, ' ', GetColor(1), Size.X);
+  DrawChar(B, 0, ' ', GetColor(1), Size.X);
   { Write current status }
-  FormatStr(S, '%d', FCurrent);
-  MoveStr(B, S, GetColor(1));
+  S := Format('%d', [FCurrent]);
+  DrawStr(B, 0, S, GetColor(1));
   WriteBuf(0, 0, Size.X, Size.Y, B);
 end;
 
@@ -558,7 +555,7 @@ end;
 
 procedure TArrowGauge.Draw;
 const
-  Arrows: array[Boolean] of AnsiChar = ('<', '>');
+  Arrows: array[Boolean] of Char = ('<', '>');
 var
   B: TDrawBuffer;
   C: Word;
@@ -572,11 +569,11 @@ begin
   if Len > Size.X then Len := Size.X;
   if Len < 0 then Len := 0;
 
-  MoveChar(B, ' ', C, Size.X);
+  DrawChar(B, 0, ' ', Byte(C), Size.X);
   if FRight then
-    MoveChar(B, Arrows[FRight], C, Len)
+    DrawChar(B, 0, Arrows[FRight], Byte(C), Len)
   else
-    MoveChar(B[Size.X - Len], Arrows[FRight], C, Len);
+    DrawChar(B, Size.X - Len, Arrows[FRight], Byte(C), Len);
   WriteLine(0, 0, Size.X, 1, B);
 end;
 
@@ -618,17 +615,17 @@ procedure TPercentGauge.Draw;
 var
   B: TDrawBuffer;
   C: Word;
-  S: ShortString;
+  S: string;
   PercentDone: LongInt;
   CenterPos: SmallInt;
 begin
   C := GetColor(1);
-  MoveChar(B, ' ', C, Size.X);
+  DrawChar(B, 0, ' ', Byte(C), Size.X);
   PercentDone := Percent;
-  FormatStr(S, '%d%%', PercentDone);
+  S := Format('%d%%', [PercentDone]);
   CenterPos := (Size.X - Length(S)) div 2;
   if CenterPos < 0 then CenterPos := 0;
-  MoveStr(B[CenterPos], S, C);
+  DrawStr(B, CenterPos, S, Byte(C));
   WriteLine(0, 0, Size.X, Size.Y, B);
 end;
 
@@ -642,11 +639,11 @@ var
   C: Word;
   FillSize: SmallInt;
   PercentDone: LongInt;
-  S: ShortString;
+  S: string;
   CenterPos: SmallInt;
 begin
   { Fill entire view with empty bar color }
-  MoveChar(B, ' ', GetColor(4), Size.X);
+  DrawChar(B, 0, ' ', GetColor(4), Size.X);
 
   { Make progress bar with filled color }
   C := GetColor(5);
@@ -656,17 +653,17 @@ begin
     FillSize := 0;
   if FillSize > Size.X then FillSize := Size.X;
   if FillSize < 0 then FillSize := 0;
-  MoveChar(B, ' ', C, FillSize);
+  DrawChar(B, 0, ' ', Byte(C), FillSize);
 
   { Display percent done in center }
   PercentDone := Percent;
-  FormatStr(S, '%d%%', PercentDone);
+  S := Format('%d%%', [PercentDone]);
   { Use empty bar color for text if less than 50% }
   if PercentDone < 50 then
     C := GetColor(4);
   CenterPos := (Size.X - Length(S)) div 2;
   if CenterPos < 0 then CenterPos := 0;
-  MoveStr(B[CenterPos], S, C);
+  DrawStr(B, CenterPos, S, Byte(C));
 
   WriteLine(0, 0, Size.X, Size.Y, B);
 end;
@@ -696,10 +693,10 @@ var
   C: Word;
 begin
   C := GetColor(1);
-  MoveChar(B, ' ', C, Size.X);
-  { SpinChars is 1-based in Pascal, FCurrent ranges from 1 to 4 }
+  DrawChar(B, 0, ' ', Byte(C), Size.X);
+  { SpinChars is 1-based, FCurrent ranges from 1 to 4 }
   if (FCurrent >= 1) and (FCurrent <= Length(SpinChars)) then
-    MoveChar(B[Size.X div 2], SpinChars[FCurrent], C, 1);
+    DrawChar(B, Size.X div 2, SpinChars[FCurrent], Byte(C), 1);
   WriteLine(0, 0, Size.X, Size.Y, B);
 end;
 

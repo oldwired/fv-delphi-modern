@@ -16,12 +16,10 @@
 
 unit Outline;
 
-{$I platform.inc}
-
 interface
 
 uses
-  FVCommon, Objects, Drivers, Views;
+  FVCommon, Objects, Drivers, Views, FVBoxChars;
 
 type
   { Forward declarations }
@@ -32,7 +30,7 @@ type
   { TNode - Tree node record }
   TNode = record
     Next: PNode;
-    Text: Objects.PString;
+    Text: string;
     ChildList: PNode;
     Expanded: Boolean;
   end;
@@ -60,19 +58,19 @@ type
     constructor Create(var Bounds: TRect; AHScrollBar, AVScrollBar: TScrollBar); reintroduce; virtual;
     procedure Adjust(Node: Pointer; Expand: Boolean); virtual;
     function CreateGraph(Level: SmallInt; Lines: LongInt; Flags: Word;
-      LevWidth, EndWidth: SmallInt; const Chars: ShortString): ShortString;
+      LevWidth, EndWidth: SmallInt; const Chars: string): string;
     procedure Draw; override;
     procedure ExpandAll(Node: Pointer);
     function FirstThat(Callback: TNodeCallback; Context: PIterContext): Pointer;
     procedure Focused(I: Sw_Integer); virtual;
     procedure ForEach(Callback: TNodeCallback; Context: PIterContext);
     function GetChild(Node: Pointer; I: Sw_Integer): Pointer; virtual;
-    function GetGraph(Level: SmallInt; Lines: LongInt; Flags: Word): ShortString;
+    function GetGraph(Level: SmallInt; Lines: LongInt; Flags: Word): string;
     function GetNode(I: Sw_Integer): Pointer; virtual;
     function GetNumChildren(Node: Pointer): Sw_Integer; virtual;
     function GetPalette: PPalette; override;
     function GetRoot: Pointer; virtual;
-    function GetText(Node: Pointer): ShortString; virtual;
+    function GetText(Node: Pointer): string; virtual;
     procedure HandleEvent(var Event: TEvent); override;
     function HasChildren(Node: Pointer): Boolean; virtual;
     function IsExpanded(Node: Pointer): Boolean; virtual;
@@ -95,7 +93,7 @@ type
     function GetChild(Node: Pointer; I: Sw_Integer): Pointer; override;
     function GetNumChildren(Node: Pointer): Sw_Integer; override;
     function GetRoot: Pointer; override;
-    function GetText(Node: Pointer): ShortString; override;
+    function GetText(Node: Pointer): string; override;
     function HasChildren(Node: Pointer): Boolean; override;
     function IsExpanded(Node: Pointer): Boolean; override;
     property Root: PNode read FRoot write FRoot;
@@ -111,7 +109,7 @@ const
   COutlineViewer = CScroller + #8#8;
 
 { Helper functions }
-function NewNode(const AText: ShortString; AChildren, ANext: PNode): PNode;
+function NewNode(const AText: string; AChildren, ANext: PNode): PNode;
 procedure DisposeNode(Node: PNode);
 
 implementation
@@ -123,11 +121,11 @@ uses
 { Helper Functions                                                           }
 {****************************************************************************}
 
-function NewNode(const AText: ShortString; AChildren, ANext: PNode): PNode;
+function NewNode(const AText: string; AChildren, ANext: PNode): PNode;
 begin
   New(Result);
   Result^.Next := ANext;
-  Result^.Text := Objects.NewStr(AText);
+  Result^.Text := AText;
   Result^.ChildList := AChildren;
   Result^.Expanded := True;
 end;
@@ -139,8 +137,7 @@ begin
   while Node <> nil do
   begin
     DisposeNode(Node^.ChildList);
-    if Node^.Text <> nil then
-      Objects.DisposeStr(Node^.Text);
+    { Text is now a managed string - Dispose will finalize it }
     Next := Node^.Next;
     Dispose(Node);
     Node := Next;
@@ -165,19 +162,20 @@ begin
 end;
 
 function TOutlineViewer.CreateGraph(Level: SmallInt; Lines: LongInt;
-  Flags: Word; LevWidth, EndWidth: SmallInt; const Chars: ShortString): ShortString;
+  Flags: Word; LevWidth, EndWidth: SmallInt; const Chars: string): string;
 const
   FillerOrBar   = 0;
   YorL          = 2;
   StraightOrTee = 4;
   Retracted     = 6;
 var
-  Graph: ShortString;
+  Graph: string;
   J, I: Integer;
 begin
   { Allocate space for graph }
   SetLength(Graph, Level * LevWidth + EndWidth + 1);
-  FillChar(Graph[1], Length(Graph), ' ');
+  for I := 1 to Length(Graph) do
+    Graph[I] := ' ';
 
   J := 1;
 
@@ -317,8 +315,9 @@ function DrawItemCallback(Node: Pointer; Level, Position: Sw_Integer;
 var
   DC: PDrawContext;
   C: Byte;
-  S, T: ShortString;
+  S, T: string;
   I: Integer;
+  UnicodeText: string;
 begin
   DC := PDrawContext(Context^.UserData);
 
@@ -341,16 +340,32 @@ begin
   else
     C := DC^.CNormal;
 
-  { Fill draw buffer }
-  for I := 0 to DC^.Viewer.Size.X - 1 do
+  { Build Unicode text from graph + text, converting placeholder chars to Unicode }
+  UnicodeText := '';
+  for I := 1 to Length(S) do
   begin
-    WordRec(DC^.B[I]).Hi := C;
-    if I + DC^.Viewer.Delta.X < Length(S) then
-      WordRec(DC^.B[I]).Lo := Byte(S[1 + I + DC^.Viewer.Delta.X])
-    else if 1 + I + DC^.Viewer.Delta.X - Length(S) <= Length(T) then
-      WordRec(DC^.B[I]).Lo := Byte(T[1 + I + DC^.Viewer.Delta.X - Length(S)])
+    case S[I] of
+      'B': UnicodeText := UnicodeText + BoxVert;       { │ vertical bar }
+      'T': UnicodeText := UnicodeText + BoxVertRight;  { ├ tee right }
+      'L': UnicodeText := UnicodeText + BoxBottomLeft; { └ corner }
+      '-': UnicodeText := UnicodeText + BoxHoriz;      { ─ horizontal }
+      '+': UnicodeText := UnicodeText + BoxHorizDown;  { ┬ tee down }
     else
-      WordRec(DC^.B[I]).Lo := Byte(' ');
+      UnicodeText := UnicodeText + S[I];
+    end;
+  end;
+  UnicodeText := UnicodeText + T;
+
+  { Fill draw buffer using DrawChar/DrawStr for proper Unicode handling }
+  { First clear the buffer }
+  DrawChar(DC^.B, 0, ' ', C, DC^.Viewer.Size.X);
+
+  { Then draw the visible portion with horizontal scroll offset }
+  if DC^.Viewer.Delta.X < Length(UnicodeText) then
+  begin
+    { Extract visible portion }
+    UnicodeText := Copy(UnicodeText, DC^.Viewer.Delta.X + 1, DC^.Viewer.Size.X);
+    DrawStr(DC^.B, 0, UnicodeText, C);
   end;
 
   { Draw the line }
@@ -374,7 +389,7 @@ begin
 
   { Clear entire view area first to prevent artifacts }
   ClearColor := Lo(GetColor(1));
-  MoveChar(DC.B, ' ', ClearColor, Size.X);
+  DrawChar(DC.B, 0, ' ', ClearColor, Size.X);
   for I := 0 to Size.Y - 1 do
     WriteLine(0, I, Size.X, 1, DC.B);
 
@@ -419,10 +434,17 @@ begin
   Result := nil;
 end;
 
-function TOutlineViewer.GetGraph(Level: SmallInt; Lines: LongInt; Flags: Word): ShortString;
+function TOutlineViewer.GetGraph(Level: SmallInt; Lines: LongInt; Flags: Word): string;
 begin
-  { Box-drawing characters: space, vertical, tee, corner, horizontal, horizontal, plus, horizontal }
-  Result := CreateGraph(Level, Lines, Flags, 3, 3, #32#179#195#192#196#196#43#196);
+  { Tree characters use Unicode box drawing chars - but stored as single bytes
+    since we'll convert them in DrawItemCallback using the mapping below:
+    ' ' = space
+    'B' = BoxVert │ (vertical bar)
+    'T' = BoxVertRight ├ (tee right)
+    'L' = BoxBottomLeft └ (corner)
+    '-' = BoxHoriz ─ (horizontal)
+    '+' = BoxHorizDown ┬ (tee down) }
+  Result := CreateGraph(Level, Lines, Flags, 3, 3, ' BT L--+-');
 end;
 
 { Callback for GetNode }
@@ -472,7 +494,7 @@ begin
   Result := nil;
 end;
 
-function TOutlineViewer.GetText(Node: Pointer): ShortString;
+function TOutlineViewer.GetText(Node: Pointer): string;
 begin
   RunError(211);  { Abstract method }
   Result := '';
@@ -510,11 +532,11 @@ var
   NewFocus: Sw_Integer;
   Count: Byte;
   Handled, MouseDrag: Boolean;
-  Graph: ShortString;
+  Graph: string;
   FFC: TFindFocusContext;
   IC: TIterContext;
 
-  function GraphOfFocus(var OutGraph: ShortString): Pointer;
+  function GraphOfFocus(var OutGraph: string): Pointer;
   begin
     FFC.TargetFoc := Foc;
     IC.UserData := @FFC;
@@ -804,10 +826,10 @@ begin
   Result := FRoot;
 end;
 
-function TOutline.GetText(Node: Pointer): ShortString;
+function TOutline.GetText(Node: Pointer): string;
 begin
-  if (Node <> nil) and (PNode(Node)^.Text <> nil) then
-    Result := PNode(Node)^.Text^
+  if (Node <> nil) and (PNode(Node)^.Text <> '') then
+    Result := PNode(Node)^.Text
   else
     Result := '';
 end;

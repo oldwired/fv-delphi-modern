@@ -6,14 +6,10 @@
 
 unit Objects;
 
-{$I platform.inc}
-
 interface
 
 uses
-  {$IFDEF OS_WINDOWS}
   Winapi.Windows,
-  {$ENDIF}
   System.SysUtils, System.Classes, System.Generics.Collections;
 
 const
@@ -26,6 +22,7 @@ const
   stPutError   = -6;
 
 type
+  { Legacy PString for backward compatibility - DEPRECATED }
   PString = ^ShortString;
 
   { Callback types for iteration }
@@ -50,12 +47,12 @@ type
     function GetSize: LongInt; virtual;
     procedure Put(P: TObject); virtual;
     procedure Read(var Buf; Count: LongInt); virtual;
-    function ReadStr: PString;
+    function ReadStr: string; deprecated 'Binary serialization is deprecated. Use JSON serialization instead.';
     procedure Reset;
     procedure Seek(Pos: LongInt); virtual;
     procedure Truncate; virtual;
     procedure Write(var Buf; Count: LongInt); virtual;
-    procedure WriteStr(P: PString);
+    procedure WriteStr(const S: string); deprecated 'Binary serialization is deprecated. Use JSON serialization instead.';
     procedure Error(Code, Info: Integer); virtual;
     function Status: Integer;
     function ErrorInfo: Integer;
@@ -64,9 +61,9 @@ type
   TDosStream = class(TFVStream)
   private
     FHandle: THandle;
-    FFileName: ShortString;
+    FFileName: string;
   public
-    constructor Create(const AFileName: ShortString; Mode: Word); reintroduce; virtual;
+    constructor Create(const AFileName: string; Mode: Word); reintroduce; virtual;
     destructor Destroy; override;
     function GetPos: LongInt; override;
     function GetSize: LongInt; override;
@@ -84,7 +81,7 @@ type
     FBufEnd: Word;
     FBufDirty: Boolean;
   public
-    constructor Create(const AFileName: ShortString; Mode: Word; Size: Word); reintroduce; virtual;
+    constructor Create(const AFileName: string; Mode: Word; Size: Word); reintroduce; virtual;
     destructor Destroy; override;
     procedure Flush; virtual;
     function GetPos: LongInt; override;
@@ -126,8 +123,6 @@ type
 
 { Legacy procedures - kept for backward compatibility }
 procedure RegisterType(var S: TStreamRec); deprecated 'Use TFVSerializerRegistry.RegisterType instead';
-function NewStr(const S: ShortString): PString;
-procedure DisposeStr(P: PString);
 
 const
   stCreate   = $3C00;
@@ -142,25 +137,6 @@ implementation
 
 var
   StreamTypes: PStreamRec = nil;
-
-function NewStr(const S: ShortString): PString;
-var
-  P: PString;
-begin
-  if S = '' then
-    Result := nil
-  else begin
-    System.GetMem(P, Length(S) + 1);
-    P^ := S;
-    Result := P;
-  end;
-end;
-
-procedure DisposeStr(P: PString);
-begin
-  if P <> nil then
-    System.FreeMem(P, Length(P^) + 1);
-end;
 
 procedure RegisterType(var S: TStreamRec);
 begin
@@ -205,19 +181,18 @@ procedure TFVStream.Read(var Buf; Count: LongInt);
 begin
 end;
 
-function TFVStream.ReadStr: PString;
+function TFVStream.ReadStr: string;
 var
   Len: Byte;
-  P: PString;
+  Temp: ShortString;
 begin
   Read(Len, SizeOf(Len));
   if Len = 0 then
-    Result := nil
+    Result := ''
   else begin
-    System.GetMem(P, Len + 1);
-    P^[0] := AnsiChar(Len);
-    Read(P^[1], Len);
-    Result := P;
+    SetLength(Temp, Len);
+    Read(Temp[1], Len);
+    Result := string(Temp);
   end;
 end;
 
@@ -239,17 +214,16 @@ procedure TFVStream.Write(var Buf; Count: LongInt);
 begin
 end;
 
-procedure TFVStream.WriteStr(P: PString);
+procedure TFVStream.WriteStr(const S: string);
 var
   Len: Byte;
+  Temp: ShortString;
 begin
-  if P = nil then
-    Len := 0
-  else
-    Len := Length(P^);
+  Temp := ShortString(Copy(S, 1, 255));
+  Len := Length(Temp);
   Write(Len, SizeOf(Len));
   if Len > 0 then
-    Write(P^[1], Len);
+    Write(Temp[1], Len);
 end;
 
 procedure TFVStream.Error(Code, Info: Integer);
@@ -270,16 +244,16 @@ end;
 
 { TDosStream }
 
-constructor TDosStream.Create(const AFileName: ShortString; Mode: Word);
+constructor TDosStream.Create(const AFileName: string; Mode: Word);
 begin
   inherited Create;
   FFileName := AFileName;
   FHandle := INVALID_HANDLE_VALUE;
   case Mode of
-    stCreate: FHandle := CreateFileA(PAnsiChar(AnsiString(AFileName)), GENERIC_READ or GENERIC_WRITE, 0, nil, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
-    stOpenRead: FHandle := CreateFileA(PAnsiChar(AnsiString(AFileName)), GENERIC_READ, FILE_SHARE_READ, nil, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
-    stOpenWrite: FHandle := CreateFileA(PAnsiChar(AnsiString(AFileName)), GENERIC_WRITE, 0, nil, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
-    stOpen: FHandle := CreateFileA(PAnsiChar(AnsiString(AFileName)), GENERIC_READ or GENERIC_WRITE, 0, nil, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+    stCreate: FHandle := CreateFileW(PChar(AFileName), GENERIC_READ or GENERIC_WRITE, 0, nil, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
+    stOpenRead: FHandle := CreateFileW(PChar(AFileName), GENERIC_READ, FILE_SHARE_READ, nil, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+    stOpenWrite: FHandle := CreateFileW(PChar(AFileName), GENERIC_WRITE, 0, nil, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+    stOpen: FHandle := CreateFileW(PChar(AFileName), GENERIC_READ or GENERIC_WRITE, 0, nil, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
   end;
   if FHandle = INVALID_HANDLE_VALUE then
     Error(stInitError, GetLastError);
@@ -346,7 +320,7 @@ end;
 
 { TBufStream }
 
-constructor TBufStream.Create(const AFileName: ShortString; Mode: Word; Size: Word);
+constructor TBufStream.Create(const AFileName: string; Mode: Word; Size: Word);
 begin
   inherited Create(AFileName, Mode);
   FBufSize := Size;

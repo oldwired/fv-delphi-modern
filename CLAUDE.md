@@ -11,6 +11,7 @@ This is a port of the Free Vision (FV) text-mode UI framework from Free Pascal t
 - Interface-based design (`IFVDrawable`, `IFVEventHandler`, `IFVDataAware`, `ISerializable`)
 - RTL generics (`TObjectList<T>`, `TStringList`) instead of custom collections
 - JSON serialization infrastructure
+- Full Unicode support via `TDrawCell`-based drawing system
 
 ## CRITICAL: OBJECT to CLASS Conversion Rules
 
@@ -98,11 +99,11 @@ The test app exercises all ported widgets through menu options (Test menu). Debu
 See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed diagrams.
 
 ### Core Layering (bottom to top)
-1. **FVCommon.pas** - Platform types (`Sw_Word`, `Sw_String = ShortString`, `PString`)
+1. **FVCommon.pas** - Platform types (`Sw_Word`)
 2. **FVInterfaces.pas** - Interface definitions (`IFVDrawable`, `IFVEventHandler`, `IFVDataAware`, `ISerializable`)
 3. **FVSerialization.pas** - JSON serialization registry and helpers
 4. **Objects.pas** - Stream classes (`TFVStream`, `TDosStream`, `TBufStream`), string utilities
-5. **Video.pas** - Console output via Windows Console API
+5. **FVScreen.pas** - Console output via Windows Console API, `TDrawCell`-based rendering
 6. **Drivers.pas** - Input handling (keyboard, mouse, event queue)
 7. **Views.pas** - View hierarchy (`TView`, `TGroup`, `TWindow`, `TDesktop`)
 8. **Menus.pas** - Menu system (`TMenuBar`, `TMenuBox`, `TStatusLine`)
@@ -124,24 +125,16 @@ All views implement these interfaces (with reference counting disabled):
 - **TimedDlg.pas** - Auto-closing dialogs
 - **ColorTxt.pas, InpLong.pas, AsciiTab.pas** - Specialized widgets
 
-### Platform Abstraction
-`src/platform.inc` handles compiler/platform detection. Key defines:
-- `PPC_DELPHI` / `PPC_FPC` - Compiler type
-- `BIT_32` / `BIT_64` - Architecture
-- `OS_WINDOWS` - Target OS
-
 ## Code Conventions
 
 ### Type System
-- Use `ShortString` (aliased as `Sw_String`) for FV string types
-- Use `PString` (pointer to ShortString) with `NewStr`/`DisposeStr` from Objects.pas
+- Use `string` (UnicodeString) throughout
 - Use `THandle` from `Winapi.Windows` for file handles
 - CPU-native types: `CPUWord`, `CPUInt`, `PtrInt`
 
 ### Compiler Directives
 - Range checking OFF (`{$R-}`) in units with pointer arithmetic
-- Warnings suppressed for legacy patterns (see platform.inc)
-- Include `{$I platform.inc}` at the top of source units
+- Target: Windows-only Delphi 12+
 
 ### Memory Management
 - Views are owned by their parent `TGroup` and freed automatically when the group is destroyed
@@ -166,4 +159,5 @@ Core port is complete. All widgets functional and tested via FVTest.exe.
 
 ## Known Issues
 
-- Console window resize causes visual artifacts (resize not handled)
+- Corruption in ASCII Table display
+- Corruption in TStringGrid with wide Unicode characters

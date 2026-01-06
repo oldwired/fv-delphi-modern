@@ -6,7 +6,6 @@
 
 unit Validate;
 
-{$I platform.inc}
 {$R-}
 
 interface
@@ -59,7 +58,7 @@ type
   end;
 
   TPXPictureValidator = class(TValidator)
-    Pic: PString;  { Use Objects.PString for compatibility }
+    Pic: string;
     constructor Create(const APic: string; AutoFill: Boolean); reintroduce; virtual;
     constructor Load(var S: TFVStream);
     destructor Destroy; override;
@@ -167,7 +166,7 @@ end;
 constructor TPXPictureValidator.Create(const APic: string; AutoFill: Boolean);
 begin
   inherited Create;
-  Pic := NewStr(APic);
+  Pic := APic;
   Options := voOnAppend;
   if AutoFill then Options := Options or voFill;
 end;
@@ -180,7 +179,7 @@ end;
 
 destructor TPXPictureValidator.Destroy;
 begin
-  if Pic <> nil then DisposeStr(Pic);
+  { Pic is now a managed string - no need to free }
   inherited Destroy;
 end;
 

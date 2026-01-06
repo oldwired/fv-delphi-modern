@@ -11,12 +11,10 @@
 
 unit Tabs;
 
-{$I platform.inc}
-
 interface
 
 uses
-  Objects, FVCommon, FVConsts, Drivers, Views;
+  Objects, FVCommon, FVConsts, Drivers, Views, FVBoxChars;
 
 type
   PTabItem = ^TTabItem;
@@ -29,10 +27,10 @@ type
   PTabDef = ^TTabDef;
   TTabDef = record
     Next: PTabDef;
-    Name: Objects.PString;
+    Name: string;
     Items: PTabItem;
     DefItem: TView;
-    ShortCut: AnsiChar;
+    ShortCut: Char;
   end;
 
   TTab = class(TGroup)
@@ -71,7 +69,7 @@ type
 
 function NewTabItem(AView: TView; ANext: PTabItem): PTabItem;
 procedure DisposeTabItem(P: PTabItem);
-function NewTabDef(const AName: ShortString; ADefItem: TView; AItems: PTabItem; ANext: PTabDef): PTabDef;
+function NewTabDef(const AName: string; ADefItem: TView; AItems: PTabItem; ANext: PTabDef): PTabDef;
 procedure DisposeTabDef(P: PTabDef);
 
 procedure RegisterTab;
@@ -198,12 +196,9 @@ procedure TTab.Store(var S: TFVStream);
   begin
     while Cur <> nil do
     begin
-      with Cur^ do
-      begin
-        S.WriteStr(Cur^.Name);
-        S.Write(Cur^.ShortCut, SizeOf(Cur^.ShortCut));
-        DoStoreTabItems(Items, DefItem);
-      end;
+      S.WriteStr(Cur^.Name);
+      S.Write(Cur^.ShortCut, SizeOf(Cur^.ShortCut));
+      DoStoreTabItems(Cur^.Items, Cur^.DefItem);
       Cur := Cur^.Next;
     end;
   end;
@@ -381,7 +376,7 @@ begin
       Dispose(Item);
       Item := NextItem;
     end;
-    Objects.DisposeStr(ToRemove^.Name);
+    { Name is now a managed string - Dispose will finalize it }
     Dispose(ToRemove);
   end;
 
@@ -461,7 +456,7 @@ begin
       X := 1;
       for I := 0 to FDefCount - 1 do
       begin
-        Len := CStrLen(AtTab(I)^.Name^);
+        Len := CStrLen(AtTab(I)^.Name);
         if (P.X >= X) and (P.X <= X + Len + 1) then
           Index := I;
         X := X + Len + 3;
@@ -554,47 +549,41 @@ end;
 
 procedure TTab.Draw;
 const
-  { Box drawing characters }
-  CharTopRight    = #191;  { ┐ }
-  CharHoriz       = #196;  { ─ }
-  CharTopLeft     = #218;  { ┌ }
-  CharVert        = #179;  { │ }
-  CharBottomLeft  = #192;  { └ }
-  CharBottomRight = #217;  { ┘ }
-  CharVertRight   = #195;  { ├ }
-  CharVertLeft    = #180;  { ┤ }
-  CharHorizUp     = #193;  { ┴ }
-  CharHorizDown   = #194;  { ┬ }
+  { Box drawing characters - using Unicode from FVBoxChars }
+  CharTopRight    = BoxTopRight;     { ┐ }
+  CharHoriz       = BoxHoriz;        { ─ }
+  CharTopLeft     = BoxTopLeft;      { ┌ }
+  CharVert        = BoxVert;         { │ }
+  CharBottomLeft  = BoxBottomLeft;   { └ }
+  CharBottomRight = BoxBottomRight;  { ┘ }
+  CharVertRight   = BoxVertRight;    { ├ }
+  CharVertLeft    = BoxVertLeft;     { ┤ }
+  CharHorizUp     = BoxHorizUp;      { ┴ }
+  CharHorizDown   = BoxHorizDown;    { ┬ }
 var
   B: TDrawBuffer;
   I: SmallInt;
   C1, C2, C3, C: Word;
   HeaderLen: SmallInt;
   X, X2: SmallInt;
-  Name: Objects.PString;
+  Name: string;
   ActiveKPos: SmallInt;
   ActiveVPos: SmallInt;
-  FC: AnsiChar;
+  FC: Char;
   TabDef: PTabDef;
 
   procedure SWriteBuf(AX, AY, W, H: SmallInt; var Buf);
-  var
-    J: SmallInt;
   begin
     if AY + H > Size.Y then H := Size.Y - AY;
     if AX + W > Size.X then W := Size.X - AX;
     if W <= 0 then Exit;
     if H <= 0 then Exit;
-    if Buffer = nil then
-      WriteBuf(AX, AY, W, H, Buf)
-    else
-      for J := 1 to H do
-        Move(Buf, Buffer^[AX + (AY + J - 1) * Size.X], W * 2);
+    WriteBuf(AX, AY, W, H, Buf);
   end;
 
   procedure ClearBuf;
   begin
-    MoveChar(B, ' ', C1, Size.X);
+    DrawChar(B, 0, ' ', C1, Size.X);
   end;
 
 begin
@@ -609,15 +598,15 @@ begin
   { Calculate the size of the headers }
   HeaderLen := 0;
   for I := 0 to FDefCount - 1 do
-    HeaderLen := HeaderLen + CStrLen(AtTab(I)^.Name^) + 3;
+    HeaderLen := HeaderLen + CStrLen(AtTab(I)^.Name) + 3;
   Dec(HeaderLen);
   if HeaderLen > Size.X - 2 then
     HeaderLen := Size.X - 2;
 
   { Row 1 - Tab names }
   ClearBuf;
-  MoveChar(B[0], CharVert, C1, 1);
-  MoveChar(B[HeaderLen + 1], CharVert, C1, 1);
+  DrawChar(B, 0, CharVert, C1, 1);
+  DrawChar(B, HeaderLen + 1, CharVert, C1, 1);
   X := 1;
   ActiveKPos := 0;
   ActiveVPos := 0;
@@ -627,9 +616,9 @@ begin
     if TabDef = nil then
       Continue;
     Name := TabDef^.Name;
-    if Name = nil then
+    if Name = '' then
       Continue;
-    X2 := CStrLen(Name^);
+    X2 := CStrLen(Name);
     if I = FActiveDef then
     begin
       ActiveKPos := X - 1;
@@ -641,15 +630,15 @@ begin
     end
     else
       C := C2;
-    MoveCStr(B[X], ' ' + Name^ + ' ', C);
+    DrawCStr(B, X, ' ' + Name + ' ', C);
     X := X + X2 + 3;
-    MoveChar(B[X - 1], CharVert, C1, 1);
+    DrawChar(B, X - 1, CharVert, C1, 1);
   end;
   SWriteBuf(0, 1, Size.X, 1, B);
 
   { Row 0 - Top border }
   ClearBuf;
-  MoveChar(B[0], CharTopLeft, C1, 1);
+  DrawChar(B, 0, CharTopLeft, C1, 1);
   X := 1;
   for I := 0 to FDefCount - 1 do
   begin
@@ -657,65 +646,58 @@ begin
       FC := CharTopLeft
     else
       FC := CharTopRight;
-    X2 := CStrLen(AtTab(I)^.Name^) + 2;
-    MoveChar(B[X + X2], FC, C1, 1);
+    X2 := CStrLen(AtTab(I)^.Name) + 2;
+    DrawChar(B, X + X2, FC, C1, 1);
     if I = FDefCount - 1 then
       X2 := X2 + 1;
     if X2 > 0 then
-      MoveChar(B[X], CharHoriz, C1, X2);
+      DrawChar(B, X, CharHoriz, C1, X2);
     X := X + X2 + 1;
   end;
-  MoveChar(B[HeaderLen + 1], CharTopRight, C1, 1);
-  MoveChar(B[ActiveKPos], CharTopLeft, C1, 1);
-  MoveChar(B[ActiveVPos], CharTopRight, C1, 1);
+  DrawChar(B, HeaderLen + 1, CharTopRight, C1, 1);
+  DrawChar(B, ActiveKPos, CharTopLeft, C1, 1);
+  DrawChar(B, ActiveVPos, CharTopRight, C1, 1);
   SWriteBuf(0, 0, Size.X, 1, B);
 
   { Row 2 - Line below tabs }
-  MoveChar(B[1], CharHoriz, C1, HeaderLen);
+  DrawChar(B, 1, CharHoriz, C1, HeaderLen);
   if Size.X - HeaderLen - 3 > 0 then
-    MoveChar(B[HeaderLen + 2], CharHoriz, C1, Size.X - HeaderLen - 3);
-  MoveChar(B[HeaderLen + 1], CharHorizUp, C1, 1);
-  MoveChar(B[ActiveKPos], CharBottomRight, C1, 1);
+    DrawChar(B, HeaderLen + 2, CharHoriz, C1, Size.X - HeaderLen - 3);
+  DrawChar(B, HeaderLen + 1, CharHorizUp, C1, 1);
+  DrawChar(B, ActiveKPos, CharBottomRight, C1, 1);
   if ActiveDef = 0 then
-    MoveChar(B[0], CharVert, C1, 1)
+    DrawChar(B, 0, CharVert, C1, 1)
   else
-    MoveChar(B[0], CharVertRight, C1, 1);
+    DrawChar(B, 0, CharVertRight, C1, 1);
   if ActiveVPos - ActiveKPos - 1 > 0 then
-    MoveChar(B[ActiveKPos + 1], ' ', C1, ActiveVPos - ActiveKPos - 1);
-  MoveChar(B[ActiveVPos], CharBottomLeft, C1, 1);
+    DrawChar(B, ActiveKPos + 1, ' ', C1, ActiveVPos - ActiveKPos - 1);
+  DrawChar(B, ActiveVPos, CharBottomLeft, C1, 1);
   if HeaderLen + 1 < Size.X - 1 then
-    MoveChar(B[Size.X - 1], CharTopRight, C1, 1)
+    DrawChar(B, Size.X - 1, CharTopRight, C1, 1)
   else if FActiveDef = FDefCount - 1 then
-    MoveChar(B[Size.X - 1], CharVert, C1, 1)
+    DrawChar(B, Size.X - 1, CharVert, C1, 1)
   else
-    MoveChar(B[Size.X - 1], CharVertLeft, C1, 1);
+    DrawChar(B, Size.X - 1, CharVertLeft, C1, 1);
   SWriteBuf(0, 2, Size.X, 1, B);
 
   { Remaining rows - draw only the side borders, not the content area.
     Children will fill the content area when Redraw is called. }
   for I := 3 to Size.Y - 2 do begin
-    MoveChar(B, CharVert, C1, 1);  { Left border only }
+    DrawChar(B, 0, CharVert, C1, 1);  { Left border only }
     SWriteBuf(0, I, 1, 1, B);
-    MoveChar(B, CharVert, C1, 1);  { Right border only }
+    DrawChar(B, 0, CharVert, C1, 1);  { Right border only }
     SWriteBuf(Size.X - 1, I, 1, 1, B);
   end;
 
   { Bottom row }
-  MoveChar(B[0], CharBottomLeft, C1, 1);
+  DrawChar(B, 0, CharBottomLeft, C1, 1);
   if Size.X - 2 > 0 then
-    MoveChar(B[1], CharHoriz, C1, Size.X - 2);
-  MoveChar(B[Size.X - 1], CharBottomRight, C1, 1);
+    DrawChar(B, 1, CharHoriz, C1, Size.X - 2);
+  DrawChar(B, Size.X - 1, CharBottomRight, C1, 1);
   SWriteBuf(0, Size.Y - 1, Size.X, 1, B);
 
   { Draw child views }
-  if Buffer <> nil then begin
-    Lock;
-    WriteBuf(0, 0, Size.X, Size.Y, Buffer^);
-    Redraw;
-    UnLock;
-  end else begin
-    Redraw;
-  end;
+  Redraw;
 
   FInDraw := False;
 end;
@@ -860,7 +842,7 @@ begin
       Dispose(PI);
       PI := NextPI;
     end;
-    Objects.DisposeStr(P^.Name);
+    { Name is now a managed string - Dispose will finalize it }
     Dispose(P);
     P := NextP;
   end;
@@ -888,14 +870,14 @@ begin
   end;
 end;
 
-function NewTabDef(const AName: ShortString; ADefItem: TView; AItems: PTabItem; ANext: PTabDef): PTabDef;
+function NewTabDef(const AName: string; ADefItem: TView; AItems: PTabItem; ANext: PTabDef): PTabDef;
 var
   P: PTabDef;
-  X: Byte;
+  X: Integer;
 begin
   New(P);
   P^.Next := ANext;
-  P^.Name := Objects.NewStr(AName);
+  P^.Name := AName;
   P^.Items := AItems;
   X := Pos('~', AName);
   if (X <> 0) and (X < Length(AName)) then
@@ -910,7 +892,7 @@ procedure DisposeTabDef(P: PTabDef);
 var
   PI, X: PTabItem;
 begin
-  Objects.DisposeStr(P^.Name);
+  { Name is now a managed string - Dispose will finalize it }
   PI := P^.Items;
   while PI <> nil do
   begin

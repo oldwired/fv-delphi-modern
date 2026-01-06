@@ -6,16 +6,12 @@
 
 unit App;
 
-{$I platform.inc}
-
 interface
 
 uses
-  {$IFDEF OS_WINDOWS}
   Winapi.Windows,
-  {$ENDIF}
   System.SysUtils,
-  Objects, Drivers, Views, Menus, Dialogs, HistList, fvconsts;
+  Objects, Drivers, Views, Menus, Dialogs, HistList, fvconsts, FVBoxChars, FVCommon;
 
 const
   CBackground = #1;
@@ -58,8 +54,8 @@ const
 
 type
   TBackground = class(TView)
-    Pattern: AnsiChar;
-    constructor Create(var Bounds: TRect; APattern: AnsiChar); reintroduce; virtual;
+    Pattern: Char;
+    constructor Create(var Bounds: TRect; APattern: Char); reintroduce; virtual;
     constructor Load(var S: TFVStream); override;
     function GetPalette: PPalette; override;
     procedure Draw; override;
@@ -131,11 +127,11 @@ procedure RegisterApp;
 
 implementation
 
-uses Video;
+uses FVScreen;
 
 { TBackground }
 
-constructor TBackground.Create(var Bounds: TRect; APattern: AnsiChar);
+constructor TBackground.Create(var Bounds: TRect; APattern: Char);
 begin
   inherited Create(Bounds);
   GrowMode := gfGrowHiX + gfGrowHiY;
@@ -159,7 +155,7 @@ procedure TBackground.Draw;
 var
   B: TDrawBuffer;
 begin
-  MoveChar(B, Pattern, GetColor(1), Size.X);
+  DrawChar(B, 0, Pattern, GetColor(1), Size.X);
   WriteLine(0, 0, Size.X, Size.Y, B);
 end;
 
@@ -219,7 +215,7 @@ end;
 
 function TDesktop.NewBackground(var Bounds: TRect): TBackground;
 begin
-  NewBackground := TBackground.Create(Bounds, #176);
+  NewBackground := TBackground.Create(Bounds, BlockLight);
 end;
 
 procedure TDesktop.Store(var S: TFVStream);
@@ -598,7 +594,6 @@ begin
   inherited Create(R);
   State := sfVisible + sfSelected + sfFocused + sfModal + sfExposed;
   Options := 0;
-  Buffer := PWordArray(Video.VideoBuf);
   InitDesktop;
   InitStatusLine;
   InitMenuBar;
@@ -686,14 +681,11 @@ begin
     NewHeight := Event.InfoWord shr 8;
 
     { Resize the video buffer }
-    Video.ResizeVideo(NewWidth, NewHeight);
+    FVScreen.ResizeVideo(NewWidth, NewHeight);
 
     { Update driver screen dimensions }
-    DriversScreenWidth := Video.ScreenWidth;
-    DriversScreenHeight := Video.ScreenHeight;
-
-    { Update our Buffer pointer }
-    Buffer := PWordArray(Video.VideoBuf);
+    DriversScreenWidth := FVScreen.ScreenWidth;
+    DriversScreenHeight := FVScreen.ScreenHeight;
 
     { Resize the program bounds and all subviews }
     R.Assign(0, 0, DriversScreenWidth, DriversScreenHeight);
@@ -701,7 +693,7 @@ begin
 
     { Force full redraw }
     Draw;
-    Video.UpdateScreen(True);
+    FVScreen.UpdateScreen(True);
 
     ClearEvent(Event);
     Exit;
@@ -719,7 +711,7 @@ end;
 procedure TProgram.Idle;
 begin
   if StatusLine <> nil then StatusLine.Update;
-  Video.UpdateScreen(False);
+  FVScreen.UpdateScreen(False);
 end;
 
 procedure TProgram.InitDesktop;
@@ -775,7 +767,7 @@ end;
 procedure TProgram.Run;
 begin
   Draw;
-  Video.UpdateScreen(True);
+  FVScreen.UpdateScreen(True);
   Execute;
 end;
 

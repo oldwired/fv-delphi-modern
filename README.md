@@ -115,8 +115,12 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed class hierarchies and diagra
 
 ## Known Limitations
 
-1. **ANSI Encoding**: Editor uses ANSI encoding; UTF-8 files may not display correctly
-2. New **edge-cases**, **oversights** or **errors** may be introduced in this project
+- New **edge-cases**, **oversights** or **errors** may be introduced in this project
+
+## Known Issues
+
+- Corruption in ASCII Table display
+- Corruption in TStringGrid with wide Unicode characters
 
 ## License
 

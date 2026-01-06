@@ -6,17 +6,15 @@
 
 unit Views;
 
-{$I platform.inc}
 {$R-}  { Disable range checking for legacy buffer operations }
 
 interface
 
 uses
-  {$IFDEF OS_WINDOWS}
   Winapi.Windows,
-  {$ENDIF}
-  System.SysUtils, System.IOUtils, System.JSON,
-  Objects, Drivers, Video, FVConsts, FVInterfaces, FVSerialization;
+  System.SysUtils, System.IOUtils, System.JSON, System.StrUtils,
+  Objects, Drivers, FVScreen, FVConsts, FVInterfaces, FVSerialization, FVBoxChars,
+  FVCommon;
 
 
 
@@ -120,13 +118,12 @@ const
 {***************************************************************************}
 
 type
-  TTitleStr = String[80];
+  TTitleStr = string;  { Was: String[80] - now full Unicode string }
   TCommandSet = set of Byte;
   PCommandSet = ^TCommandSet;
   TPalette = ShortString;
   PPalette = ^TPalette;
-  TDrawBuffer = array[0..MaxViewWidth - 1] of Word;
-  PDrawBuffer = ^TDrawBuffer;
+  { TDrawBuffer and PDrawBuffer are now defined in Drivers.pas using TDrawCell }
 
   { Forward declarations }
   TView = class;
@@ -219,8 +216,8 @@ type
     procedure WriteLine(X, Y, W, H: Integer; var Buf);
     procedure MakeLocal(Source: TPoint; var Dest: TPoint);
     procedure MakeGlobal(Source: TPoint; var Dest: TPoint);
-    procedure WriteStr(X, Y: Integer; Str: ShortString; Color: Byte);
-    procedure WriteChar(X, Y: Integer; C: AnsiChar; Color: Byte; Count: Integer);
+    procedure WriteStr(X, Y: Integer; const Str: string; Color: Byte);
+    procedure WriteChar(X, Y: Integer; C: Char; Color: Byte; Count: Integer);
     procedure DragView(Event: TEvent; Mode: Byte; var Limits: TRect;
       MinSize, MaxSize: TPoint);
   end;
@@ -231,7 +228,6 @@ type
     EndState: Word;
     Current: TView;
     Last: TView;
-    Buffer: PWordArray;
     constructor Create(var Bounds: TRect); override;
     constructor Load(var S: TFVStream); override;
     destructor Destroy; override;
@@ -286,7 +282,7 @@ type
     procedure FrameLine(var FrameBuf; Y, N: Integer; Color: Byte);
   end;
 
-  TScrollChars = array[0..4] of AnsiChar;
+  TScrollChars = array[0..4] of Char;
 
   TScrollBar = class(TView)
   public
@@ -362,7 +358,7 @@ type
     Palette: Integer;
     ZoomRect: TRect;
     Frame: TFrame;
-    Title: PString;
+    Title: string;  { Was: PString - now direct string field }
     constructor Create(var Bounds: TRect; ATitle: TTitleStr; ANumber: Integer); reintroduce; virtual;
     destructor Destroy; override;
     function GetPalette: PPalette; override;
@@ -398,31 +394,13 @@ const
   MinWinSize: TPoint = (X: 16; Y: 6);
   ShadowSize: TPoint = (X: 2; Y: 1);
   ShadowAttr: Byte = $08;
-  SpecialChars: array[0..5] of AnsiChar = (#175, #174, #26, #27, ' ', ' ');
+  SpecialChars: array[0..5] of Char = (SmallArrowRight, SmallArrowLeft, SmallArrowRight, SmallArrowLeft, ' ', ' ');
 
 var
   CurCommandSet: TCommandSet;
   TheTopView: TView;
 
-procedure DebugWrite(const S: string);
-
 implementation
-
-var
-  DebugLog: TextFile;
-  DebugLogOpen: Boolean = False;
-
-procedure DebugWrite(const S: string);
-begin
-  if not DebugLogOpen then begin
-    AssignFile(DebugLog, 'fvdebug.log');
-    Rewrite(DebugLog);
-    DebugLogOpen := True;
-  end;
-  WriteLn(DebugLog, S);
-  Flush(DebugLog);
-end;
-
 
 var
   OwnerGroup: TGroup;
@@ -593,13 +571,15 @@ begin
   if (State and (sfSelected + sfModal)) = 0 then begin
     if Owner <> nil then begin
       Res := Owner.Focus;
-      if Res then
+      if Res then begin
         if ((Owner.Current = nil) or
            ((Owner.Current.Options and ofValidate) = 0) or
-            (Owner.Current.Valid(cmReleasedFocus))) then
-          Select
-        else
+            (Owner.Current.Valid(cmReleasedFocus))) then begin
+          Select;
+        end else begin
           Res := False;
+        end;
+      end;
     end;
   end;
   Result := Res;
@@ -692,11 +672,17 @@ end;
 
 function TView.MouseInView(Point: TPoint): Boolean;
 var
-  Local: TPoint;
+  Local, OwnerLocal: TPoint;
 begin
   MakeLocal(Point, Local);
   Result := (Local.X >= 0) and (Local.X < Size.X) and
             (Local.Y >= 0) and (Local.Y < Size.Y);
+  { Also check clipping: point must be within owner's visible bounds }
+  if Result and (Owner <> nil) then begin
+    Owner.MakeLocal(Point, OwnerLocal);
+    Result := (OwnerLocal.X >= 0) and (OwnerLocal.X < Owner.Size.X) and
+              (OwnerLocal.Y >= 0) and (OwnerLocal.Y < Owner.Size.Y);
+  end;
 end;
 
 function TView.CommandEnabled(Command: Word): Boolean;
@@ -726,7 +712,7 @@ procedure TView.Draw;
 var
   B: TDrawBuffer;
 begin
-  MoveChar(B, ' ', GetColor($01), Size.X);
+  DrawChar(B, 0, ' ', GetColor($01), Size.X);
   WriteLine(0, 0, Size.X, Size.Y, B);
 end;
 
@@ -760,9 +746,9 @@ begin
   { Draw right shadow (width = ShadowSize.X, height = Size.Y) }
   for I := ShadowSize.Y to Size.Y - 1 do begin
     for J := 0 to ShadowSize.X - 1 do begin
-      if (GY + I >= 0) and (GY + I < Video.ScreenHeight) and
-         (GX + Size.X + J >= 0) and (GX + Size.X + J < Video.ScreenWidth) then begin
-        Target := @VideoBuf^[(GY + I) * Video.ScreenWidth + GX + Size.X + J];
+      if (GY + I >= 0) and (GY + I < FVScreen.ScreenHeight) and
+         (GX + Size.X + J >= 0) and (GX + Size.X + J < FVScreen.ScreenWidth) then begin
+        Target := @VideoBuf^[(GY + I) * FVScreen.ScreenWidth + GX + Size.X + J];
         { Keep the character, change attribute to shadow }
         Target^ := (Target^ and $00FF) or (Word(ShadowAttr) shl 8);
       end;
@@ -772,9 +758,9 @@ begin
   { Draw bottom shadow (width = Size.X, height = ShadowSize.Y) }
   for I := 0 to ShadowSize.Y - 1 do begin
     for J := ShadowSize.X to Size.X + ShadowSize.X - 1 do begin
-      if (GY + Size.Y + I >= 0) and (GY + Size.Y + I < Video.ScreenHeight) and
-         (GX + J >= 0) and (GX + J < Video.ScreenWidth) then begin
-        Target := @VideoBuf^[(GY + Size.Y + I) * Video.ScreenWidth + GX + J];
+      if (GY + Size.Y + I >= 0) and (GY + Size.Y + I < FVScreen.ScreenHeight) and
+         (GX + J >= 0) and (GX + J < FVScreen.ScreenWidth) then begin
+        Target := @VideoBuf^[(GY + Size.Y + I) * FVScreen.ScreenWidth + GX + J];
         { Keep the character, change attribute to shadow }
         Target^ := (Target^ and $00FF) or (Word(ShadowAttr) shl 8);
       end;
@@ -793,7 +779,6 @@ begin
   if (Options and ofSelectable) <> 0 then begin
     if (Options and ofTopSelect) <> 0 then
       MakeFirst;
-    { Always set as Current after selecting }
     if Owner <> nil then
       Owner.SetCurrent(Self, NormalSelect);
   end;
@@ -850,7 +835,7 @@ begin
       G := P.Owner;
       if G = nil then begin
         { At top view - set cursor position }
-        Video.SetCursorPos(Cur.X, Cur.Y);
+        FVScreen.SetCursorPos(Cur.X, Cur.Y);
         Exit;
       end;
       if (G.State and sfVisible) = 0 then
@@ -859,7 +844,7 @@ begin
     end;
   end;
   { Hide cursor if we can't show it }
-  Video.SetCursorPos(Word(-1), Word(-1));
+  FVScreen.SetCursorPos(Word(-1), Word(-1));
 end;
 
 procedure TView.MoveTo(X, Y: Integer);
@@ -1071,11 +1056,12 @@ end;
 
 procedure TView.HandleEvent(var Event: TEvent);
 begin
-  if Event.What = evMouseDown then
+  if Event.What = evMouseDown then begin
     if (State and (sfSelected + sfDisabled)) = 0 then
       if (Options and ofSelectable) <> 0 then
         if not Focus or ((Options and ofFirstClick) = 0) then
           ClearEvent(Event);
+  end;
 end;
 
 procedure TView.ChangeBounds(var Bounds: TRect);
@@ -1129,9 +1115,8 @@ end;
 
 procedure TView.WriteBuf(X, Y, W, H: Integer; var Buf);
 var
-  I: Integer;
+  I, J: Integer;
   Target: PWord;
-  Source: PWord;
   GX, GY: Integer;
   LocalY: Integer;
   V: TView;
@@ -1142,9 +1127,15 @@ var
   ClipLeft, ClipTop, ClipBottom: Integer;
   XOffset: Integer;
   FrameInset: Integer;
+  ScreenOffset: Integer;
+  DrawBuf: PDrawBuffer;
+  Cell: TDrawCell;
+  LegacyWord: Word;
+  Ch: Char;
 begin
   if (State and sfExposed) <> 0 then begin
     if (W <= 0) or (H <= 0) then Exit;
+    DrawBuf := @Buf;
     for I := 0 to H - 1 do begin
       if (Y + I >= 0) and (Y + I < Size.Y) then begin
         { Start with local coordinates relative to parent }
@@ -1197,15 +1188,35 @@ begin
         end;
 
         if not Clipped then begin
-          if (GY >= 0) and (GY < Video.ScreenHeight) and
-             (GX >= 0) and (GX < Video.ScreenWidth) then begin
+          if (GY >= 0) and (GY < FVScreen.ScreenHeight) and
+             (GX >= 0) and (GX < FVScreen.ScreenWidth) then begin
             BufOffset := I * W + XOffset;
             if BufOffset >= MaxViewWidth then Continue; { Prevent buffer overrun }
-            Target := @VideoBuf^[GY * Video.ScreenWidth + GX];
-            Source := @TWordArray(Buf)[BufOffset];
-            CopyWidth := Min(CopyWidth, Video.ScreenWidth - GX);
-            if CopyWidth > 0 then
-              Move(Source^, Target^, CopyWidth * 2);
+            Target := @VideoBuf^[GY * FVScreen.ScreenWidth + GX];
+            ScreenOffset := GY * FVScreen.ScreenWidth + GX;
+            CopyWidth := Min(CopyWidth, FVScreen.ScreenWidth - GX);
+            if CopyWidth > 0 then begin
+              { Copy from TDrawBuffer to legacy VideoBuf and UnicodeCharBuf }
+              for J := 0 to CopyWidth - 1 do begin
+                if BufOffset + J >= MaxViewWidth then Break;
+                Cell := DrawBuf^[BufOffset + J];
+                { Get first character from cell (or space if empty) }
+                if Length(Cell.Ch) > 0 then
+                  Ch := Cell.Ch[1]
+                else
+                  Ch := ' ';
+                { Build legacy word: high byte = attr, low byte = char (capped to 255) }
+                if Ord(Ch) > 255 then
+                  LegacyWord := (Cell.Attr shl 8) or Ord(' ')
+                else
+                  LegacyWord := (Cell.Attr shl 8) or Ord(Ch);
+                Target^ := LegacyWord;
+                Inc(Target);
+                { Copy Unicode character to screen buffer }
+                if ScreenOffset + J < Length(UnicodeCharBuf) then
+                  UnicodeCharBuf[ScreenOffset + J] := Ch;
+              end;
+            end;
           end;
         end;
       end;
@@ -1246,7 +1257,7 @@ begin
   end;
 end;
 
-procedure TView.WriteStr(X, Y: Integer; Str: ShortString; Color: Byte);
+procedure TView.WriteStr(X, Y: Integer; const Str: string; Color: Byte);
 var
   B: TDrawBuffer;
   L: Integer;
@@ -1254,18 +1265,18 @@ begin
   L := Length(Str);
   if L > Size.X - X then L := Size.X - X;
   if L > 0 then begin
-    MoveStr(B, Str, Color);
+    DrawStr(B, 0, Str, Color);
     WriteBuf(X, Y, L, 1, B);
   end;
 end;
 
-procedure TView.WriteChar(X, Y: Integer; C: AnsiChar; Color: Byte; Count: Integer);
+procedure TView.WriteChar(X, Y: Integer; C: Char; Color: Byte; Count: Integer);
 var
   B: TDrawBuffer;
 begin
   if Count > 0 then begin
     if Count > Size.X - X then Count := Size.X - X;
-    MoveChar(B, C, Color, Count);
+    DrawChar(B, 0, C, Color, Count);
     WriteBuf(X, Y, Count, 1, B);
   end;
 end;
@@ -1432,7 +1443,6 @@ begin
   GetExtent(Clip);
   Current := nil;
   Last := nil;
-  Buffer := nil;
   Phase := phFocused;
   LockFlag := 0;
   EndState := 0;
@@ -1444,7 +1454,6 @@ begin
   GetExtent(Clip);
   Current := nil;
   Last := nil;
-  Buffer := nil;
   Phase := phFocused;
   LockFlag := 0;
   EndState := 0;
@@ -1533,7 +1542,8 @@ begin
     SaveOwner := P.Owner;
     SaveCurrent := Current;
     GetCommands(SaveCommands);
-    if SaveOwner = nil then Insert(P);
+    if SaveOwner = nil then
+      Insert(P);
     P.Options := P.Options and not ofSelectable;
     P.SetState(sfModal, True);
     SetCurrent(P, EnterSelect);
@@ -1545,7 +1555,7 @@ begin
     SetCommands(SaveCommands);
     if SaveOwner = nil then begin
       Delete(P);
-      ReDraw;  { Redraw to remove modal dialog remnants }
+      ReDraw;
     end;
   end else
     Result := cmCancel;
@@ -1604,7 +1614,7 @@ procedure TGroup.ReDraw;
 begin
   { Draw all child views - don't call DrawView which would call Draw on self }
   DrawSubViews(First, nil);
-  Video.UpdateScreen(True);  { Force immediate screen update }
+  FVScreen.UpdateScreen(True);  { Force immediate screen update }
 end;
 
 procedure TGroup.Insert(P: TView);
@@ -1618,12 +1628,12 @@ var
 begin
   if P <> nil then begin
     SaveState := P.State;
-    P.Hide;  { Clear sfVisible and sfExposed before removing }
-    if Current = P then SetCurrent(P.Next, LeaveSelect);
+    P.Hide;
+    if Current = P then
+      SetCurrent(P.Next, LeaveSelect);
     RemoveView(P);
     P.Owner := nil;
     P.Next := nil;
-    { Restore sfVisible but not sfExposed (no owner to expose it) }
     if (SaveState and sfVisible) <> 0 then P.Show;
   end;
 end;
@@ -1810,16 +1820,15 @@ begin
   { Handle positional events (mouse) - route to first view containing mouse }
   if Event.What and PositionalEvents <> 0 then begin
     Phase := phFocused;
-    { Find the topmost view containing the mouse }
     V := nil;
     if Last <> nil then begin
       V := Last;
       while True do begin
         if ContainsMouse(V) then
-          Break;  { Found the topmost view containing mouse }
+          Break;
         V := V.Prev;
         if V = Last then begin
-          V := nil;  { Wrapped around, nothing found }
+          V := nil;
           Break;
         end;
       end;
@@ -1987,15 +1996,12 @@ procedure TGroup.SetCurrent(P: TView; Mode: SelectMode);
 
   procedure SelectView(V: TView; Enable: Boolean);
   begin
-    { Skip SetState on views that are being destroyed (no longer visible) }
     if (V <> nil) and ((V.State and sfVisible) <> 0) then
       V.SetState(sfSelected, Enable);
   end;
 
   procedure FocusView(V: TView; Enable: Boolean);
   begin
-    { Only propagate focus if this group itself has sfFocused }
-    { Skip SetState on views that are being destroyed (no longer visible) }
     if ((State and sfFocused) <> 0) and (V <> nil) and ((V.State and sfVisible) <> 0) then
       V.SetState(sfFocused, Enable);
   end;
@@ -2003,14 +2009,22 @@ procedure TGroup.SetCurrent(P: TView; Mode: SelectMode);
 begin
   if Current <> P then begin
     Lock;
-    FocusView(Current, False);                        { Defocus old current }
+    FocusView(Current, False);
     if Mode <> EnterSelect then
-      SelectView(Current, False);                     { Deselect old current (unless EnterSelect) }
+      SelectView(Current, False);
     if Mode <> LeaveSelect then
-      SelectView(P, True);                            { Select new current }
-    FocusView(P, True);                               { Focus new current }
-    Current := P;                                     { Set current AFTER state changes }
+      SelectView(P, True);
+    FocusView(P, True);
+    Current := P;
     UnLock;
+  end else begin
+    { Current already equals P - but P might not be selected (e.g. after LeaveSelect) }
+    if (Mode <> LeaveSelect) and (P <> nil) and
+       ((P.State and sfVisible) <> 0) and ((P.State and sfSelected) = 0) then begin
+      Lock;
+      SelectView(P, True);
+      UnLock;
+    end;
   end;
 end;
 
@@ -2048,7 +2062,7 @@ var
   B: TDrawBuffer;
   TitleStr: TTitleStr;
   WinFlags: Byte;
-  ZoomChar: AnsiChar;
+  ZoomChar: Char;
 begin
   if (State and sfDragging) <> 0 then begin
     CFrameColor := $0505;
@@ -2077,21 +2091,21 @@ begin
 
   { Draw close button at position 2 if wfClose flag is set }
   if (WinFlags and wfClose <> 0) and (Width > 4) then begin
-    MoveChar(B[2], '[', Byte(CFrameColor), 1);
-    MoveChar(B[3], #254, Byte(CFrameColor), 1);  { close icon }
-    MoveChar(B[4], ']', Byte(CFrameColor), 1);
+    DrawChar(B, 2, '[', Byte(CFrameColor), 1);
+    DrawChar(B, 3, CloseButton, Byte(CFrameColor), 1);  { close icon }
+    DrawChar(B, 4, ']', Byte(CFrameColor), 1);
   end;
 
   { Draw zoom button at right side if wfZoom flag is set }
   if (WinFlags and wfZoom <> 0) and (Width > 7) then begin
     { Check if window is currently zoomed (origin at 0,0 means zoomed/maximized) }
     if (Owner.Origin.X = 0) and (Owner.Origin.Y = 0) then
-      ZoomChar := #18  { restore icon }
+      ZoomChar := ArrowDown  { restore icon }
     else
-      ZoomChar := #24; { maximize icon }
-    MoveChar(B[Width - 5], '[', Byte(CFrameColor), 1);
-    MoveChar(B[Width - 4], ZoomChar, Byte(CFrameColor), 1);
-    MoveChar(B[Width - 3], ']', Byte(CFrameColor), 1);
+      ZoomChar := ArrowUp; { maximize icon }
+    DrawChar(B, Width - 5, '[', Byte(CFrameColor), 1);
+    DrawChar(B, Width - 4, ZoomChar, Byte(CFrameColor), 1);
+    DrawChar(B, Width - 3, ']', Byte(CFrameColor), 1);
   end;
 
   if (Owner <> nil) and (Width > 10) then begin
@@ -2103,11 +2117,11 @@ begin
         I := (Width - L) shr 1;
         { Bounds check all array accesses }
         if (I > 0) and (I - 1 < MaxViewWidth) then
-          MoveChar(B[I - 1], ' ', Byte(CTitle), 1);
+          DrawChar(B, I - 1, ' ', Byte(CTitle), 1);
         if (I >= 0) and (I < MaxViewWidth) then
-          MoveStr(B[I], TitleStr, Byte(CTitle));
+          DrawStr(B, I, TitleStr, Byte(CTitle));
         if (I + L >= 0) and (I + L < MaxViewWidth) then
-          MoveChar(B[I + L], ' ', Byte(CTitle), 1);
+          DrawChar(B, I + L, ' ', Byte(CTitle), 1);
       end;
     end;
   end;
@@ -2123,7 +2137,7 @@ begin
 
   { Draw resize corner indicator if wfGrow flag is set }
   if (WinFlags and wfGrow <> 0) and (State and sfActive <> 0) then begin
-    MoveChar(B[Width - 1], #188, Byte(CFrameColor), 1);  { resize corner }
+    DrawChar(B, Width - 1, BoxDblBottomRight, Byte(CFrameColor), 1);  { resize corner }
   end;
 
   WriteLine(0, Size.Y - 1, Width, 1, B);
@@ -2179,12 +2193,10 @@ begin
         DragWindow(dmDragMove);
       end;
     end
-    else if (State and sfActive <> 0) and (Mouse.X >= Size.X - 2) and
-            (Mouse.Y >= Size.Y - 1) then begin
+    else if (Mouse.X >= Size.X - 2) and (Mouse.Y >= Size.Y - 1) then begin
       { Bottom-right corner: resize }
-      if (WinFlags and wfGrow <> 0) then begin
+      if (State and sfActive <> 0) and (WinFlags and wfGrow <> 0) then
         DragWindow(dmDragGrow);
-      end;
     end;
   end;
 end;
@@ -2198,13 +2210,13 @@ end;
 procedure TFrame.FrameLine(var FrameBuf; Y, N: Integer; Color: Byte);
 const
   { Frame characters: 3 chars per row (left, middle, right) }
-  FrameChars: array[0..17] of AnsiChar = (
-    ' ', ' ', ' ',           { 0,1,2: inactive/drag top }
-    #179, ' ', #179,         { 3,4,5: inactive/drag side }
-    #192, #196, #217,        { 6,7,8: inactive/drag bottom }
-    #201, #205, #187,        { 9,10,11: active top }
-    #186, ' ', #186,         { 12,13,14: active side }
-    #200, #205, #188         { 15,16,17: active bottom }
+  FrameChars: array[0..17] of Char = (
+    ' ', ' ', ' ',                         { 0,1,2: inactive/drag top }
+    BoxVert, ' ', BoxVert,                 { 3,4,5: inactive/drag side }
+    BoxBottomLeft, BoxHoriz, BoxBottomRight, { 6,7,8: inactive/drag bottom }
+    BoxDblTopLeft, BoxDblHoriz, BoxDblTopRight, { 9,10,11: active top }
+    BoxDblVert, ' ', BoxDblVert,           { 12,13,14: active side }
+    BoxDblBottomLeft, BoxDblHoriz, BoxDblBottomRight { 15,16,17: active bottom }
   );
 var
   Idx, W: Integer;
@@ -2214,10 +2226,10 @@ begin
   Idx := N;
   if Idx < 0 then Idx := 0;
   if Idx > 15 then Idx := 15;
-  MoveChar(TDrawBuffer(FrameBuf)[0], FrameChars[Idx], Color, 1);
+  DrawChar(TDrawBuffer(FrameBuf), 0, FrameChars[Idx], Color, 1);
   if W > 2 then
-    MoveChar(TDrawBuffer(FrameBuf)[1], FrameChars[Idx + 1], Color, W - 2);
-  MoveChar(TDrawBuffer(FrameBuf)[W - 1], FrameChars[Idx + 2], Color, 1);
+    DrawChar(TDrawBuffer(FrameBuf), 1, FrameChars[Idx + 1], Color, W - 2);
+  DrawChar(TDrawBuffer(FrameBuf), W - 1, FrameChars[Idx + 2], Color, 1);
 end;
 
 {***************************************************************************}
@@ -2235,18 +2247,18 @@ begin
   ArStep := 1;
   if Size.X = 1 then begin
     GrowMode := gfGrowLoX + gfGrowHiX + gfGrowHiY;
-    Chars[0] := #30;
-    Chars[1] := #31;
-    Chars[2] := #177;
-    Chars[3] := #254;
-    Chars[4] := #178;
+    Chars[0] := SmallArrowUp;      { Up arrow }
+    Chars[1] := SmallArrowDown;    { Down arrow }
+    Chars[2] := BlockMed;          { Track background }
+    Chars[3] := BlockFull;         { Thumb }
+    Chars[4] := BlockDark;         { Page area }
   end else begin
     GrowMode := gfGrowLoY + gfGrowHiX + gfGrowHiY;
-    Chars[0] := #17;
-    Chars[1] := #16;
-    Chars[2] := #177;
-    Chars[3] := #254;
-    Chars[4] := #178;
+    Chars[0] := SmallArrowLeft;    { Left arrow }
+    Chars[1] := SmallArrowRight;   { Right arrow }
+    Chars[2] := BlockMed;          { Track background }
+    Chars[3] := BlockFull;         { Thumb }
+    Chars[4] := BlockDark;         { Page area }
   end;
 end;
 
@@ -2409,18 +2421,18 @@ begin
   if S < 0 then Exit; { Scrollbar too small to draw }
   C := GetColor($0201);
   { Draw left/top arrow }
-  MoveChar(B[0], Chars[0], Byte(C), 1);
+  DrawChar(B, 0, Chars[0], Byte(C), 1);
   { Draw track - only if there's room }
   if S >= 2 then begin
-    MoveChar(B[1], Chars[2], Lo(C), S - 1);
+    DrawChar(B, 1, Chars[2], Lo(C), S - 1);
     { Draw thumb }
     if (Pos > 0) and (Pos < S) and (Pos < MaxViewWidth) then begin
-      MoveChar(B[Pos], Chars[3], Hi(C), 1);
+      DrawChar(B, Pos, Chars[3], Hi(C), 1);
     end;
   end;
   { Draw right/bottom arrow }
   if S < MaxViewWidth then
-    MoveChar(B[S], Chars[1], Byte(C), 1);
+    DrawChar(B, S, Chars[1], Byte(C), 1);
   WriteBuf(0, 0, Size.X, Size.Y, B);
 end;
 
@@ -2573,7 +2585,7 @@ var
   I, J, ColWidth, Item, Indent, CurCol: Integer;
   Color: Word;
   SCOff: Byte;
-  Text: ShortString;
+  Text: string;  { Must be Unicode string to preserve box characters }
   B: TDrawBuffer;
 begin
   ColWidth := Size.X div NumCols + 1;
@@ -2598,17 +2610,18 @@ begin
         SCOff := 4;
       end;
 
-      MoveChar(B[CurCol], ' ', Color, ColWidth);
+      DrawChar(B, CurCol, ' ', Color, ColWidth);
       if Item < Range then begin
         Text := GetText(Item, ColWidth + Indent);
         Text := Copy(Text, Indent + 1, ColWidth);
-        MoveStr(B[CurCol + 1], Text, Color);
+        DrawStr(B, CurCol + 1, Text, Color);
         if ShowMarkers then begin
-          WordRec(B[CurCol]).Lo := Byte(SpecialChars[SCOff]);
-          WordRec(B[CurCol + ColWidth - 2]).Lo := Byte(SpecialChars[SCOff + 1]);
+          { Use DrawChar for proper Unicode marker display }
+          DrawChar(B, CurCol, SpecialChars[SCOff], Byte(Color), 1);
+          DrawChar(B, CurCol + ColWidth - 2, SpecialChars[SCOff + 1], Byte(Color), 1);
         end;
       end;
-      MoveChar(B[CurCol + ColWidth - 1], #179, GetColor(5), 1);
+      DrawChar(B, CurCol + ColWidth - 1, BoxVert, GetColor(5), 1);
     end;
     WriteLine(0, I, Size.X, 1, B);
   end;
@@ -2797,7 +2810,7 @@ begin
   Options := Options or ofSelectable or ofFirstClick or ofTopSelect or ofFramed;
   GrowMode := gfGrowAll + gfGrowRel;
   Flags := wfMove + wfGrow + wfClose + wfZoom;
-  Title := NewStr(ATitle);
+  Title := ATitle;  { Direct string assignment, no NewStr needed }
   Number := ANumber;
   Palette := wpBlueWindow;
   InitFrame;
@@ -2807,7 +2820,7 @@ end;
 
 destructor TWindow.Destroy;
 begin
-  DisposeStr(Title);
+  { Title is now a managed string, no DisposeStr needed }
   inherited Destroy;
 end;
 
@@ -2821,7 +2834,10 @@ end;
 
 function TWindow.GetTitle(MaxSize: Integer): TTitleStr;
 begin
-  if Title <> nil then Result := Title^ else Result := '';
+  if MaxSize > 0 then
+    Result := Copy(Title, 1, MaxSize)
+  else
+    Result := Title;
 end;
 
 function TWindow.StandardScrollBar(AOptions: Word): TScrollBar;
@@ -2903,7 +2919,21 @@ procedure TWindow.HandleEvent(var Event: TEvent);
 var
   Limits: TRect;
   MinP, MaxP: TPoint;
+  Mouse: TPoint;
 begin
+  { Intercept resize corner clicks BEFORE routing to children }
+  { This ensures resize works even if content views overlap the corner }
+  if (Event.What = evMouseDown) and (Flags and wfGrow <> 0) and
+     (State and sfActive <> 0) then begin
+    MakeLocal(Event.Where, Mouse);
+    if (Mouse.X >= Size.X - 2) and (Mouse.Y >= Size.Y - 1) then begin
+      { Click is in resize corner - route to frame }
+      if Frame <> nil then begin
+        Frame.HandleEvent(Event);
+        Exit;
+      end;
+    end;
+  end;
   inherited HandleEvent(Event);
   if Event.What = evCommand then begin
     case Event.Command of

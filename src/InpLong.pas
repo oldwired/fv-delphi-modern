@@ -13,8 +13,6 @@
 
 unit InpLong;
 
-{$I platform.inc}
-
 interface
 
 uses
@@ -99,7 +97,7 @@ begin
   FLLim := LowerLim;
   if (Flgs and ilDisplayHex) <> 0 then Flgs := Flgs or ilHex;
   FILOptions := Flgs;
-  if (FILOptions and ilBlankEqZero) <> 0 then Data^ := '0';
+  if (FILOptions and ilBlankEqZero) <> 0 then Data := '0';
 end;
 
 constructor TInputLong.Load(var S: TFVStream);
@@ -127,7 +125,7 @@ procedure TInputLong.GetData(var Rec);
 var
   Code: Integer;
 begin
-  Val(Data^, LongInt(Rec), Code);
+  Val(Data, LongInt(Rec), Code);
 end;
 
 procedure TInputLong.SetData(var Rec);
@@ -143,7 +141,7 @@ begin
   else
     Str(L, S);
   if Length(S) > MaxLen then SetLength(S, MaxLen);
-  Data^ := S;
+  Data := S;
 end;
 
 function TInputLong.RangeCheck: Boolean;
@@ -151,9 +149,9 @@ var
   L: LongInt;
   Code: Integer;
 begin
-  if (Data^ = '') and ((FILOptions and ilBlankEqZero) <> 0) then
-    Data^ := '0';
-  Val(Data^, L, Code);
+  if (Data = '') and ((FILOptions and ilBlankEqZero) <> 0) then
+    Data := '0';
+  Val(Data, L, Code);
   Result := (Code = 0) and (L >= FLLim) and (L <= FULim);
 end;
 
@@ -168,7 +166,7 @@ begin
     SL := SL + '(' + FormHexStr(FLLim) + ')';
     SU := SU + '(' + FormHexStr(FULim) + ')';
   end;
-  MessageBox('Value not within range ' + SL + ' to ' + SU, nil,
+  MessageBox('Value not within range ' + SL + ' to ' + SU,
     mfError + mfOKButton);
 end;
 
@@ -196,7 +194,7 @@ begin
         '$':
           if (FILOptions and ilHex) = 0 then ClearEvent(Event);
         'A'..'F':
-          if Pos('$', Data^) = 0 then ClearEvent(Event);
+          if Pos('$', Data) = 0 then ClearEvent(Event);
       else
         ClearEvent(Event);
       end;

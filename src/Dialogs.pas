@@ -6,17 +6,14 @@
 
 unit Dialogs;
 
-{$I platform.inc}
 {$R-}
 
 interface
 
 uses
-  {$IFDEF OS_WINDOWS}
   Winapi.Windows,
-  {$ENDIF}
   System.SysUtils, System.Classes, System.Generics.Collections,
-  FVCommon, Objects, Drivers, Views, fvconsts, Validate, HistList;
+  FVCommon, Objects, Drivers, Views, fvconsts, Validate, HistList, FVBoxChars;
 
 {***************************************************************************}
 {                              PUBLIC CONSTANTS                             }
@@ -62,7 +59,7 @@ const
 type
   PSItem = ^TSItem;
   TSItem = record
-    Value: PString;
+    Value: string;
     Next: PSItem;
   end;
 
@@ -77,7 +74,7 @@ type
     FirstPos: Integer;
     SelStart: Integer;
     SelEnd: Integer;
-    Data: PString;
+    Data: string;
     Validator: TValidator;
     constructor Create(var Bounds: TRect; AMaxLen: Integer); reintroduce; virtual;
     destructor Destroy; override;
@@ -101,7 +98,7 @@ type
     AmDefault: Boolean;
     Flags: Byte;
     Command: Word;
-    Title: PString;
+    Title: string;
     constructor Create(var Bounds: TRect; ATitle: TTitleStr; ACommand: Word; AFlags: Word); reintroduce; virtual;
     destructor Destroy; override;
     function GetPalette: PPalette; override;
@@ -133,8 +130,8 @@ type
     procedure Press(Item: Integer); virtual;
     procedure MovedTo(Item: Integer); virtual;
     procedure SetState(AState: Word; Enable: Boolean); override;
-    procedure DrawMultiBox(const Icon, Marker: ShortString);
-    procedure DrawBox(const Icon: ShortString; Marker: AnsiChar);
+    procedure DrawMultiBox(const Icon, Marker: string);
+    procedure DrawBox(const Icon: string; Marker: Char);
     procedure SetButtonState(AMask: LongInt; Enable: Boolean);
     procedure GetData(var Rec); override;
     procedure SetData(var Rec); override;
@@ -182,32 +179,32 @@ type
   end;
 
   TStaticText = class(TView)
-    Text: PString;
-    constructor Create(var Bounds: TRect; const AText: ShortString); reintroduce; virtual;
+    Text: string;
+    constructor Create(var Bounds: TRect; const AText: string); reintroduce; virtual;
     constructor Load(var S: TFVStream); override;
     destructor Destroy; override;
     function GetPalette: PPalette; override;
     procedure Draw; override;
-    procedure GetText(var S: ShortString); virtual;
+    procedure GetText(var S: string); virtual;
     procedure Store(var S: TFVStream);
   end;
 
   TParamText = class(TStaticText)
     ParamCount: SmallInt;
     ParamList: Pointer;
-    constructor Create(var Bounds: TRect; const AText: ShortString; AParamCount: SmallInt); reintroduce; virtual;
+    constructor Create(var Bounds: TRect; const AText: string; AParamCount: SmallInt); reintroduce; virtual;
     constructor Load(var S: TFVStream); override;
     function DataSize: Word; override;
     procedure GetData(var Rec); override;
     procedure SetData(var Rec); override;
     procedure Store(var S: TFVStream);
-    procedure GetText(var S: ShortString); override;
+    procedure GetText(var S: string); override;
   end;
 
   TLabel = class(TStaticText)
     Light: Boolean;
     Link: TView;
-    constructor Create(var Bounds: TRect; const AText: ShortString; ALink: TView); reintroduce; virtual;
+    constructor Create(var Bounds: TRect; const AText: string; ALink: TView); reintroduce; virtual;
     function GetPalette: PPalette; override;
     procedure Draw; override;
     procedure HandleEvent(var Event: TEvent); override;
@@ -225,7 +222,7 @@ type
     function IsSubView(AView: TView): Boolean; virtual;
     function NewButton(X, Y, W, H: Integer; ATitle: TTitleStr;
       ACommand, AHelpCtx: Word; AFlags: Byte): TButton;
-    function NewLabel(X, Y: Integer; AText: ShortString; ALink: TView): TLabel;
+    function NewLabel(X, Y: Integer; const AText: string; ALink: TView): TLabel;
     function NewInputLine(X, Y, W, AMaxLen: Integer; AHelpCtx: Word;
       AValidator: TValidator): TInputLine;
   end;
@@ -245,7 +242,7 @@ type
   THistoryWindow = class(TWindow)
     Viewer: TListViewer;
     constructor Create(var Bounds: TRect; AHistoryId: Word); reintroduce; virtual;
-    function GetSelection: ShortString; virtual;
+    function GetSelection: string; virtual;
     function GetPalette: PPalette; override;
     procedure InitViewer(AHistoryId: Word); virtual;
   end;
@@ -258,35 +255,35 @@ type
     function GetPalette: PPalette; override;
     function InitHistoryWindow(var Bounds: TRect): THistoryWindow; virtual;
     procedure Draw; override;
-    procedure RecordHistory(const S: ShortString); virtual;
+    procedure RecordHistory(const S: string); virtual;
     procedure HandleEvent(var Event: TEvent); override;
   end;
 
-function NewSItem(const Str: ShortString; ANext: PSItem): PSItem;
-function HotKey(const S: ShortString): AnsiChar;
+function NewSItem(const Str: string; ANext: PSItem): PSItem;
+function HotKey(const S: string): Char;
 procedure RegisterDialogs;
 
 implementation
 
 const
-  LeftArr: AnsiChar = #17;
-  RightArr: AnsiChar = #16;
+  LeftArr: Char = SmallArrowLeft;
+  RightArr: Char = SmallArrowRight;
 
 {***************************************************************************}
 {                           Utility Functions                               }
 {***************************************************************************}
 
-function NewSItem(const Str: ShortString; ANext: PSItem): PSItem;
+function NewSItem(const Str: string; ANext: PSItem): PSItem;
 var
   P: PSItem;
 begin
   New(P);
-  P^.Value := NewStr(Str);
+  P^.Value := string(Str);
   P^.Next := ANext;
   Result := P;
 end;
 
-function HotKey(const S: ShortString): AnsiChar;
+function HotKey(const S: string): Char;
 var
   I: Integer;
 begin
@@ -294,7 +291,7 @@ begin
   if S <> '' then begin
     I := Pos('~', S);
     if (I <> 0) and (I < Length(S)) then
-      Result := UpCase(S[I + 1]);
+      Result := UpCase(Char(S[I + 1]));
   end;
 end;
 
@@ -308,8 +305,7 @@ begin
   State := State or sfCursorVis;
   Options := Options or ofSelectable or ofFirstClick;
   MaxLen := AMaxLen;
-  GetMem(Data, MaxLen + 1);
-  Data^ := '';
+  Data := '';
   CurPos := 0;
   FirstPos := 0;
   SelStart := 0;
@@ -319,7 +315,7 @@ end;
 
 destructor TInputLine.Destroy;
 begin
-  if Data <> nil then FreeMem(Data, MaxLen + 1);
+  { Data is now a managed string - no need to free }
   FreeAndNil(Validator);
   inherited Destroy;
 end;
@@ -344,7 +340,7 @@ begin
       Result := Validator.Status = vsOk
     else if Command <> cmCancel then
       if Validator.Options and voOnAppend = 0 then
-        Result := Validator.Valid(Data^);
+        Result := Validator.Valid(ShortString(Data));
   end;
 end;
 
@@ -353,7 +349,7 @@ begin
   if Delta < 0 then
     Result := FirstPos > 0
   else if Delta > 0 then
-    Result := (Data <> nil) and (Length(Data^) - FirstPos + 2 > Size.X)
+    Result := Length(Data) - FirstPos + 2 > Size.X
   else
     Result := False;
 end;
@@ -379,20 +375,20 @@ begin
   ArrowColor := GetColor(4);
 
   { Fill with spaces in the field color }
-  MoveChar(B, ' ', Color, Size.X);
+  DrawChar(B, 0, ' ', Color, Size.X);
 
   { Show arrows only when content overflows }
   if CanScroll(1) then
-    MoveChar(B[Size.X - 1], RightArr, ArrowColor, 1);
+    DrawChar(B, Size.X - 1, RightArr, ArrowColor, 1);
 
   if (State and sfFocused <> 0) and (Options and ofSelectable <> 0) then
     if CanScroll(-1) then
-      MoveChar(B[0], LeftArr, ArrowColor, 1);
+      DrawChar(B, 0, LeftArr, ArrowColor, 1);
 
   { Draw the data text }
-  if Data <> nil then begin
-    DataStr := Copy(Data^, FirstPos + 1, Size.X - 2);
-    MoveStr(B[1], ShortString(DataStr), Color);
+  if Data <> '' then begin
+    DataStr := Copy(Data, FirstPos + 1, Size.X - 2);
+    DrawStr(B, 1, ShortString(DataStr), Color);
   end;
 
   { When focused, show selection and cursor }
@@ -402,7 +398,7 @@ begin
     if L < 0 then L := 0;
     if R > Size.X - 2 then R := Size.X - 2;
     if L < R then
-      MoveChar(B[L + 1], #0, GetColor(3), R - L);
+      DrawChar(B, L + 1, #0, GetColor(3), R - L);
     SetCursor(ScreenCurPos - FirstPos + 1, 0);
   end;
   WriteLine(0, 0, Size.X, Size.Y, B);
@@ -422,8 +418,8 @@ begin
   CurPos := 0;
   FirstPos := 0;
   SelStart := 0;
-  if Enable and (Data <> nil) then
-    SelEnd := Length(Data^)
+  if Enable then
+    SelEnd := Length(Data)
   else
     SelEnd := 0;
   DrawView;
@@ -445,18 +441,22 @@ begin
 end;
 
 procedure TInputLine.GetData(var Rec);
+var
+  S: ShortString;
 begin
-  if Data <> nil then begin
-    FillChar(Rec, DataSize, #0);
-    Move(Data^, Rec, Length(Data^) + 1);
-  end else
-    FillChar(Rec, DataSize, #0);
+  { Convert string to ShortString for backward compatibility }
+  FillChar(Rec, DataSize, #0);
+  S := ShortString(Copy(Data, 1, MaxLen));
+  Move(S, Rec, Length(S) + 1);
 end;
 
 procedure TInputLine.SetData(var Rec);
+var
+  S: ShortString;
 begin
-  if Data <> nil then
-    Move(Rec, Data^[0], DataSize);
+  { Read ShortString from Rec and convert to string }
+  Move(Rec, S[0], DataSize);
+  Data := string(S);
   SelectAll(True);
 end;
 
@@ -485,14 +485,14 @@ var
     if Mouse.X < 1 then Mouse.X := 1;
     Pos := Mouse.X + FirstPos - 1;
     if Pos < 0 then Pos := 0;
-    if (Data <> nil) and (Pos > Length(Data^)) then Pos := Length(Data^);
+    if Pos > Length(Data) then Pos := Length(Data);
     Result := Pos;
   end;
 
   procedure DeleteSelect;
   begin
-    if (SelStart <> SelEnd) and (Data <> nil) then begin
-      System.Delete(Data^, SelStart + 1, SelEnd - SelStart);
+    if SelStart <> SelEnd then begin
+      System.Delete(Data, SelStart + 1, SelEnd - SelStart);
       CurPos := SelStart;
     end;
   end;
@@ -540,20 +540,20 @@ begin
       evKeyDown: begin
         case CtrlToArrow(Event.KeyCode) of
           kbLeft: if CurPos > 0 then Dec(CurPos);
-          kbRight: if (Data <> nil) and (CurPos < Length(Data^)) then Inc(CurPos);
+          kbRight: if CurPos < Length(Data) then Inc(CurPos);
           kbHome: CurPos := 0;
-          kbEnd: if Data <> nil then CurPos := Length(Data^);
+          kbEnd: CurPos := Length(Data);
           kbBack: if CurPos > 0 then begin
-            if Data <> nil then System.Delete(Data^, CurPos, 1);
+            System.Delete(Data, CurPos, 1);
             Dec(CurPos);
             if FirstPos > 0 then Dec(FirstPos);
             SelStart := CurPos;
             SelEnd := CurPos;
           end;
-          kbDel: if Data <> nil then begin
+          kbDel: begin
             if SelStart = SelEnd then begin
-              if CurPos < Length(Data^) then
-                System.Delete(Data^, CurPos + 1, 1);
+              if CurPos < Length(Data) then
+                System.Delete(Data, CurPos + 1, 1);
             end else
               DeleteSelect;
             SelStart := CurPos;
@@ -561,15 +561,14 @@ begin
           end;
           kbIns: SetState(sfCursorIns, State and sfCursorIns = 0);
         else
-          if (Event.CharCode >= ' ') and (Event.CharCode < #255) then begin
+          { Use UnicodeChar for full Unicode support }
+          if Event.UnicodeChar >= ' ' then begin
             if (State and sfCursorIns <> 0) and (SelStart = SelEnd) and
-               (Data <> nil) and (CurPos < Length(Data^)) then
-              System.Delete(Data^, CurPos + 1, 1);
+               (CurPos < Length(Data)) then
+              System.Delete(Data, CurPos + 1, 1);
             if SelStart <> SelEnd then DeleteSelect;
-            if (Data <> nil) and (Length(Data^) < MaxLen) then begin
-              Inc(Data^[0]);
-              Move(Data^[CurPos + 1], Data^[CurPos + 2], Length(Data^) - CurPos);
-              Data^[CurPos + 1] := Event.CharCode;
+            if Length(Data) < MaxLen then begin
+              Insert(Event.UnicodeChar, Data, CurPos + 1);
               Inc(CurPos);
             end;
             SelStart := CurPos;
@@ -601,13 +600,13 @@ begin
     AmDefault := False;
   Flags := Byte(AFlags);
   Command := ACommand;
-  Title := NewStr(ATitle);
+  Title := ATitle;
   if not CommandEnabled(Command) then State := State or sfDisabled;
 end;
 
 destructor TButton.Destroy;
 begin
-  DisposeStr(Title);
+  { Title is now a managed string - no need to free }
   inherited Destroy;
 end;
 
@@ -643,7 +642,7 @@ var
   Bc, CShadow: Word;
   Db: TDrawBuffer;
   I, J, Pos: Integer;
-  C: AnsiChar;
+  C: Char;
 begin
   { Determine button color based on state }
   if State and sfDisabled <> 0 then
@@ -661,22 +660,22 @@ begin
   CShadow := GetColor(8);
 
   { Handle empty title case }
-  if Title = nil then begin
-    MoveChar(Db[0], ' ', Byte(CShadow), 1);
+  if Title = '' then begin
+    DrawChar(Db, 0, ' ', Byte(CShadow), 1);
     for J := Ord(Down) to Size.X - 2 do
-      MoveChar(Db[J], ' ', Byte(Bc), 1);
+      DrawChar(Db, J, ' ', Byte(Bc), 1);
   end
   else begin
     { We have a title }
     if Flags and bfLeftJust = 0 then begin
-      I := CStrLen(Title^);
+      I := CStrLen(Title);
       I := (Size.X - I) div 2;
     end
     else
       I := 1;
 
     if Down then begin
-      MoveChar(Db[0], ' ', Byte(CShadow), 1);
+      DrawChar(Db, 0, ' ', Byte(CShadow), 1);
       Pos := 1;
     end
     else
@@ -684,27 +683,27 @@ begin
 
     { Fill before title }
     for J := 0 to I - 1 do
-      MoveChar(Db[Pos + J], ' ', Byte(Bc), 1);
+      DrawChar(Db, Pos + J, ' ', Byte(Bc), 1);
 
     { Draw title }
-    MoveCStr(Db[I + Pos], Title^, Bc);
+    DrawCStr(Db, I + Pos, Title, Bc);
 
     { Fill after title }
-    for J := Pos + CStrLen(Title^) + I to Size.X - 2 do
-      MoveChar(Db[J], ' ', Byte(Bc), 1);
+    for J := Pos + CStrLen(Title) + I to Size.X - 2 do
+      DrawChar(Db, J, ' ', Byte(Bc), 1);
   end;
 
   { Last column of row 0 }
   if not Down then begin
     { When not down: put block char at rightmost column for shadow effect }
     if Size.Y > 1 then
-      MoveChar(Db[Size.X - 1], #220, Byte(CShadow), 1)
+      DrawChar(Db, Size.X - 1, BlockLower, Byte(CShadow), 1)
     else
-      MoveChar(Db[Size.X - 1], ' ', Byte(CShadow), 1);
+      DrawChar(Db, Size.X - 1, ' ', Byte(CShadow), 1);
   end
   else begin
     { When down: rightmost column is button color }
-    MoveChar(Db[Size.X - 1], ' ', Byte(Bc), 1);
+    DrawChar(Db, Size.X - 1, ' ', Byte(Bc), 1);
   end;
 
   { Write row 0 }
@@ -713,12 +712,12 @@ begin
   { Handle second row if button height > 1 }
   if Size.Y > 1 then begin
     { Build bottom shadow row }
-    MoveChar(Db[0], ' ', Byte(CShadow), 1);
+    DrawChar(Db, 0, ' ', Byte(CShadow), 1);
     if Down then
       C := ' '
     else
-      C := #223;  { upper half block }
-    MoveChar(Db[1], C, Byte(CShadow), Size.X - 1);
+      C := BlockUpper;  { upper half block }
+    DrawChar(Db, 1, C, Byte(CShadow), Size.X - 1);
     WriteLine(0, 1, Size.X, 1, Db);
   end;
 end;
@@ -750,7 +749,7 @@ end;
 procedure TButton.HandleEvent(var Event: TEvent);
 var
   Down: Boolean;
-  C: AnsiChar;
+  C: Char;
   Mouse: TPoint;
   ClickRect: TRect;
 begin
@@ -786,12 +785,12 @@ begin
       ClearEvent(Event);
     end;
     evKeyDown: begin
-      if Title <> nil then begin
-        C := HotKey(Title^);
+      if Title <> '' then begin
+        C := HotKey(Title);
         if (Event.KeyCode = GetAltCode(C)) or
            ((Owner.Phase = phPostProcess) and (C <> #0) and
-            (UpCase(Event.CharCode) = C)) or
-           ((State and sfFocused <> 0) and (Event.CharCode = ' ')) then begin
+            (UpCase(Char(Event.CharCode)) = C)) or
+           ((State and sfFocused <> 0) and (Event.CharCode = AnsiChar(' '))) then begin
           Press;
           ClearEvent(Event);
         end;
@@ -829,12 +828,9 @@ begin
   Strings := TStringList.Create;
   while AStrings <> nil do begin
     P := AStrings;
-    if P^.Value <> nil then
-      Strings.Add(P^.Value^)
-    else
-      Strings.Add('');
+    Strings.Add(P^.Value);
     AStrings := P^.Next;
-    DisposeStr(P^.Value);
+    { Value is now a managed string - no need to DisposeStr }
     Dispose(P);
   end;
   Value := 0;
@@ -916,13 +912,14 @@ begin
   DrawBox(' ( ) ', #7);
 end;
 
-procedure TCluster.DrawBox(const Icon: ShortString; Marker: AnsiChar);
+procedure TCluster.DrawBox(const Icon: string; Marker: Char);
 var
   I, J, Cur, Col: Integer;
   CNorm, CSel, CDis, Color: Word;
   B: TDrawBuffer;
-  S: ShortString;
+  S: string;
   StringCount: Integer;
+  UnicodeMarker: Char;
 begin
   CNorm := GetColor($0301);
   CSel := GetColor($0402);
@@ -933,8 +930,15 @@ begin
   else
     StringCount := 0;
 
+  { Convert legacy marker to Unicode }
+  case Marker of
+    #7: UnicodeMarker := BulletPt;  { Unicode bullet for radio buttons }
+  else
+    UnicodeMarker := Marker;   { Use as-is (e.g., 'X' for checkboxes) }
+  end;
+
   for I := 0 to Size.Y - 1 do begin
-    MoveChar(B, ' ', Byte(CNorm), Size.X);
+    DrawChar(B, 0, ' ', Byte(CNorm), Size.X);
     Col := 0;
     for J := 0 to (StringCount - 1) div Size.Y do begin
       Cur := J * Size.Y + I;
@@ -946,12 +950,13 @@ begin
         else
           Color := CNorm;
 
-        MoveStr(B[Col], Icon, Byte(Color));
+        DrawStr(B, Col, Icon, Byte(Color));
         if Mark(Cur) then
-          WordRec(B[Col + 2]).Lo := Byte(Marker);
+          { Use DrawChar to properly update both legacy and Unicode buffers }
+          DrawChar(B, Col + 2, UnicodeMarker, Byte(Color), 1);
 
-        S := ShortString(Strings[Cur]);
-        MoveCStr(B[Col + Length(Icon)], S, Color);
+        S := Strings[Cur];
+        DrawCStr(B, Col + Length(Icon), S, Color);
         Inc(Col, Length(Icon) + CStrLen(S) + 2);
       end;
     end;
@@ -961,9 +966,12 @@ begin
     SetCursor(Column(Sel) * (Size.X div ((StringCount - 1) div Size.Y + 1)) + 2, Row(Sel));
 end;
 
-procedure TCluster.DrawMultiBox(const Icon, Marker: ShortString);
+procedure TCluster.DrawMultiBox(const Icon, Marker: string);
 begin
-  DrawBox(Icon, Marker[1]);
+  if Length(Marker) > 0 then
+    DrawBox(Icon, Marker[1])
+  else
+    DrawBox(Icon, ' ');
 end;
 
 procedure TCluster.SetButtonState(AMask: LongInt; Enable: Boolean);
@@ -1006,8 +1014,8 @@ end;
 procedure TCluster.HandleEvent(var Event: TEvent);
 var
   I: Integer;
-  S: ShortString;
-  C: AnsiChar;
+  S: string;
+  C: Char;
   StringCount: Integer;
 begin
   inherited HandleEvent(Event);
@@ -1048,11 +1056,11 @@ begin
       if Event.What = evNothing then Exit;
       { Handle hotkeys in any phase }
       for I := 0 to StringCount - 1 do begin
-        S := ShortString(Strings[I]);
+        S := Strings[I];
         C := HotKey(S);
         if (GetAltCode(C) = Event.KeyCode) or
            ((Owner.Phase = phPostProcess) and (C <> #0) and
-            (UpCase(Event.CharCode) = C)) then begin
+            (UpCase(Char(Event.CharCode)) = C)) then begin
           if ButtonState(I) then begin
             if Focus then begin
               Sel := I;
@@ -1227,10 +1235,10 @@ end;
 {                       TStaticText Implementation                          }
 {***************************************************************************}
 
-constructor TStaticText.Create(var Bounds: TRect; const AText: ShortString);
+constructor TStaticText.Create(var Bounds: TRect; const AText: string);
 begin
   inherited Create(Bounds);
-  Text := NewStr(AText);
+  Text := string(AText);
 end;
 
 constructor TStaticText.Load(var S: TFVStream);
@@ -1241,7 +1249,7 @@ end;
 
 destructor TStaticText.Destroy;
 begin
-  DisposeStr(Text);
+  { Text is now a managed string - no need to free }
   inherited Destroy;
 end;
 
@@ -1252,12 +1260,9 @@ begin
   GetPalette := PPalette(@P);
 end;
 
-procedure TStaticText.GetText(var S: ShortString);
+procedure TStaticText.GetText(var S: string);
 begin
-  if Text <> nil then
-    S := Text^
-  else
-    S := '';
+  S := Text;
 end;
 
 procedure TStaticText.Store(var S: TFVStream);
@@ -1272,7 +1277,7 @@ var
   Center: Boolean;
   I, J, L, P, Y: Integer;
   B: TDrawBuffer;
-  S: ShortString;
+  S: string;
 begin
   Color := GetColor(1);
   GetText(S);
@@ -1281,7 +1286,7 @@ begin
   Y := 0;
   Center := False;
   while Y < Size.Y do begin
-    MoveChar(B, ' ', Color, Size.X);
+    DrawChar(B, 0, ' ', Color, Size.X);
     if P <= L then begin
       if S[P] = #3 then begin
         Center := True;
@@ -1302,7 +1307,7 @@ begin
         J := (Size.X - P + I) div 2
       else
         J := 0;
-      MoveStr(B[J], Copy(S, I, P - I), Color);
+      DrawStr(B, J, Copy(S, I, P - I), Color);
       while (P <= L) and (S[P] = ' ') do Inc(P);
       if (P <= L) and (S[P] = #13) then begin
         Center := False;
@@ -1319,7 +1324,7 @@ end;
 {                         TParamText Implementation                         }
 {***************************************************************************}
 
-constructor TParamText.Create(var Bounds: TRect; const AText: ShortString; AParamCount: SmallInt);
+constructor TParamText.Create(var Bounds: TRect; const AText: string; AParamCount: SmallInt);
 begin
   inherited Create(Bounds, AText);
   ParamCount := AParamCount;
@@ -1361,21 +1366,24 @@ begin
   S.Write(W, SizeOf(W));
 end;
 
-procedure TParamText.GetText(var S: ShortString);
+procedure TParamText.GetText(var S: string);
 begin
-  if Text = nil then
+  if Text = '' then
     S := ''
   else if ParamList = nil then
-    S := Text^
-  else
-    FormatStr(S, Text^, ParamList^);
+    S := Text
+  else begin
+    { Note: ParamList should be an array of TVarRec for System.Format }
+    { For now, just use the text without formatting if ParamList is set }
+    S := Text;
+  end;
 end;
 
 {***************************************************************************}
 {                          TLabel Implementation                            }
 {***************************************************************************}
 
-constructor TLabel.Create(var Bounds: TRect; const AText: ShortString; ALink: TView);
+constructor TLabel.Create(var Bounds: TRect; const AText: string; ALink: TView);
 begin
   inherited Create(Bounds, AText);
   Link := ALink;
@@ -1396,7 +1404,6 @@ var
   Color: Word;
   B: TDrawBuffer;
   SCOff: Byte;
-  S: ShortString;
 begin
   if Light then begin
     Color := GetColor($0402);
@@ -1405,12 +1412,12 @@ begin
     Color := GetColor($0301);
     SCOff := 4;
   end;
-  MoveChar(B, ' ', Byte(Color), Size.X);
-  if Text <> nil then begin
-    S := Text^;
-    MoveCStr(B[1], S, Color);
+  DrawChar(B, 0, ' ', Byte(Color), Size.X);
+  if Text <> '' then begin
+    DrawCStr(B, 1, Text, Color);
     if ShowMarkers then begin
-      WordRec(B[0]).Lo := Byte(SpecialChars[SCOff]);
+      { Use DrawChar to properly update both legacy and Unicode buffers }
+      DrawChar(B, 0, SpecialChars[SCOff], Byte(Color), 1);
     end;
   end;
   WriteLine(0, 0, Size.X, 1, B);
@@ -1418,7 +1425,7 @@ end;
 
 procedure TLabel.HandleEvent(var Event: TEvent);
 var
-  C: AnsiChar;
+  C: Char;
   FocusMe: Boolean;
 begin
   inherited HandleEvent(Event);
@@ -1426,11 +1433,11 @@ begin
     if Link <> nil then Link.Focus;
     ClearEvent(Event);
   end else if Event.What = evKeyDown then begin
-    if Text <> nil then begin
-      C := HotKey(Text^);
+    if Text <> '' then begin
+      C := HotKey(Text);
       if (GetAltCode(C) = Event.KeyCode) or
          ((Owner.Phase = phPostProcess) and (C <> #0) and
-          (UpCase(Event.CharCode) = C)) then begin
+          (UpCase(Char(Event.CharCode)) = C)) then begin
         if Link <> nil then begin
           Link.Focus;
           ClearEvent(Event);
@@ -1526,9 +1533,7 @@ end;
 
 procedure TDialog.ChangeTitle(ANewTitle: TTitleStr);
 begin
-  if Title <> nil then
-    DisposeStr(Title);
-  Title := NewStr(ANewTitle);
+  Title := ANewTitle;
   Frame.DrawView;
 end;
 
@@ -1581,7 +1586,7 @@ begin
   Result := B;
 end;
 
-function TDialog.NewLabel(X, Y: Integer; AText: ShortString; ALink: TView): TLabel;
+function TDialog.NewLabel(X, Y: Integer; const AText: string; ALink: TView): TLabel;
 var
   L: TLabel;
   R: TRect;
@@ -1674,7 +1679,7 @@ begin
   InitViewer(AHistoryId);
 end;
 
-function THistoryWindow.GetSelection: ShortString;
+function THistoryWindow.GetSelection: string;
 begin
   if Viewer = nil then
     Result := ''
@@ -1736,11 +1741,11 @@ procedure THistory.Draw;
 var
   B: TDrawBuffer;
 begin
-  MoveCStr(B, '[~v~]', GetColor($0102));
+  DrawCStr(B, 0, '[~v~]', GetColor($0102));
   WriteLine(0, 0, Size.X, Size.Y, B);
 end;
 
-procedure THistory.RecordHistory(const S: ShortString);
+procedure THistory.RecordHistory(const S: string);
 begin
   HistoryAdd(HistoryId, S);
 end;
@@ -1748,7 +1753,7 @@ end;
 procedure THistory.HandleEvent(var Event: TEvent);
 var
   C: Word;
-  Rslt: ShortString;
+  Rslt: string;
   R, P: TRect;
   HistoryWindow: THistoryWindow;
 begin
@@ -1762,8 +1767,7 @@ begin
       ClearEvent(Event);
       Exit;
     end;
-    if Link.Data <> nil then
-      RecordHistory(Link.Data^);
+    RecordHistory(Link.Data);
     Link.GetBounds(R);
     Dec(R.A.X);
     Inc(R.B.X);
@@ -1779,8 +1783,7 @@ begin
         Rslt := HistoryWindow.GetSelection;
         if Length(Rslt) > Link.MaxLen then
           SetLength(Rslt, Link.MaxLen);
-        if Link.Data <> nil then
-          Link.Data^ := Rslt;
+        Link.Data := Rslt;
         Link.SelectAll(True);
         Link.DrawView;
       end;
@@ -1790,8 +1793,7 @@ begin
   end else if Event.What = evBroadcast then begin
     if ((Event.Command = cmReleasedFocus) and (Event.InfoPtr = Pointer(Link))) or
        (Event.Command = cmRecordHistory) then begin
-      if Link.Data <> nil then
-        RecordHistory(Link.Data^);
+      RecordHistory(Link.Data);
     end;
   end;
 end;

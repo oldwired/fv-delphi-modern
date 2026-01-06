@@ -6,18 +6,15 @@
 
 unit Grid;
 
-{$I platform.inc}
 {$R-}  { Disable range checking for legacy buffer operations }
 
 interface
 
 uses
-  {$IFDEF OS_WINDOWS}
   Winapi.Windows,
-  {$ENDIF}
   System.SysUtils, System.Classes, System.Generics.Collections, System.Math,
   System.StrUtils, System.JSON,
-  FVCommon, Objects, Drivers, Views, FVConsts, FVInterfaces, Validate;
+  FVCommon, Objects, Drivers, Views, FVConsts, FVInterfaces, Validate, FVBoxChars;
 
 {***************************************************************************}
 {                              PUBLIC CONSTANTS                             }
@@ -47,21 +44,21 @@ const
   CStringGrid = #26#26#27#28#29#7;
 
   { Arrow characters for overflow indicators }
-  LeftArrow  = #17;
-  RightArrow = #16;
+  LeftArrow  = SmallArrowLeft;
+  RightArrow = SmallArrowRight;
 
-  { Box drawing characters }
-  GridHLine = #196;  { ─ }
-  GridVLine = #179;  { │ }
-  GridCross = #197;  { ┼ }
-  GridTTop  = #194;  { ┬ }
-  GridTBot  = #193;  { ┴ }
-  GridTLeft = #195;  { ├ }
-  GridTRight = #180; { ┤ }
+  { Box drawing characters - Unicode }
+  GridHLine  = BoxHoriz;      { ─ }
+  GridVLine  = BoxVert;       { │ }
+  GridCross  = BoxCross;      { ┼ }
+  GridTTop   = BoxHorizDown;  { ┬ }
+  GridTBot   = BoxHorizUp;    { ┴ }
+  GridTLeft  = BoxVertRight;  { ├ }
+  GridTRight = BoxVertLeft;   { ┤ }
 
   { Sort direction indicators }
-  SortAscChar  = #30;  { ▲ }
-  SortDescChar = #31;  { ▼ }
+  SortAscChar  = SmallArrowUp;    { ▲ }
+  SortDescChar = SmallArrowDown;  { ▼ }
 
 {***************************************************************************}
 {                            TYPE DEFINITIONS                               }
@@ -90,8 +87,8 @@ type
   { TGridChangeEntry - change log entry for tracking edits }
   TGridChangeEntry = record
     Cell: TGridCell;
-    OldValue: ShortString;
-    NewValue: ShortString;
+    OldValue: string;
+    NewValue: string;
   end;
   PGridChangeEntry = ^TGridChangeEntry;
 
@@ -99,14 +96,14 @@ type
   TGridCellEvent = procedure(Sender: TObject; Col, Row: Integer) of object;
   TGridEditEvent = procedure(Sender: TObject; Col, Row: Integer; var AllowEdit: Boolean) of object;
   TGridValidateEvent = procedure(Sender: TObject; Col, Row: Integer;
-    const Value: ShortString; var Accept: Boolean) of object;
+    const Value: string; var Accept: Boolean) of object;
   TGridCompareEvent = procedure(Sender: TObject; Col: Integer;
-    const S1, S2: ShortString; var Result: Integer) of object;
+    const S1, S2: string; var Result: Integer) of object;
 
   { TGridColumn - column definition }
   TGridColumn = class(TObject)
   private
-    FTitle: PString;
+    FTitle: string;
     FWidth: Integer;
     FMinWidth: Integer;
     FMaxWidth: Integer;
@@ -115,18 +112,18 @@ type
     FSortable: Boolean;
     FVisible: Boolean;
     FValidator: TValidator;
-    FDefaultValue: PString;
-    function GetTitle: ShortString;
-    procedure SetTitle(const Value: ShortString);
-    function GetDefaultValue: ShortString;
-    procedure SetDefaultValue(const Value: ShortString);
+    FDefaultValue: string;
+    function GetTitle: string;
+    procedure SetTitle(const Value: string);
+    function GetDefaultValue: string;
+    procedure SetDefaultValue(const Value: string);
     procedure SetWidth(Value: Integer);
     procedure SetValidator(Value: TValidator);
   public
-    constructor Create(const ATitle: ShortString; AWidth: Integer);
+    constructor Create(const ATitle: string; AWidth: Integer);
     destructor Destroy; override;
 
-    property Title: ShortString read GetTitle write SetTitle;
+    property Title: string read GetTitle write SetTitle;
     property Width: Integer read FWidth write SetWidth;
     property MinWidth: Integer read FMinWidth write FMinWidth;
     property MaxWidth: Integer read FMaxWidth write FMaxWidth;
@@ -135,7 +132,7 @@ type
     property Sortable: Boolean read FSortable write FSortable;
     property Visible: Boolean read FVisible write FVisible;
     property Validator: TValidator read FValidator write SetValidator;
-    property DefaultValue: ShortString read GetDefaultValue write SetDefaultValue;
+    property DefaultValue: string read GetDefaultValue write SetDefaultValue;
   end;
 
   { TGridColumns - column collection }
@@ -144,8 +141,8 @@ type
     FOwner: TStringGrid;
   public
     constructor Create(AOwner: TStringGrid);
-    function Add(const ATitle: ShortString; AWidth: Integer): TGridColumn;
-    function Insert(Index: Integer; const ATitle: ShortString; AWidth: Integer): TGridColumn;
+    function Add(const ATitle: string; AWidth: Integer): TGridColumn;
+    function Insert(Index: Integer; const ATitle: string; AWidth: Integer): TGridColumn;
     procedure MoveColumn(FromIndex, ToIndex: Integer);
     function TotalWidth: Integer;
     function ColumnAtX(X: Integer; var ColStart: Integer): Integer;
@@ -156,7 +153,7 @@ type
   TStringGrid = class(TView, ISerializable)
   private
     { Data storage - using TDictionary for sparse storage }
-    FData: TDictionary<string, ShortString>;
+    FData: TDictionary<string, string>;
     FRowCount: Integer;
     FRowIDs: TList<Integer>;
     FNextRowID: Integer;
@@ -187,7 +184,7 @@ type
     FEditMode: TEditMode;
     FEditing: Boolean;
     FEditCell: TGridCell;
-    FOldEditValue: ShortString;
+    FOldEditValue: string;
 
     { Change tracking }
     FModified: Boolean;
@@ -209,8 +206,8 @@ type
 
     { Property getters/setters }
     function GetColCount: Integer;
-    function GetCell(Col, Row: Integer): ShortString;
-    procedure SetCell(Col, Row: Integer; const Value: ShortString);
+    function GetCell(Col, Row: Integer): string;
+    procedure SetCell(Col, Row: Integer; const Value: string);
     procedure SetRowCount(Value: Integer);
     procedure SetFixedRows(Value: Integer);
     procedure SetFixedCols(Value: Integer);
@@ -227,9 +224,9 @@ type
     procedure DrawCell(Col, Row, ScreenX, ScreenY, CellWidth: Integer;
       var B: TDrawBuffer; IsFocused, IsSelected: Boolean);
     function GetCellColor(Col, Row: Integer; IsFocused, IsSelected: Boolean): Word;
-    function GetCellText(Col, Row: Integer): ShortString;
-    function FormatCellText(const Text: ShortString; Width: Integer;
-      Alignment: TGridAlignment): ShortString;
+    function GetCellText(Col, Row: Integer): string;
+    function FormatCellText(const Text: string; Width: Integer;
+      Alignment: TGridAlignment): string;
 
     { Navigation helpers }
     function RowToScreen(Row: Integer): Integer;
@@ -251,7 +248,7 @@ type
     procedure FocusCell(Col, Row: Integer; Extend: Boolean);
 
     { Validation }
-    function ValidateCell(Col, Row: Integer; const Value: ShortString): Boolean;
+    function ValidateCell(Col, Row: Integer; const Value: string): Boolean;
 
     { Sorting helpers }
     procedure DoSort;
@@ -276,7 +273,7 @@ type
     function Valid(Command: Word): Boolean; override;
 
     { Cell access }
-    property Cells[Col, Row: Integer]: ShortString read GetCell write SetCell; default;
+    property Cells[Col, Row: Integer]: string read GetCell write SetCell; default;
 
     { Row management }
     procedure AddRow;
@@ -381,10 +378,10 @@ end;
 {                            TGridColumn                                    }
 {***************************************************************************}
 
-constructor TGridColumn.Create(const ATitle: ShortString; AWidth: Integer);
+constructor TGridColumn.Create(const ATitle: string; AWidth: Integer);
 begin
   inherited Create;
-  FTitle := NewStr(ATitle);
+  FTitle := string(ATitle);
   FWidth := AWidth;
   FMinWidth := 3;
   FMaxWidth := 255;
@@ -393,46 +390,34 @@ begin
   FSortable := True;
   FVisible := True;
   FValidator := nil;
-  FDefaultValue := nil;
+  FDefaultValue := '';
 end;
 
 destructor TGridColumn.Destroy;
 begin
-  DisposeStr(FTitle);
-  DisposeStr(FDefaultValue);
+  { FTitle and FDefaultValue are managed strings - no need to dispose }
   FreeAndNil(FValidator);
   inherited Destroy;
 end;
 
-function TGridColumn.GetTitle: ShortString;
+function TGridColumn.GetTitle: string;
 begin
-  if FTitle <> nil then
-    Result := FTitle^
-  else
-    Result := '';
+  Result := FTitle;
 end;
 
-procedure TGridColumn.SetTitle(const Value: ShortString);
+procedure TGridColumn.SetTitle(const Value: string);
 begin
-  DisposeStr(FTitle);
-  FTitle := NewStr(Value);
+  FTitle := Value;
 end;
 
-function TGridColumn.GetDefaultValue: ShortString;
+function TGridColumn.GetDefaultValue: string;
 begin
-  if FDefaultValue <> nil then
-    Result := FDefaultValue^
-  else
-    Result := '';
+  Result := FDefaultValue;
 end;
 
-procedure TGridColumn.SetDefaultValue(const Value: ShortString);
+procedure TGridColumn.SetDefaultValue(const Value: string);
 begin
-  DisposeStr(FDefaultValue);
-  if Value <> '' then
-    FDefaultValue := NewStr(Value)
-  else
-    FDefaultValue := nil;
+  FDefaultValue := string(Value);
 end;
 
 procedure TGridColumn.SetWidth(Value: Integer);
@@ -460,13 +445,13 @@ begin
   FOwner := AOwner;
 end;
 
-function TGridColumns.Add(const ATitle: ShortString; AWidth: Integer): TGridColumn;
+function TGridColumns.Add(const ATitle: string; AWidth: Integer): TGridColumn;
 begin
   Result := TGridColumn.Create(ATitle, AWidth);
   inherited Add(Result);
 end;
 
-function TGridColumns.Insert(Index: Integer; const ATitle: ShortString;
+function TGridColumns.Insert(Index: Integer; const ATitle: string;
   AWidth: Integer): TGridColumn;
 begin
   Result := TGridColumn.Create(ATitle, AWidth);
@@ -549,7 +534,7 @@ begin
   GrowMode := gfGrowHiX or gfGrowHiY;
 
   { Initialize data structures }
-  FData := TDictionary<string, ShortString>.Create;
+  FData := TDictionary<string, string>.Create;
   FRowIDs := TList<Integer>.Create;
   FNextRowID := 1;
   FRowCount := 0;
@@ -614,13 +599,13 @@ begin
   Result := IntToStr(Col) + ',' + IntToStr(Row);
 end;
 
-function TStringGrid.GetCell(Col, Row: Integer): ShortString;
+function TStringGrid.GetCell(Col, Row: Integer): string;
 begin
   if not FData.TryGetValue(CellKey(Col, Row), Result) then
     Result := '';
 end;
 
-procedure TStringGrid.SetCell(Col, Row: Integer; const Value: ShortString);
+procedure TStringGrid.SetCell(Col, Row: Integer; const Value: string);
 begin
   if Value = '' then
     FData.Remove(CellKey(Col, Row))
@@ -717,7 +702,7 @@ begin
   Result := @P;
 end;
 
-function TStringGrid.GetCellText(Col, Row: Integer): ShortString;
+function TStringGrid.GetCellText(Col, Row: Integer): string;
 begin
   Result := GetCell(Col, Row);
   { If empty, show default value }
@@ -725,8 +710,8 @@ begin
     Result := FColumns[Col].DefaultValue;
 end;
 
-function TStringGrid.FormatCellText(const Text: ShortString; Width: Integer;
-  Alignment: TGridAlignment): ShortString;
+function TStringGrid.FormatCellText(const Text: string; Width: Integer;
+  Alignment: TGridAlignment): string;
 var
   Len, Pad: Integer;
 begin
@@ -774,10 +759,12 @@ end;
 procedure TStringGrid.DrawCell(Col, Row, ScreenX, ScreenY, CellWidth: Integer;
   var B: TDrawBuffer; IsFocused, IsSelected: Boolean);
 var
-  Text, DisplayText: ShortString;
+  Text, DisplayText: string;
   Color: Word;
   Alignment: TGridAlignment;
   ShowLeftArrow, ShowRightArrow: Boolean;
+  I, OutPos: Integer;
+  C: Char;
 begin
   { Get color }
   Color := GetCellColor(Col, Row, IsFocused, IsSelected);
@@ -820,21 +807,36 @@ begin
   else
     DisplayText := FormatCellText(Text, CellWidth, Alignment);
 
-  { Draw to buffer }
+  { Draw to buffer using new TDrawCell format }
   if ScreenX + CellWidth <= MaxViewWidth then
   begin
-    MoveStr(B[ScreenX], DisplayText, Byte(Color));
+    OutPos := ScreenX;
+    for I := 1 to Length(DisplayText) do
+    begin
+      if OutPos >= MaxViewWidth then Break;
+      C := DisplayText[I];
+      B[OutPos].Ch := C;
+      B[OutPos].Attr := Color;
+      Inc(OutPos);
+    end;
 
     { Draw overflow arrows - use grid line color for visibility }
     if ShowRightArrow then
-      MoveChar(B[ScreenX + CellWidth - 1], RightArrow, GetColor(5), 1);
+    begin
+      OutPos := ScreenX + CellWidth - 1;
+      if OutPos < MaxViewWidth then
+      begin
+        B[OutPos].Ch := RightArrow;
+        B[OutPos].Attr := GetColor(5);
+      end;
+    end;
   end;
 end;
 
 procedure TStringGrid.Draw;
 var
   B: TDrawBuffer;
-  I, J, Row, ScreenY, ScreenX, ColWidth: Integer;
+  I, J, K, Row, ScreenY, ScreenX, ColWidth: Integer;
   IsFocused, IsSelected: Boolean;
   NormalColor, GridLineColor: Word;
 begin
@@ -848,8 +850,12 @@ begin
   begin
     if ScreenY >= Size.Y then Break;
 
-    { Clear buffer }
-    MoveChar(B, ' ', Byte(NormalColor), Size.X);
+    { Clear buffer using new TDrawCell format }
+    for K := 0 to Size.X - 1 do
+    begin
+      B[K].Ch := ' ';
+      B[K].Attr := NormalColor;
+    end;
     ScreenX := 0;
 
     { Draw fixed columns }
@@ -867,7 +873,8 @@ begin
           { Grid line }
           if FShowGridLines and (ScreenX < Size.X) then
           begin
-            MoveChar(B[ScreenX], GridVLine, GridLineColor, 1);
+            B[ScreenX].Ch := GridVLine;
+            B[ScreenX].Attr := GridLineColor;
             Inc(ScreenX);
           end;
         end;
@@ -890,7 +897,8 @@ begin
           { Grid line }
           if FShowGridLines and (ScreenX < Size.X) then
           begin
-            MoveChar(B[ScreenX], GridVLine, GridLineColor, 1);
+            B[ScreenX].Ch := GridVLine;
+            B[ScreenX].Attr := GridLineColor;
             Inc(ScreenX);
           end;
         end;
@@ -903,7 +911,11 @@ begin
     { Draw horizontal grid line below header }
     if FShowGridLines and (I = FFixedRows - 1) and (ScreenY < Size.Y) then
     begin
-      MoveChar(B, GridHLine, GridLineColor, Size.X);
+      for K := 0 to Size.X - 1 do
+      begin
+        B[K].Ch := GridHLine;
+        B[K].Attr := GridLineColor;
+      end;
       { Draw intersections at column boundaries }
       ScreenX := 0;
       for J := 0 to FColumns.Count - 1 do
@@ -913,7 +925,8 @@ begin
           Inc(ScreenX, FColumns[J].Width);
           if ScreenX < Size.X then
           begin
-            MoveChar(B[ScreenX], GridTTop, GridLineColor, 1);
+            B[ScreenX].Ch := GridTTop;
+            B[ScreenX].Attr := GridLineColor;
             Inc(ScreenX);
           end;
         end;
@@ -928,8 +941,12 @@ begin
   begin
     Row := FFixedRows + FTopRow + I;  { Data rows start at FFixedRows }
 
-    { Clear buffer }
-    MoveChar(B, ' ', Byte(NormalColor), Size.X);
+    { Clear buffer using new TDrawCell format }
+    for K := 0 to Size.X - 1 do
+    begin
+      B[K].Ch := ' ';
+      B[K].Attr := NormalColor;
+    end;
 
     if Row < FRowCount then
     begin
@@ -953,7 +970,8 @@ begin
             { Grid line }
             if FShowGridLines and (ScreenX < Size.X) then
             begin
-              MoveChar(B[ScreenX], GridVLine, GridLineColor, 1);
+              B[ScreenX].Ch := GridVLine;
+              B[ScreenX].Attr := GridLineColor;
               Inc(ScreenX);
             end;
           end;
@@ -979,7 +997,8 @@ begin
             { Grid line }
             if FShowGridLines and (ScreenX < Size.X) then
             begin
-              MoveChar(B[ScreenX], GridVLine, GridLineColor, 1);
+              B[ScreenX].Ch := GridVLine;
+              B[ScreenX].Attr := GridLineColor;
               Inc(ScreenX);
             end;
           end;
@@ -1257,7 +1276,7 @@ end;
 {--- Validation ---}
 
 function TStringGrid.ValidateCell(Col, Row: Integer;
-  const Value: ShortString): Boolean;
+  const Value: string): Boolean;
 var
   Accept: Boolean;
 begin
@@ -1266,7 +1285,7 @@ begin
   { Check column validator }
   if (Col < FColumns.Count) and (FColumns[Col].Validator <> nil) then
   begin
-    Result := FColumns[Col].Validator.IsValid(string(Value));
+    Result := FColumns[Col].Validator.IsValid(Value);
     if not Result then Exit;
   end;
 
@@ -1492,15 +1511,15 @@ end;
 procedure TStringGrid.InsertRow(AtRow: Integer);
 var
   I, C: Integer;
-  TempData: TDictionary<string, ShortString>;
-  Pair: TPair<string, ShortString>;
+  TempData: TDictionary<string, string>;
+  Pair: TPair<string, string>;
   Col, Row: Integer;
 begin
   if AtRow < 0 then AtRow := 0;
   if AtRow > FRowCount then AtRow := FRowCount;
 
   { Shift existing data down }
-  TempData := TDictionary<string, ShortString>.Create;
+  TempData := TDictionary<string, string>.Create;
   try
     for Pair in FData do
     begin
@@ -1536,14 +1555,14 @@ end;
 procedure TStringGrid.DeleteRow(AtRow: Integer);
 var
   I, C: Integer;
-  TempData: TDictionary<string, ShortString>;
-  Pair: TPair<string, ShortString>;
+  TempData: TDictionary<string, string>;
+  Pair: TPair<string, string>;
   Col, Row: Integer;
 begin
   if (AtRow < 0) or (AtRow >= FRowCount) then Exit;
 
   { Remove row data and shift remaining data up }
-  TempData := TDictionary<string, ShortString>.Create;
+  TempData := TDictionary<string, string>.Create;
   try
     for Pair in FData do
     begin
@@ -1706,7 +1725,7 @@ begin
       for C := 0 to Cols.Count - 1 do
       begin
         if DestCol >= ColCount then Break;
-        SetCell(DestCol, DestRow, ShortString(Cols[C]));
+        SetCell(DestCol, DestRow, Cols[C]);
         Inc(DestCol);
       end;
       Inc(DestRow);
@@ -1754,7 +1773,7 @@ end;
 procedure TStringGrid.AutoFitColumn(Col: Integer);
 var
   MaxWidth, R: Integer;
-  Text: ShortString;
+  Text: string;
 begin
   if (Col < 0) or (Col >= FColumns.Count) then Exit;
 
@@ -1783,7 +1802,7 @@ end;
 
 function TStringGrid.CompareRows(Row1, Row2: Integer): Integer;
 var
-  S1, S2: ShortString;
+  S1, S2: string;
 begin
   if FSortColumn < 0 then
   begin
@@ -1807,9 +1826,9 @@ procedure TStringGrid.DoSort;
 var
   I, J, MinIdx: Integer;
   TempID: Integer;
-  TempData: TDictionary<string, ShortString>;
+  TempData: TDictionary<string, string>;
   OldRowOrder: TList<Integer>;
-  Pair: TPair<string, ShortString>;
+  Pair: TPair<string, string>;
   Col, Row, NewRow: Integer;
   K: Integer;
 begin
@@ -1841,7 +1860,7 @@ begin
     end;
 
     { Remap data according to new order }
-    TempData := TDictionary<string, ShortString>.Create;
+    TempData := TDictionary<string, string>.Create;
     try
       for I := 0 to FRowCount - 1 do
       begin
@@ -1963,7 +1982,7 @@ begin
       else
         Col := FColumns.Add('', 10);
 
-      Col.Title := ShortString(ColObj.GetValue<string>('title', ''));
+      Col.Title := ColObj.GetValue<string>('title', '');
       Col.Width := ColObj.GetValue<Integer>('width', 10);
       Col.MinWidth := ColObj.GetValue<Integer>('minWidth', 3);
       Col.MaxWidth := ColObj.GetValue<Integer>('maxWidth', 255);
@@ -1971,7 +1990,7 @@ begin
       Col.Color := ColObj.GetValue<Integer>('color', 0);
       Col.Sortable := ColObj.GetValue<Boolean>('sortable', True);
       Col.Visible := ColObj.GetValue<Boolean>('visible', True);
-      Col.DefaultValue := ShortString(ColObj.GetValue<string>('defaultValue', ''));
+      Col.DefaultValue := ColObj.GetValue<string>('defaultValue', '');
     end;
 
     { Remove extra columns if JSON has fewer }
