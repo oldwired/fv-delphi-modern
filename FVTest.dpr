@@ -33,7 +33,9 @@ uses
   Outline in 'src\Outline.pas',
   Editors in 'src\Editors.pas',
   Calendar in 'src\Calendar.pas',
-  Grid in 'src\Grid.pas';
+  Grid in 'src\Grid.pas',
+  ConPTY in 'src\ConPTY.pas',
+  Terminal in 'src\Terminal.pas';
 
 const
   cmNewWindow = 100;
@@ -65,10 +67,14 @@ const
   cmTestStringGrid = 1026;
   cmTestStringGrid2 = 1027;
   cmTestStringGrid3 = 1028;
+  cmTestTerminalCmd = 1029;
+  cmTestTerminalPwsh = 1030;
+  cmTestTerminalCustom = 1031;
 
 var
   ExceptionLog: TextFile;
   ExceptionLogOpen: Boolean = False;
+  ExceptionLogName: string = '';
   IdleCounter: Integer = 0;
   LastSecond: Word = 65535;
   ClockView: TClockView = nil;
@@ -77,7 +83,9 @@ var
 procedure LogException(const Context: string; E: Exception);
 begin
   if not ExceptionLogOpen then begin
-    AssignFile(ExceptionLog, 'fvtest.log');
+    { Use timestamp-based filename to avoid conflicts with nested instances }
+    ExceptionLogName := FormatDateTime('"fvtest_"yyyymmdd_hhnnsszzz".log"', Now);
+    AssignFile(ExceptionLog, ExceptionLogName);
     Rewrite(ExceptionLog);
     ExceptionLogOpen := True;
   end;
@@ -139,6 +147,9 @@ type
     procedure TestStringGrid3;
     procedure OnCalendarDateSelect(Calendar: TCalendarView);
     procedure OnGridCellFocused(Sender: TObject; Col, Row: Integer);
+    procedure TestTerminalCmd;
+    procedure TestTerminalPwsh;
+    procedure TestTerminalCustom;
     property CalendarDateLabel: TStaticText read FCalendarDateLabel write FCalendarDateLabel;
   end;
 
@@ -540,7 +551,12 @@ begin
         NewItem('File ~L~oad/Save', '', kbNoKey, cmTestEditorFile, hcNoContext,
         NewItem('~C~lipboard', '', kbNoKey, cmTestEditorClipboard, hcNoContext,
         nil))))),
-      nil)))))))))))))))))))),
+      NewSubMenu('Ter~m~inal', hcNoContext, NewMenu(
+        NewItem('~C~md.exe', '', kbNoKey, cmTestTerminalCmd, hcNoContext,
+        NewItem('~P~owerShell', '', kbNoKey, cmTestTerminalPwsh, hcNoContext,
+        NewItem('C~u~stom...', '', kbNoKey, cmTestTerminalCustom, hcNoContext,
+        nil)))),
+      nil))))))))))))))))))))),
     NewSubMenu('~W~indow', hcNoContext, NewMenu(
       NewItem('~T~ile', '', kbNoKey, cmTile, hcNoContext,
       NewItem('Tile ~H~orizontal', '', kbNoKey, cmTileHorizontal, hcNoContext,
@@ -571,8 +587,25 @@ begin
 end;
 
 procedure TMyApp.HandleEvent(var Event: TEvent);
+var
+  TermWin: TTerminalWindow;
 begin
   try
+    { Intercept keyboard events for terminal windows in capture mode
+      BEFORE inherited processing, so F10 etc. go to terminal instead
+      of being converted to cmMenu by TApplication }
+    if (Event.What = evKeyDown) and (Desktop <> nil) and
+       (Desktop.Current <> nil) and (Desktop.Current is TTerminalWindow) then
+    begin
+      TermWin := TTerminalWindow(Desktop.Current);
+      if TermWin.Terminal.Mode = tmCapture then
+      begin
+        TermWin.Terminal.HandleEvent(Event);
+        if Event.What = evNothing then
+          Exit;  { Event was handled by terminal }
+      end;
+    end;
+
     inherited HandleEvent(Event);
 
     if Event.What = evCommand then begin
@@ -603,6 +636,9 @@ begin
         cmTestStringGrid: TestStringGrid;
         cmTestStringGrid2: TestStringGrid2;
         cmTestStringGrid3: TestStringGrid3;
+        cmTestTerminalCmd: TestTerminalCmd;
+        cmTestTerminalPwsh: TestTerminalPwsh;
+        cmTestTerminalCustom: TestTerminalCustom;
       else
         Exit;
       end;
@@ -1893,6 +1929,111 @@ begin
                'In Destination window:'#13#10 +
                '  Paste: Shift+Ins or Ctrl+K C',
                mfInformation or mfOKButton);
+  end;
+end;
+
+procedure TMyApp.TestTerminalCmd;
+{ Open a terminal window running cmd.exe }
+const
+  TerminalHelp =
+    'Terminal Keyboard Controls:'#13#10 +
+    #13#10 +
+    'Ctrl+A, <key>  - Exit capture, send <key> to app'#13#10 +
+    'Ctrl+A, Ctrl+A - Send literal Ctrl+A to terminal'#13#10 +
+    'Shift+PgUp/Dn  - Scroll through history'#13#10 +
+    #13#10 +
+    'Click or press Enter/Esc to re-enter capture mode.';
+var
+  R: TRect;
+  Win: TTerminalWindow;
+begin
+  MessageBox(TerminalHelp, mfInformation or mfOKButton);
+
+  Inc(WindowCount);
+  R.Assign(2, 1, 82, 26);
+  R.Move((WindowCount mod 4) * 2, (WindowCount mod 4));
+  Win := TTerminalWindow.Create(R, 'Terminal - cmd.exe');
+  if Win <> nil then begin
+    Desktop.Insert(Win);
+    if not Win.Execute('cmd.exe') then
+      MessageBox('Failed to start cmd.exe: ' + Win.Terminal.ConPTY.LastError,
+                 mfError or mfOKButton)
+    else
+      Win.Terminal.Select;  { Ensure terminal has focus for capture mode }
+  end;
+end;
+
+procedure TMyApp.TestTerminalPwsh;
+{ Open a terminal window running PowerShell }
+const
+  TerminalHelp =
+    'Terminal Keyboard Controls:'#13#10 +
+    #13#10 +
+    'Ctrl+A, <key>  - Exit capture, send <key> to app'#13#10 +
+    'Ctrl+A, Ctrl+A - Send literal Ctrl+A to terminal'#13#10 +
+    'Shift+PgUp/Dn  - Scroll through history'#13#10 +
+    #13#10 +
+    'Click or press Enter/Esc to re-enter capture mode.';
+var
+  R: TRect;
+  Win: TTerminalWindow;
+  Started: Boolean;
+begin
+  MessageBox(TerminalHelp, mfInformation or mfOKButton);
+
+  Inc(WindowCount);
+  R.Assign(2, 1, 82, 26);
+  R.Move((WindowCount mod 4) * 2, (WindowCount mod 4));
+  Win := TTerminalWindow.Create(R, 'Terminal - PowerShell');
+  if Win <> nil then begin
+    Desktop.Insert(Win);
+    Started := Win.Execute('pwsh.exe');
+    if not Started then
+      { Try Windows PowerShell if PowerShell Core not available }
+      Started := Win.Execute('powershell.exe');
+    if Started then
+      Win.Terminal.Select  { Ensure terminal has focus for capture mode }
+    else
+      MessageBox('Failed to start PowerShell',
+                 mfError or mfOKButton);
+  end;
+end;
+
+procedure TMyApp.TestTerminalCustom;
+{ Open a terminal window with user-specified command }
+const
+  TerminalHelp =
+    'Terminal Keyboard Controls:'#13#10 +
+    #13#10 +
+    'Ctrl+A, <key>  - Exit capture, send <key> to app'#13#10 +
+    'Ctrl+A, Ctrl+A - Send literal Ctrl+A to terminal'#13#10 +
+    'Shift+PgUp/Dn  - Scroll through history'#13#10 +
+    #13#10 +
+    'Click or press Enter/Esc to re-enter capture mode.';
+var
+  R: TRect;
+  Win: TTerminalWindow;
+  CommandLine: string;
+  InputResult: Word;
+begin
+  MessageBox(TerminalHelp, mfInformation or mfOKButton);
+
+  CommandLine := 'cmd.exe';
+  InputResult := InputBox('Run Command', 'Command ~L~ine:', CommandLine, 255);
+  if InputResult = cmOK then begin
+    Inc(WindowCount);
+    R.Assign(2, 1, 82, 26);
+    R.Move((WindowCount mod 4) * 2, (WindowCount mod 4));
+    Win := TTerminalWindow.Create(R, 'Terminal - ' + CommandLine);
+    if Win <> nil then begin
+      Desktop.Insert(Win);
+      if not Win.Execute(CommandLine) then
+        MessageBox('Failed to execute: ' + CommandLine + #13#10 +
+                   Win.Terminal.ConPTY.LastError,
+                   mfError or mfOKButton)
+      else
+        Win.Terminal.Select;  { Ensure terminal has focus for capture mode }
+    end;
   end;
 end;
 

@@ -25,12 +25,17 @@ const
   evKeyDown   = $0010;
   evCommand   = $0100;
   evBroadcast = $0200;
+  evTerminal  = $1000;   { Terminal/ConPTY events }
 
   { Event code masks }
   evNothing   = $0000;
   evMouse     = $000F;
   evKeyboard  = $0010;
   evMessage   = $FF00;
+
+  { Terminal event commands }
+  cmTerminalData = 100;  { Data available from PTY }
+  cmTerminalExit = 101;  { PTY process has exited }
 
   { Extended key codes }
   kbNoKey       = $0000;  kbAltEsc      = $0100;  kbEsc         = $011B;
@@ -392,22 +397,9 @@ var
   KeyboardInitialized: Boolean;
   EventsInitialized: Boolean;
   StartupScreenMode: TDriversVideoMode;
-  DebugLogFile: TextFile;
-  DebugLogOpen: Boolean = False;
   { Resize detection }
   LastScreenWidth: Word;
   LastScreenHeight: Word;
-
-procedure DebugLog(const Msg: string);
-begin
-  if not DebugLogOpen then begin
-    AssignFile(DebugLogFile, 'keyboard_debug.log');
-    Rewrite(DebugLogFile);
-    DebugLogOpen := True;
-  end;
-  WriteLn(DebugLogFile, FormatDateTime('hh:nn:ss.zzz', Now) + ' ' + Msg);
-  Flush(DebugLogFile);
-end;
 
 function GetDosTicks: LongInt;
 begin
@@ -603,23 +595,14 @@ var
 begin
   Event.What := evNothing;
   if (ConsoleInput = 0) or (ConsoleInput = INVALID_HANDLE_VALUE) then begin
-    DebugLog('GetKeyEvent: ConsoleInput invalid');
     Exit;
   end;
 
   while PeekConsoleInputW(ConsoleInput, InputRec, 1, NumRead) and (NumRead > 0) do begin
-    DebugLog(Format('GetKeyEvent: Peeked EventType=%d', [InputRec.EventType]));
     { Only process keyboard events here - leave others for mouse handler }
-    if InputRec.EventType <> KEY_EVENT then begin
-      DebugLog('GetKeyEvent: Not KEY_EVENT, exiting');
+    if InputRec.EventType <> KEY_EVENT then
       Exit;
-    end;
     ReadConsoleInputW(ConsoleInput, InputRec, 1, NumRead);
-    DebugLog(Format('GetKeyEvent: KeyDown=%d VKey=%d Scan=%d UChar=%d',
-      [Ord(InputRec.Event.KeyEvent.bKeyDown),
-       InputRec.Event.KeyEvent.wVirtualKeyCode,
-       InputRec.Event.KeyEvent.wVirtualScanCode,
-       Ord(InputRec.Event.KeyEvent.UnicodeChar)]));
     if InputRec.Event.KeyEvent.bKeyDown then begin
       VKey := InputRec.Event.KeyEvent.wVirtualKeyCode;
       ScanCode := InputRec.Event.KeyEvent.wVirtualScanCode;
@@ -721,13 +704,10 @@ begin
           if Alt then KeyCode := kbAltSpace
           else KeyCode := kbSpaceBar;
       else
-        if (KeyCode = 0) and (UChar = #0) then begin
-          DebugLog(Format('GetKeyEvent: Skipping unknown key VKey=%d', [VKey]));
+        if (KeyCode = 0) and (UChar = #0) then
           Continue; { Skip unknown keys }
-        end;
       end;
 
-      DebugLog(Format('GetKeyEvent: Setting evKeyDown KeyCode=$%04X UChar=%d', [KeyCode, Ord(UChar)]));
       Event.What := evKeyDown;
       Event.KeyCode := KeyCode;
       Event.CharCode := AnsiChar(Lo(KeyCode));  { Extract ASCII char from KeyCode }
@@ -736,7 +716,6 @@ begin
       Exit;
     end;
   end;
-  DebugLog('GetKeyEvent: Loop ended, no key event');
 end;
 
 procedure ShowMouse;
@@ -909,14 +888,11 @@ procedure GetEvent(var Event: TEvent);
 begin
   if QueueCount > 0 then begin
     NextQueuedEvent(Event);
-    DebugLog(Format('GetEvent: From queue What=$%04X', [Event.What]));
     Exit;
   end;
   GetKeyEvent(Event);
-  if Event.What <> evNothing then begin
-    DebugLog(Format('GetEvent: Key event What=$%04X KeyCode=$%04X', [Event.What, Event.KeyCode]));
+  if Event.What <> evNothing then
     Exit;
-  end;
   GetMouseEvent(Event);
   if Event.What <> evNothing then Exit;
   GetSystemEvent(Event);

@@ -14,6 +14,39 @@ Free Vision is a classic console-based GUI toolkit originally derived from Borla
 - **Input Validation**: Built-in validators for ranges, patterns, and lookups
 - **JSON Serialization**: Views implement `ISerializable` for state persistence
 - **Windows Console**: Native Windows Console API for display and input
+- **Terminal Emulator**: Pseudo-terminal windows using Windows ConPTY
+
+## Terminal Emulator
+
+The terminal component (`TTerminalWindow`) provides a VT100-compatible terminal emulator using Windows ConPTY. It supports running command-line applications including other Free Vision apps.
+
+### Keyboard Controls
+
+The terminal uses **Ctrl+A** as the escape prefix (like GNU screen):
+
+| Key Sequence | Action |
+|--------------|--------|
+| **Ctrl+A, then any key** | Exit capture mode, send key to outer app |
+| **Ctrl+A, Ctrl+A** | Send literal Ctrl+A to child process |
+| **Shift+PageUp/Down** | Scroll through scrollback buffer |
+| **Mouse wheel** | Scroll through scrollback buffer |
+
+### Re-entering Capture Mode
+
+After exiting capture mode with Ctrl+A:
+- **Click** on the terminal to re-enter capture mode
+- Press **Enter** or **Esc** to re-enter capture mode
+
+### Features
+
+- VT100/ANSI escape sequence support
+- Scrollback buffer with configurable size
+- Text selection with mouse (double-click for word selection)
+- Copy/paste support (Ctrl+C/Ctrl+V when text selected)
+- Visual bell
+- Window title from OSC sequences
+- Session logging
+- Text reflow on resize
 
 ## Requirements
 
