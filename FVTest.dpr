@@ -35,7 +35,8 @@ uses
   Calendar in 'src\Calendar.pas',
   Grid in 'src\Grid.pas',
   ConPTY in 'src\ConPTY.pas',
-  Terminal in 'src\Terminal.pas';
+  Terminal in 'src\Terminal.pas',
+  HexEdit in 'src\HexEdit.pas';
 
 const
   cmNewWindow = 100;
@@ -70,6 +71,7 @@ const
   cmTestTerminalCmd = 1029;
   cmTestTerminalPwsh = 1030;
   cmTestTerminalCustom = 1031;
+  cmTestHexEditor = 1032;
 
 var
   ExceptionLog: TextFile;
@@ -150,6 +152,7 @@ type
     procedure TestTerminalCmd;
     procedure TestTerminalPwsh;
     procedure TestTerminalCustom;
+    procedure TestHexEditor;
     property CalendarDateLabel: TStaticText read FCalendarDateLabel write FCalendarDateLabel;
   end;
 
@@ -556,7 +559,8 @@ begin
         NewItem('~P~owerShell', '', kbNoKey, cmTestTerminalPwsh, hcNoContext,
         NewItem('C~u~stom...', '', kbNoKey, cmTestTerminalCustom, hcNoContext,
         nil)))),
-      nil))))))))))))))))))))),
+      NewItem('~H~ex Editor', '', kbNoKey, cmTestHexEditor, hcNoContext,
+      nil)))))))))))))))))))))),
     NewSubMenu('~W~indow', hcNoContext, NewMenu(
       NewItem('~T~ile', '', kbNoKey, cmTile, hcNoContext,
       NewItem('Tile ~H~orizontal', '', kbNoKey, cmTileHorizontal, hcNoContext,
@@ -639,6 +643,7 @@ begin
         cmTestTerminalCmd: TestTerminalCmd;
         cmTestTerminalPwsh: TestTerminalPwsh;
         cmTestTerminalCustom: TestTerminalCustom;
+        cmTestHexEditor: TestHexEditor;
       else
         Exit;
       end;
@@ -2034,6 +2039,40 @@ begin
       else
         Win.Terminal.Select;  { Ensure terminal has focus for capture mode }
     end;
+  end;
+end;
+
+procedure TMyApp.TestHexEditor;
+{ Test hex editor component }
+var
+  R: TRect;
+  Win: THexWindow;
+  Source: TMemoryHexSource;
+  I: Integer;
+begin
+  Inc(WindowCount);
+  R.Assign(2, 1, 82, 24);
+  R.Move((WindowCount mod 4) * 2, (WindowCount mod 4));
+  Win := THexWindow.Create(R, 'Hex Editor Test', WindowCount);
+  if Win <> nil then begin
+    { Create sample data }
+    Source := TMemoryHexSource.Create(256);
+    for I := 0 to 255 do
+      Source.SetByte(I, Byte(I));
+    Source.ClearModified;  { Don't mark initial data as modified }
+
+    Win.SetDataSource(Source);
+    Desktop.Insert(Win);
+
+    MessageBox('Hex Editor Controls:'#13#10 +
+               #13#10 +
+               'Arrow keys - Navigate'#13#10 +
+               'Tab - Toggle hex/ASCII mode'#13#10 +
+               '0-9, A-F - Edit hex values'#13#10 +
+               'Printable chars - Edit ASCII'#13#10 +
+               'PgUp/PgDn - Scroll by page'#13#10 +
+               'Ctrl+Home/End - Go to start/end',
+               mfInformation or mfOKButton);
   end;
 end;
 
