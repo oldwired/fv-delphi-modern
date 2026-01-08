@@ -349,7 +349,7 @@ begin
       'T': UnicodeText := UnicodeText + BoxVertRight;  { ├ tee right }
       'L': UnicodeText := UnicodeText + BoxBottomLeft; { └ corner }
       '-': UnicodeText := UnicodeText + BoxHoriz;      { ─ horizontal }
-      '+': UnicodeText := UnicodeText + BoxHorizDown;  { ┬ tee down }
+      'E': UnicodeText := UnicodeText + '+';           { + expand indicator (collapsed only) }
     else
       UnicodeText := UnicodeText + S[I];
     end;
@@ -438,13 +438,14 @@ function TOutlineViewer.GetGraph(Level: SmallInt; Lines: LongInt; Flags: Word): 
 begin
   { Tree characters use Unicode box drawing chars - but stored as single bytes
     since we'll convert them in DrawItemCallback using the mapping below:
-    ' ' = space
+    ' ' = space (filler)
     'B' = BoxVert │ (vertical bar)
-    'T' = BoxVertRight ├ (tee right)
-    'L' = BoxBottomLeft └ (corner)
-    '-' = BoxHoriz ─ (horizontal)
-    '+' = BoxHorizDown ┬ (tee down) }
-  Result := CreateGraph(Level, Lines, Flags, 3, 3, ' BT L--+-');
+    'T' = BoxVertRight ├ (tee right for non-last child)
+    'L' = BoxBottomLeft └ (corner for last child)
+    '-' = BoxHoriz ─ (horizontal line)
+    'E' = Expand indicator '+' (shown only when node is collapsed)
+    Output: └─+ for collapsed nodes, └── for expanded/leaf nodes }
+  Result := CreateGraph(Level, Lines, Flags, 3, 3, ' BTL--E-');
 end;
 
 { Callback for GetNode }

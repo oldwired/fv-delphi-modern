@@ -1537,10 +1537,16 @@ end;
 
 procedure TDirListBox.NewDirectory(var ADir: DirStr);
 const
-  PathDir: string = BoxBottomLeft + BoxHoriz + BoxHorizDown;
-  FirstDir: string = BoxBottomLeft + BoxHorizDown + BoxHoriz;
-  MiddleDir: string = ' ' + BoxVertRight + BoxHoriz;
-  LastDir: string = ' ' + BoxBottomLeft + BoxHoriz;
+  { Tree drawing characters for directory tree display }
+  { Matches Outline style: └── for expanded path, └─+ for collapsed subdirs }
+  { PathDir: for current path components - expanded (children shown below) }
+  PathDir: string = BoxBottomLeft + BoxHoriz + BoxHoriz;           { └── }
+  { FirstDir: for first subdirectory - can be expanded }
+  FirstDir: string = ' ' + BoxVertRight + BoxHoriz + '+';          { ├─+ }
+  { MiddleDir: for middle subdirectories - can be expanded }
+  MiddleDir: string = ' ' + BoxVertRight + BoxHoriz + '+';         { ├─+ }
+  { LastDir: for last subdirectory - can be expanded }
+  LastDir: string = ' ' + BoxBottomLeft + BoxHoriz + '+';          { └─+ }
   IndentSize = '  ';
 var
   AList: TDirCollection;

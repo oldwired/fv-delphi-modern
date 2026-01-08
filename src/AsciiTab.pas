@@ -106,6 +106,38 @@ procedure RegisterASCIITab;
 {<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>}
 
 {***************************************************************************}
+{                           HELPER FUNCTIONS                                }
+{***************************************************************************}
+
+{ Returns a displayable character for the ASCII chart.
+  Control characters (0-31, 127) are replaced with a middle dot placeholder
+  since they either have zero width, have special effects (like TAB), or
+  are invisible/unrenderable. }
+function GetDisplayChar(CharCode: Integer): Char;
+const
+  MiddleDot = #$00B7;  { · - Middle dot as placeholder for control chars }
+begin
+  CharCode := CharCode and $FF;
+  if (CharCode < 32) or (CharCode = 127) then
+    Result := MiddleDot
+  else
+    Result := Char(CharCode);
+end;
+
+{ Returns the actual character for the report display.
+  For control characters, returns a safe representation. }
+function GetReportDisplayChar(CharCode: Integer): Char;
+const
+  MiddleDot = #$00B7;  { · - Middle dot as placeholder for control chars }
+begin
+  CharCode := CharCode and $FF;
+  if (CharCode < 32) or (CharCode = 127) then
+    Result := MiddleDot
+  else
+    Result := Char(CharCode);
+end;
+
+{***************************************************************************}
 {                              OBJECT METHODS                               }
 {***************************************************************************}
 
@@ -119,7 +151,6 @@ var
   B: TDrawBuffer;
   X, Y: Integer;
   CharCode: Integer;
-  Ch: Char;
 begin
   NormColor := GetColor(1);
   for Y := 0 to Size.Y - 1 do
@@ -128,12 +159,8 @@ begin
     for X := 0 to Size.X - 1 do
     begin
       CharCode := (Y * Size.X + X) and $FF;
-      { Use space for char 0 since it's invisible }
-      if CharCode = 0 then
-        Ch := ' '
-      else
-        Ch := Char(CharCode);
-      B[X].Ch := Ch;
+      { Use helper function to get safe displayable character }
+      B[X].Ch := GetDisplayChar(CharCode);
       B[X].Attr := NormColor;
     end;
     WriteLine(0, Y, Size.X, 1, B);
@@ -146,19 +173,14 @@ var
   Color: Byte;
   B: TDrawBuffer;
   CharCode: Integer;
-  Ch: Char;
 begin
   Color := GetColor(1);
   { Add highlight if enable (swap foreground and background) }
   if Enable then
     Color := ((Color and $F) shl 4) or (Color shr 4);
   CharCode := (Cursor.Y * Size.X + Cursor.X) and $FF;
-  { Use space for char 0 since it's invisible }
-  if CharCode = 0 then
-    Ch := ' '
-  else
-    Ch := Char(CharCode);
-  B[0].Ch := Ch;
+  { Use helper function to get safe displayable character }
+  B[0].Ch := GetDisplayChar(CharCode);
   B[0].Attr := Color;
   WriteLine(Cursor.X, Cursor.Y, 1, 1, B);
 end;
@@ -227,7 +249,8 @@ begin
   while Length(StDec) < 3 do
     StDec := ' ' + StDec;
   StHex := IntToHex(FASCIIChar, 2);
-  S := 'Char "' + Chr(FASCIIChar) + '" Decimal: ' + StDec + ' Hex: $' + StHex + '  ';
+  { Use helper function for safe character display }
+  S := 'Char "' + GetReportDisplayChar(FASCIIChar) + '" Decimal: ' + StDec + ' Hex: $' + StHex + '  ';
   WriteStr(0, 0, S, 1);
 end;
 

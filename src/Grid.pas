@@ -988,19 +988,76 @@ begin
     Result := FColumns[Col].DefaultValue;
 end;
 
+{ Returns True if the character is a wide (East Asian Wide) character
+  that takes 2 columns on the terminal }
+function IsWideChar(C: Char): Boolean;
+var
+  Code: Word;
+begin
+  Code := Ord(C);
+  { Common East Asian Wide character ranges }
+  Result :=
+    ((Code >= $1100) and (Code <= $115F)) or   { Hangul Jamo }
+    ((Code >= $2E80) and (Code <= $9FFF)) or   { CJK and related blocks }
+    ((Code >= $AC00) and (Code <= $D7AF)) or   { Hangul Syllables }
+    ((Code >= $F900) and (Code <= $FAFF)) or   { CJK Compatibility Ideographs }
+    ((Code >= $FE10) and (Code <= $FE1F)) or   { Vertical Forms }
+    ((Code >= $FE30) and (Code <= $FE6F)) or   { CJK Compatibility Forms }
+    ((Code >= $FF00) and (Code <= $FF60)) or   { Fullwidth Forms (not halfwidth) }
+    ((Code >= $FFE0) and (Code <= $FFE6));     { Fullwidth currency etc. }
+end;
+
+{ Calculates the display width of a string in terminal columns.
+  Wide characters (CJK, etc.) count as 2 columns, others as 1. }
+function DisplayWidth(const S: string): Integer;
+var
+  I: Integer;
+begin
+  Result := 0;
+  for I := 1 to Length(S) do
+  begin
+    if IsWideChar(S[I]) then
+      Inc(Result, 2)
+    else
+      Inc(Result);
+  end;
+end;
+
+{ Returns the number of characters from S that fit in MaxWidth columns }
+function TruncateToWidth(const S: string; MaxWidth: Integer): string;
+var
+  I, Width: Integer;
+begin
+  Width := 0;
+  for I := 1 to Length(S) do
+  begin
+    if IsWideChar(S[I]) then
+      Inc(Width, 2)
+    else
+      Inc(Width);
+    if Width > MaxWidth then
+    begin
+      Result := Copy(S, 1, I - 1);
+      Exit;
+    end;
+  end;
+  Result := S;
+end;
+
 function TStringGrid.FormatCellText(const Text: string; Width: Integer;
   Alignment: TGridAlignment): string;
 var
-  Len, Pad: Integer;
+  TextWidth, Pad: Integer;
 begin
-  Len := Length(Text);
-  if Len >= Width then
+  TextWidth := DisplayWidth(Text);
+  if TextWidth >= Width then
   begin
-    Result := Copy(Text, 1, Width);
+    { Truncate text to fit, accounting for wide characters }
+    Result := TruncateToWidth(Text, Width);
     Exit;
   end;
 
-  Pad := Width - Len;
+  Pad := Width - TextWidth;
   case Alignment of
     gaLeft:
       Result := Text + StringOfChar(' ', Pad);
@@ -1041,7 +1098,7 @@ var
   Color: Word;
   Alignment: TGridAlignment;
   ShowLeftArrow, ShowRightArrow: Boolean;
-  I, OutPos: Integer;
+  I, OutPos, TextWidth: Integer;
   C: Char;
 begin
   { Get color }
@@ -1075,25 +1132,40 @@ begin
       Alignment := gaLeft;
   end;
 
-  { Check for overflow }
+  { Check for overflow using display width }
   ShowLeftArrow := False;
-  ShowRightArrow := Length(Text) > CellWidth;
+  TextWidth := DisplayWidth(Text);
+  ShowRightArrow := TextWidth > CellWidth;
 
   { Format text to fit cell width }
-  if Length(Text) > CellWidth then
-    DisplayText := Copy(Text, 1, CellWidth - 1)
+  if TextWidth > CellWidth then
+    DisplayText := TruncateToWidth(Text, CellWidth - 1)
   else
     DisplayText := FormatCellText(Text, CellWidth, Alignment);
 
-  { Draw to buffer using new TDrawCell format }
+  { Draw to buffer using new TDrawCell format, accounting for wide characters }
   if ScreenX + CellWidth <= MaxViewWidth then
   begin
     OutPos := ScreenX;
     for I := 1 to Length(DisplayText) do
     begin
       if OutPos >= MaxViewWidth then Break;
+      if OutPos >= ScreenX + CellWidth then Break;  { Don't exceed cell width }
       C := DisplayText[I];
       B[OutPos].Ch := C;
+      B[OutPos].Attr := Color;
+      { Wide characters take 2 columns in terminal }
+      if IsWideChar(C) then
+        Inc(OutPos, 2)
+      else
+        Inc(OutPos);
+    end;
+
+    { Fill remaining space with spaces if we ended early due to wide chars }
+    while OutPos < ScreenX + CellWidth do
+    begin
+      if OutPos >= MaxViewWidth then Break;
+      B[OutPos].Ch := ' ';
       B[OutPos].Attr := Color;
       Inc(OutPos);
     end;

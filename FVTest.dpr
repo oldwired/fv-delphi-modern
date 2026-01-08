@@ -1478,8 +1478,8 @@ procedure TMyApp.TestInputLong;
 var
   R: TRect;
   Dlg: TDialog;
-  InputLine: TInputLong;
-  Value: LongInt;
+  InputLine1, InputLine2, InputLine3: TInputLong;
+  Value1, Value2, Value3: LongInt;
 begin
   R.Assign(10, 4, 60, 18);
   Dlg := TDialog.Create(R, 'InputLong Test');
@@ -1488,20 +1488,22 @@ begin
     R.Assign(3, 2, 30, 3);
     Dlg.Insert(TStaticText.Create(R, 'Enter a number (0-1000):'));
     R.Assign(3, 3, 20, 4);
-    InputLine := TInputLong.Create(R, 10, 0, 1000, 0);
-    Dlg.Insert(InputLine);
+    InputLine1 := TInputLong.Create(R, 10, 0, 1000, 0);
+    Dlg.Insert(InputLine1);
 
     { Label and input for signed number }
     R.Assign(3, 5, 35, 6);
     Dlg.Insert(TStaticText.Create(R, 'Enter signed (-100 to 100):'));
     R.Assign(3, 6, 20, 7);
-    Dlg.Insert(TInputLong.Create(R, 10, -100, 100, 0));
+    InputLine2 := TInputLong.Create(R, 10, -100, 100, 0);
+    Dlg.Insert(InputLine2);
 
     { Label and input for hex number }
     R.Assign(3, 8, 35, 9);
     Dlg.Insert(TStaticText.Create(R, 'Enter hex ($0-$FF, use $):'));
     R.Assign(3, 9, 20, 10);
-    Dlg.Insert(TInputLong.Create(R, 10, 0, 255, ilHex or ilDisplayHex));
+    InputLine3 := TInputLong.Create(R, 10, 0, 255, ilHex or ilDisplayHex);
+    Dlg.Insert(InputLine3);
 
     { Buttons }
     R.Assign(10, 11, 22, 13);
@@ -1511,13 +1513,24 @@ begin
 
     Dlg.SelectNext(False);
 
-    { Set initial value }
-    Value := 42;
-    InputLine.SetData(Value);
+    { Set initial values }
+    Value1 := 42;
+    Value2 := 0;
+    Value3 := 128;  { $80 in hex }
+    InputLine1.SetData(Value1);
+    InputLine2.SetData(Value2);
+    InputLine3.SetData(Value3);
 
     if Desktop.ExecView(Dlg) = cmOK then begin
-      InputLine.GetData(Value);
-      MessageBox('First value entered: ' + IntToStr(Value), mfInformation + mfOKButton);
+      { Show message boxes for all three values entered }
+      InputLine1.GetData(Value1);
+      MessageBox('Positive value: ' + IntToStr(Value1), mfInformation + mfOKButton);
+
+      InputLine2.GetData(Value2);
+      MessageBox('Signed value: ' + IntToStr(Value2), mfInformation + mfOKButton);
+
+      InputLine3.GetData(Value3);
+      MessageBox('Hex value: $' + IntToHex(Value3, 2) + ' (' + IntToStr(Value3) + ')', mfInformation + mfOKButton);
     end;
     Dlg.Free;
   end;

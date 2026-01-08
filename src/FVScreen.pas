@@ -468,25 +468,20 @@ var
   X, Y: Integer;
   LastSGR: string;
   CurrentSGR: string;
-  NeedMove: Boolean;
-  LastX: Integer;
 begin
   if not FInitialized then Exit;
 
   LastSGR := '';
-  LastX := -1;
-  NeedMove := True;
 
   for Y := 0 to FHeight - 1 do begin
-    NeedMove := True;
-    LastX := -1;
     for X := 0 to FWidth - 1 do begin
       if Force or CellsDiffer(X, Y) then begin
-        { Position cursor if needed }
-        if NeedMove or (X <> LastX + 1) then begin
-          MoveCursorVT(X, Y);
-          NeedMove := False;
-        end;
+        { Always explicitly position cursor for each cell to avoid
+          issues with wide characters, combining characters, or other
+          special characters that might move the cursor unexpectedly.
+          This fixes rendering glitches where content appears shifted
+          from its expected position. }
+        MoveCursorVT(X, Y);
 
         { Set attributes if changed }
         CurrentSGR := BuildSGR(FCells[Y, X]);
@@ -503,9 +498,6 @@ begin
 
         { Update old buffer }
         FOldCells[Y, X] := FCells[Y, X];
-        LastX := X;
-      end else begin
-        NeedMove := True;
       end;
     end;
   end;

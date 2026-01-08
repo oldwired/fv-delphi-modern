@@ -171,16 +171,33 @@ begin
 end;
 
 procedure TInputLong.HandleEvent(var Event: TEvent);
+var
+  L: LongInt;
+  Code: Integer;
 begin
   if Event.What = evKeyDown then
   begin
     case Event.KeyCode of
       kbTab, kbShiftTab:
-        if not RangeCheck then
         begin
-          Error;
-          SelectAll(True);
-          ClearEvent(Event);
+          { Enforce limits and formatting when leaving field }
+          if (Data = '') and ((FILOptions and ilBlankEqZero) <> 0) then
+            Data := '0';
+          Val(Data, L, Code);
+          if Code = 0 then
+          begin
+            { Clamp to range }
+            if L < FLLim then L := FLLim
+            else if L > FULim then L := FULim;
+            { Update display with proper formatting }
+            SetData(L);
+          end
+          else if not RangeCheck then
+          begin
+            Error;
+            SelectAll(True);
+            ClearEvent(Event);
+          end;
         end;
     end;
     if Event.CharCode <> #0 then
@@ -206,16 +223,32 @@ end;
 function TInputLong.Valid(Cmd: Word): Boolean;
 var
   Rslt: Boolean;
+  L: LongInt;
+  Code: Integer;
 begin
   Rslt := inherited Valid(Cmd);
   if Rslt and (Cmd <> 0) and (Cmd <> cmCancel) then
   begin
-    Rslt := RangeCheck;
-    if not Rslt then
+    { Auto-clamp values to range and reformat }
+    if (Data = '') and ((FILOptions and ilBlankEqZero) <> 0) then
+      Data := '0';
+    Val(Data, L, Code);
+    if Code = 0 then
     begin
+      { Clamp to range }
+      if L < FLLim then L := FLLim
+      else if L > FULim then L := FULim;
+      { Update display with proper formatting }
+      SetData(L);
+      Rslt := True;
+    end
+    else
+    begin
+      { Invalid format - show error }
       Error;
       Select;
       SelectAll(True);
+      Rslt := False;
     end;
   end;
   Result := Rslt;
