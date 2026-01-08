@@ -11,7 +11,7 @@ interface
 uses
   Winapi.Windows, System.SysUtils, System.Classes, System.Generics.Collections,
   System.Generics.Defaults,
-  FVConsts, Objects, FVCommon, Drivers, Views, Dialogs, Validate, FVBoxChars;
+  FVConsts, Objects, FVCommon, Drivers, Views, Dialogs, Validate, FVBoxChars, Outline;
 
 const
   MaxDir   = 255;
@@ -123,33 +123,44 @@ type
     procedure ReadDirectory;
   end;
 
-  { TDirEntry }
-  PDirEntry = ^TDirEntry;
-  TDirEntry = record
-    DisplayText: string;
-    Directory: string;
+  { TDirNode - Tree node for directory outline }
+  PDirNode = ^TDirNode;
+  TDirNode = record
+    Next: PDirNode;           { Next sibling }
+    Text: string;             { Display name (directory name or drive letter) }
+    ChildList: PDirNode;      { First child }
+    Expanded: Boolean;        { Is node expanded }
+    FullPath: string;         { Full path to this directory }
+    ChildrenLoaded: Boolean;  { Have children been loaded from filesystem }
+    IsDrive: Boolean;         { Is this a drive node }
   end;
 
-  { TDirCollection - type-safe list of directory entries }
-  TDirCollection = class(TList<PDirEntry>)
+  { TDirOutline - Directory tree using TOutlineViewer with lazy loading }
+  TDirOutline = class(TOutlineViewer)
+  private
+    FRoot: PDirNode;
+    FDir: DirStr;
+    FDrivesNode: PDirNode;    { Special "Drives" root node }
+    procedure LoadChildren(Node: PDirNode);
+    procedure ExpandToPath(const APath: string);
+    function FindNodeByPath(const APath: string): PDirNode;
+    procedure FreeNode(Node: PDirNode);
+    procedure BuildDriveNodes;
   public
+    constructor Create(var Bounds: TRect; AHScrollBar, AVScrollBar: TScrollBar); reintroduce; virtual;
     destructor Destroy; override;
-    procedure FreeDirEntry(Item: PDirEntry);
-    procedure ClearAll;
-  end;
-
-  { TDirListBox }
-  TDirListBox = class(TListBox)
-    Dir: DirStr;
-    Cur: Word;
-    Dirs: TDirCollection;  { Type-safe directory collection }
-    constructor Create(var Bounds: TRect; AScrollBar: TScrollBar); reintroduce; virtual;
-    destructor Destroy; override;
-    function GetText(Item: Integer; MaxLen: Integer): string; override;
+    procedure Adjust(Node: Pointer; Expand: Boolean); override;
+    function GetChild(Node: Pointer; I: Sw_Integer): Pointer; override;
+    function GetNumChildren(Node: Pointer): Sw_Integer; override;
+    function GetRoot: Pointer; override;
+    function GetText(Node: Pointer): string; override;
+    function HasChildren(Node: Pointer): Boolean; override;
+    function IsExpanded(Node: Pointer): Boolean; override;
     procedure HandleEvent(var Event: TEvent); override;
-    function IsSelected(Item: Integer): Boolean; override;
-    procedure NewDirectory(var ADir: DirStr);
     procedure SetState(AState: Word; Enable: Boolean); override;
+    procedure NewDirectory(var ADir: DirStr);
+    function GetSelectedPath: string;
+    property Dir: DirStr read FDir;
   end;
 
 const
@@ -161,7 +172,7 @@ type
   { TChDirDialog }
   TChDirDialog = class(TDialog)
     DirInput: TInputLine;
-    DirList: TDirListBox;
+    DirList: TDirOutline;
     OkButton: TButton;
     ChDirButton: TButton;
     constructor Create(AOptions: Word; HistoryId: Word); reintroduce; virtual;
@@ -1449,238 +1460,463 @@ begin
   end;
 end;
 
-{ TDirCollection }
-
-destructor TDirCollection.Destroy;
-begin
-  ClearAll;
-  inherited Destroy;
-end;
-
-procedure TDirCollection.FreeDirEntry(Item: PDirEntry);
-begin
-  if Item = nil then Exit;
-  { DisplayText and Directory are now managed strings - Dispose will finalize them }
-  Dispose(Item);
-end;
-
-procedure TDirCollection.ClearAll;
-var
-  I: Integer;
-begin
-  for I := 0 to Count - 1 do
-    FreeDirEntry(Items[I]);
-  Clear;
-end;
-
-{ TDirListBox }
+{ TDirOutline - Directory tree with lazy loading }
 
 var
   DrivesStr: string = '';
 
-constructor TDirListBox.Create(var Bounds: TRect; AScrollBar: TScrollBar);
+function NewDirNode(const AText, AFullPath: string; AIsDrive: Boolean): PDirNode;
 begin
-  DrivesStr := sDrives;
-  inherited Create(Bounds, 1, AScrollBar);
-  Dir := '';
-  Dirs := nil;
+  New(Result);
+  Result^.Next := nil;
+  Result^.Text := AText;
+  Result^.ChildList := nil;
+  Result^.Expanded := False;
+  Result^.FullPath := AFullPath;
+  Result^.ChildrenLoaded := False;
+  Result^.IsDrive := AIsDrive;
 end;
 
-destructor TDirListBox.Destroy;
+constructor TDirOutline.Create(var Bounds: TRect; AHScrollBar, AVScrollBar: TScrollBar);
 begin
-  SetState(sfVisible, False);
-  FreeAndNil(Dirs);
+  DrivesStr := sDrives;
+  inherited Create(Bounds, AHScrollBar, AVScrollBar);
+  FRoot := nil;
+  FDrivesNode := nil;
+  FDir := '';
+  BuildDriveNodes;
+end;
+
+destructor TDirOutline.Destroy;
+begin
+  FreeNode(FRoot);
   inherited Destroy;
 end;
 
-function TDirListBox.GetText(Item: Integer; MaxLen: Integer): string;
+procedure TDirOutline.FreeNode(Node: PDirNode);
+var
+  Next, Child: PDirNode;
 begin
-  if (Dirs = nil) or (Item >= Dirs.Count) then
-    Result := ''
-  else
-    Result := Dirs[Item]^.DisplayText;
+  while Node <> nil do
+  begin
+    { Free children first }
+    Child := Node^.ChildList;
+    while Child <> nil do
+    begin
+      Next := Child^.Next;
+      FreeNode(Child);
+      Child := Next;
+    end;
+    Next := Node^.Next;
+    Dispose(Node);
+    Node := Next;
+  end;
 end;
 
-procedure TDirListBox.HandleEvent(var Event: TEvent);
+procedure TDirOutline.BuildDriveNodes;
 var
-  DirEntry: PDirEntry;
-  DirName: DirStr;
+  C: Char;
+  DriveNode, LastDrive: PDirNode;
+begin
+  { Create root "Drives" node }
+  FRoot := NewDirNode(DrivesStr, DrivesStr, False);
+  FRoot^.Expanded := True;
+  FRoot^.ChildrenLoaded := True;
+  FDrivesNode := FRoot;
+
+  { Add drive nodes as children }
+  LastDrive := nil;
+  for C := 'A' to 'Z' do
+  begin
+    if DriveValid(C) then
+    begin
+      DriveNode := NewDirNode(C + ':', C + ':' + DirSeparator, True);
+      if LastDrive = nil then
+        FRoot^.ChildList := DriveNode
+      else
+        LastDrive^.Next := DriveNode;
+      LastDrive := DriveNode;
+    end;
+  end;
+end;
+
+procedure TDirOutline.LoadChildren(Node: PDirNode);
+var
+  SR: TSearchRec;
+  ChildNode, LastChild: PDirNode;
+  SearchPath: string;
+begin
+  if (Node = nil) or Node^.ChildrenLoaded then Exit;
+
+  Node^.ChildrenLoaded := True;
+  LastChild := nil;
+
+  { Build search path }
+  SearchPath := Node^.FullPath;
+  if (SearchPath <> '') and (SearchPath[Length(SearchPath)] <> DirSeparator) then
+    SearchPath := SearchPath + DirSeparator;
+  SearchPath := SearchPath + AllFiles;
+
+  { Enumerate subdirectories }
+  DosFindFirst(SearchPath, Directory, SR);
+  while DosError = 0 do
+  begin
+    if (SR.Attr and Directory <> 0) and (SR.Name <> '.') and (SR.Name <> '..') then
+    begin
+      ChildNode := NewDirNode(SR.Name,
+        Node^.FullPath + DirSeparator + SR.Name, False);
+      if LastChild = nil then
+        Node^.ChildList := ChildNode
+      else
+        LastChild^.Next := ChildNode;
+      LastChild := ChildNode;
+    end;
+    DosFindNext(SR);
+  end;
+  DosFindClose;
+end;
+
+function TDirOutline.FindNodeByPath(const APath: string): PDirNode;
+var
+  Path, Part: string;
+  Node, Child: PDirNode;
+  I: Integer;
+begin
+  Result := nil;
+  if APath = '' then Exit;
+  if APath = DrivesStr then
+  begin
+    Result := FRoot;
+    Exit;
+  end;
+
+  Path := APath;
+
+  { Start from drives node }
+  Node := FRoot;
+  if Node = nil then Exit;
+
+  { Find the drive }
+  if Length(Path) >= 2 then
+  begin
+    Part := UpperCase(Copy(Path, 1, 2));  { e.g., "C:" }
+    Child := Node^.ChildList;
+    while Child <> nil do
+    begin
+      if UpperCase(Child^.Text) = Part then
+      begin
+        Node := Child;
+        Break;
+      end;
+      Child := Child^.Next;
+    end;
+    if Child = nil then Exit;  { Drive not found }
+
+    { Remove drive part from path }
+    Path := Copy(Path, 3, MaxInt);
+    if (Path <> '') and (Path[1] = DirSeparator) then
+      Delete(Path, 1, 1);
+  end;
+
+  { Navigate through path components }
+  while Path <> '' do
+  begin
+    I := Pos(DirSeparator, Path);
+    if I > 0 then
+    begin
+      Part := Copy(Path, 1, I - 1);
+      Delete(Path, 1, I);
+    end
+    else
+    begin
+      Part := Path;
+      Path := '';
+    end;
+
+    if Part = '' then Continue;
+
+    { Load children if needed }
+    if not Node^.ChildrenLoaded then
+      LoadChildren(Node);
+
+    { Find child with matching name }
+    Child := Node^.ChildList;
+    while Child <> nil do
+    begin
+      if SameText(Child^.Text, Part) then
+      begin
+        Node := Child;
+        Break;
+      end;
+      Child := Child^.Next;
+    end;
+    if Child = nil then Exit;  { Path component not found }
+  end;
+
+  Result := Node;
+end;
+
+procedure TDirOutline.ExpandToPath(const APath: string);
+var
+  Path, Part: string;
+  Node, Child, TargetNode: PDirNode;
+  I: Integer;
+begin
+  if APath = '' then Exit;
+  if APath = DrivesStr then
+  begin
+    FRoot^.Expanded := True;
+    Update;
+    Exit;
+  end;
+
+  Path := APath;
+  Node := FRoot;
+  Node^.Expanded := True;
+
+  { Find and expand the drive }
+  if Length(Path) >= 2 then
+  begin
+    Part := UpperCase(Copy(Path, 1, 2));
+    Child := Node^.ChildList;
+    while Child <> nil do
+    begin
+      if UpperCase(Child^.Text) = Part then
+      begin
+        Node := Child;
+        Node^.Expanded := True;
+        if not Node^.ChildrenLoaded then
+          LoadChildren(Node);
+        Break;
+      end;
+      Child := Child^.Next;
+    end;
+    if Child = nil then Exit;
+
+    Path := Copy(Path, 3, MaxInt);
+    if (Path <> '') and (Path[1] = DirSeparator) then
+      Delete(Path, 1, 1);
+  end;
+
+  TargetNode := Node;
+
+  { Expand along the path }
+  while Path <> '' do
+  begin
+    I := Pos(DirSeparator, Path);
+    if I > 0 then
+    begin
+      Part := Copy(Path, 1, I - 1);
+      Delete(Path, 1, I);
+    end
+    else
+    begin
+      Part := Path;
+      Path := '';
+    end;
+
+    if Part = '' then Continue;
+
+    if not Node^.ChildrenLoaded then
+      LoadChildren(Node);
+
+    Child := Node^.ChildList;
+    while Child <> nil do
+    begin
+      if SameText(Child^.Text, Part) then
+      begin
+        Node := Child;
+        Node^.Expanded := True;
+        TargetNode := Node;
+        if not Node^.ChildrenLoaded then
+          LoadChildren(Node);
+        Break;
+      end;
+      Child := Child^.Next;
+    end;
+    if Child = nil then Break;
+  end;
+
+  Update;
+
+  { Focus on target node }
+  if TargetNode <> nil then
+  begin
+    I := 0;
+    Node := GetRoot;
+    { Count position of target node - simplified approach }
+    { The Update call above will set limits correctly }
+  end;
+end;
+
+procedure TDirOutline.Adjust(Node: Pointer; Expand: Boolean);
+var
+  DirNode: PDirNode;
+begin
+  DirNode := PDirNode(Node);
+  if DirNode = nil then Exit;
+
+  { Load children on first expand }
+  if Expand and not DirNode^.ChildrenLoaded then
+    LoadChildren(DirNode);
+
+  DirNode^.Expanded := Expand;
+end;
+
+function TDirOutline.GetChild(Node: Pointer; I: Sw_Integer): Pointer;
+var
+  DirNode, Child: PDirNode;
+begin
+  Result := nil;
+  DirNode := PDirNode(Node);
+  if DirNode = nil then Exit;
+
+  { Load children on demand }
+  if not DirNode^.ChildrenLoaded then
+    LoadChildren(DirNode);
+
+  Child := DirNode^.ChildList;
+  while (I > 0) and (Child <> nil) do
+  begin
+    Dec(I);
+    Child := Child^.Next;
+  end;
+  Result := Child;
+end;
+
+function TDirOutline.GetNumChildren(Node: Pointer): Sw_Integer;
+var
+  DirNode, Child: PDirNode;
+begin
+  Result := 0;
+  DirNode := PDirNode(Node);
+  if DirNode = nil then Exit;
+
+  { Load children on demand }
+  if not DirNode^.ChildrenLoaded then
+    LoadChildren(DirNode);
+
+  Child := DirNode^.ChildList;
+  while Child <> nil do
+  begin
+    Inc(Result);
+    Child := Child^.Next;
+  end;
+end;
+
+function TDirOutline.GetRoot: Pointer;
+begin
+  Result := FRoot;
+end;
+
+function TDirOutline.GetText(Node: Pointer): string;
+var
+  DirNode: PDirNode;
+begin
+  Result := '';
+  DirNode := PDirNode(Node);
+  if DirNode <> nil then
+    Result := DirNode^.Text;
+end;
+
+function TDirOutline.HasChildren(Node: Pointer): Boolean;
+var
+  DirNode: PDirNode;
+  SR: TSearchRec;
+  SearchPath: string;
+begin
+  Result := False;
+  DirNode := PDirNode(Node);
+  if DirNode = nil then Exit;
+
+  { If already loaded, just check the list }
+  if DirNode^.ChildrenLoaded then
+  begin
+    Result := DirNode^.ChildList <> nil;
+    Exit;
+  end;
+
+  { For drives node (root), we know it has children }
+  if DirNode = FDrivesNode then
+  begin
+    Result := True;
+    Exit;
+  end;
+
+  { Quick check: scan for ANY subdirectory, return immediately when found }
+  SearchPath := DirNode^.FullPath;
+  if (SearchPath <> '') and (SearchPath[Length(SearchPath)] <> DirSeparator) then
+    SearchPath := SearchPath + DirSeparator;
+  SearchPath := SearchPath + AllFiles;
+
+  DosFindFirst(SearchPath, Directory, SR);
+  while DosError = 0 do
+  begin
+    if (SR.Attr and Directory <> 0) and (SR.Name <> '.') and (SR.Name <> '..') then
+    begin
+      Result := True;
+      DosFindClose;
+      Exit;
+    end;
+    DosFindNext(SR);
+  end;
+  DosFindClose;
+end;
+
+function TDirOutline.IsExpanded(Node: Pointer): Boolean;
+var
+  DirNode: PDirNode;
+begin
+  Result := False;
+  DirNode := PDirNode(Node);
+  if DirNode <> nil then
+    Result := DirNode^.Expanded;
+end;
+
+procedure TDirOutline.HandleEvent(var Event: TEvent);
+var
+  SelectedNode: PDirNode;
 begin
   case Event.What of
     evMouseDown:
       if Event.Double then
       begin
-        Event.What := evCommand;
-        Event.Command := cmChangeDir;
-        PutEvent(Event);
-        ClearEvent(Event);
-      end;
-    evKeyboard:
-      if (Event.CharCode = AnsiChar(' ')) and (Dirs <> nil) and (Focused < Dirs.Count) then
-      begin
-        DirEntry := Dirs[Focused];
-        if (DirEntry <> nil) and (DirEntry^.Directory <> '') then
+        { Double-click navigates into directory }
+        SelectedNode := PDirNode(GetNode(Foc));
+        if SelectedNode <> nil then
         begin
-          DirName := DirEntry^.Directory;
-          if DirName = '..' then
-            NewDirectory(DirName);
+          Event.What := evCommand;
+          Event.Command := cmChangeDir;
+          PutEvent(Event);
+          ClearEvent(Event);
         end;
       end;
   end;
   inherited HandleEvent(Event);
 end;
 
-function TDirListBox.IsSelected(Item: Integer): Boolean;
-begin
-  Result := inherited IsSelected(Item);
-end;
-
-procedure TDirListBox.NewDirectory(var ADir: DirStr);
-const
-  { Tree drawing characters for directory tree display }
-  { Matches Outline style: └── for expanded path, └─+ for collapsed subdirs }
-  { PathDir: for current path components - expanded (children shown below) }
-  PathDir: string = BoxBottomLeft + BoxHoriz + BoxHoriz;           { └── }
-  { FirstDir: for first subdirectory - can be expanded }
-  FirstDir: string = ' ' + BoxVertRight + BoxHoriz + '+';          { ├─+ }
-  { MiddleDir: for middle subdirectories - can be expanded }
-  MiddleDir: string = ' ' + BoxVertRight + BoxHoriz + '+';         { ├─+ }
-  { LastDir: for last subdirectory - can be expanded }
-  LastDir: string = ' ' + BoxBottomLeft + BoxHoriz + '+';          { └─+ }
-  IndentSize = '  ';
-var
-  AList: TDirCollection;
-  NewDir, Dirct: DirStr;
-  C, OldC: Char;
-  S, Indent: string;
-  TempStr: string;
-  NewCur: Word;
-  IsFirst: Boolean;
-  SR: TSearchRec;
-  I: Integer;
-
-  function NewDirEntry(const DisplayText, ADirectory: String): PDirEntry;
-  var
-    DirEntry: PDirEntry;
-  begin
-    New(DirEntry);
-    DirEntry^.DisplayText := DisplayText;
-    if ADirectory = '' then
-      DirEntry^.Directory := DirSeparator
-    else
-      DirEntry^.Directory := ADirectory;
-    Result := DirEntry;
-  end;
-
-begin
-  Dir := ADir;
-  AList := TDirCollection.Create;
-  AList.Add(NewDirEntry(DrivesStr, DrivesStr));
-
-  if Dir = DrivesStr then
-  begin
-    IsFirst := True;
-    OldC := ' ';
-    for C := 'A' to 'Z' do
-    begin
-      if DriveValid(C) then
-      begin
-        if OldC <> ' ' then
-        begin
-          if IsFirst then
-          begin
-            S := FirstDir + OldC;
-            IsFirst := False;
-          end
-          else
-            S := MiddleDir + OldC;
-          AList.Add(NewDirEntry(S, OldC + ':' + DirSeparator));
-        end;
-        if C = GetCurDrive then
-          NewCur := AList.Count;
-        OldC := C;
-      end;
-    end;
-    if OldC <> ' ' then
-      AList.Add(NewDirEntry(LastDir + OldC, OldC + ':' + DirSeparator));
-  end
-  else
-  begin
-    Indent := IndentSize;
-    NewDir := Dir;
-    Dirct := Copy(NewDir, 1, 3);
-    AList.Add(NewDirEntry(PathDir + string(Dirct), string(Dirct)));
-    NewDir := Copy(NewDir, 4, 255);
-
-    while NewDir <> '' do
-    begin
-      I := Pos(DirSeparator, string(NewDir));
-      if I <> 0 then
-      begin
-        S := Copy(string(NewDir), 1, I - 1);
-        Dirct := Dirct + DirStr(S);
-        AList.Add(NewDirEntry(Indent + PathDir + S, string(Dirct)));
-        NewDir := Copy(NewDir, I + 1, 255);
-      end
-      else
-      begin
-        Dirct := Dirct + NewDir;
-        AList.Add(NewDirEntry(Indent + PathDir + string(NewDir), string(Dirct)));
-        NewDir := '';
-      end;
-      Indent := Indent + IndentSize;
-      Dirct := Dirct + DirSeparator;
-    end;
-
-    NewCur := AList.Count - 1;
-    IsFirst := True;
-    NewDir := Dirct + AllFiles;
-    DosFindFirst(string(NewDir), Directory, SR);
-    while DosError = 0 do
-    begin
-      if (SR.Attr and Directory <> 0) and (SR.Name <> '.') and (SR.Name <> '..') then
-      begin
-        if IsFirst then
-        begin
-          S := FirstDir;
-          IsFirst := False;
-        end
-        else
-          S := MiddleDir;
-        AList.Add(NewDirEntry(Indent + S + SR.Name, string(Dirct) + SR.Name));
-      end;
-      DosFindNext(SR);
-    end;
-    DosFindClose;
-
-    { Fix last directory entry's tree drawing characters }
-    { The last subdirectory should use LastDir (└─) instead of MiddleDir (├─) }
-    if (AList.Count > 0) and not IsFirst then
-    begin
-      TempStr := AList[AList.Count - 1]^.DisplayText;
-      { Find and replace the middle connector (├) with bottom corner (└) }
-      I := Pos(BoxVertRight, TempStr);
-      if I > 0 then
-      begin
-        TempStr[I] := BoxBottomLeft;
-        AList[AList.Count - 1]^.DisplayText := TempStr;
-      end;
-    end;
-  end;
-
-  { Replace old Dirs with new list }
-  FreeAndNil(Dirs);
-  Dirs := AList;
-  SetRange(Dirs.Count);
-  FocusItem(NewCur);
-  Cur := NewCur;
-end;
-
-procedure TDirListBox.SetState(AState: Word; Enable: Boolean);
+procedure TDirOutline.SetState(AState: Word; Enable: Boolean);
 begin
   inherited SetState(AState, Enable);
-  if AState and sfFocused <> 0 then
+  if (AState and sfFocused <> 0) and (Owner <> nil) and (Owner is TChDirDialog) then
     TChDirDialog(Owner).ChDirButton.MakeDefault(Enable);
+end;
+
+procedure TDirOutline.NewDirectory(var ADir: DirStr);
+begin
+  FDir := ADir;
+  ExpandToPath(ADir);
+  DrawView;
+end;
+
+function TDirOutline.GetSelectedPath: string;
+var
+  SelectedNode: PDirNode;
+begin
+  Result := '';
+  SelectedNode := PDirNode(GetNode(Foc));
+  if SelectedNode <> nil then
+    Result := SelectedNode^.FullPath;
 end;
 
 { TChDirDialog }
@@ -1708,7 +1944,7 @@ begin
   Control := TScrollBar.Create(R);
   Insert(Control);
   R.Assign(3, 6, 32, 16);
-  DirList := TDirListBox.Create(R, TScrollBar(Control));
+  DirList := TDirOutline.Create(R, nil, TScrollBar(Control));
   Insert(DirList);
   R.Assign(2, 5, 17, 6);
   Control := TLabel.Create(R, slDirectoryTree, DirList);
@@ -1734,7 +1970,7 @@ end;
 constructor TChDirDialog.Load(var S: TFVStream);
 begin
   inherited Load(S);
-  DirList := TDirListBox(GetSubViewPtr(S, Self));
+  DirList := TDirOutline(GetSubViewPtr(S, Self));
   DirInput := TInputLine(GetSubViewPtr(S, Self));
   OkButton := TButton(GetSubViewPtr(S, Self));
   ChDirButton := TButton(GetSubViewPtr(S, Self));
@@ -1753,7 +1989,7 @@ end;
 procedure TChDirDialog.HandleEvent(var Event: TEvent);
 var
   CurDir: DirStr;
-  P: PDirEntry;
+  SelectedPath: string;
 begin
   inherited HandleEvent(Event);
   case Event.What of
@@ -1764,9 +2000,10 @@ begin
             System.GetDir(0, CurDir);
           cmChangeDir:
             begin
-              P := DirList.Dirs[DirList.Focused];
-              if (P^.Directory = DrivesStr) or DriveValid(Char(P^.Directory[1])) then
-                CurDir := P^.Directory
+              SelectedPath := DirList.GetSelectedPath;
+              if (SelectedPath = DrivesStr) or
+                 ((Length(SelectedPath) >= 1) and DriveValid(Char(SelectedPath[1]))) then
+                CurDir := SelectedPath
               else
                 Exit;
             end;
