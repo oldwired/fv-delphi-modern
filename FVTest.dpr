@@ -77,6 +77,7 @@ const
   cmGridSaveCSV = 1035;
   cmHexLoadFile = 1036;
   cmHexSaveFile = 1037;
+  cmTestModernFileDialog = 1038;
 
 var
   ExceptionLog: TextFile;
@@ -159,6 +160,7 @@ type
     procedure TestTerminalPwsh;
     procedure TestTerminalCustom;
     procedure TestHexEditor;
+    procedure TestModernFileDialog;
     property CalendarDateLabel: TStaticText read FCalendarDateLabel write FCalendarDateLabel;
   end;
 
@@ -1014,7 +1016,8 @@ begin
         NewItem('C~u~stom...', '', kbNoKey, cmTestTerminalCustom, hcNoContext,
         nil)))),
       NewItem('~H~ex Editor', '', kbNoKey, cmTestHexEditor, hcNoContext,
-      nil)))))))))))))))))))))),
+      NewItem('~M~odern File Dialog', '', kbNoKey, cmTestModernFileDialog, hcNoContext,
+      nil))))))))))))))))))))))),
     NewSubMenu('~W~indow', hcNoContext, NewMenu(
       NewItem('~T~ile', '', kbNoKey, cmTile, hcNoContext,
       NewItem('Tile ~H~orizontal', '', kbNoKey, cmTileHorizontal, hcNoContext,
@@ -1099,6 +1102,7 @@ begin
         cmTestTerminalPwsh: TestTerminalPwsh;
         cmTestTerminalCustom: TestTerminalCustom;
         cmTestHexEditor: TestHexEditor;
+        cmTestModernFileDialog: TestModernFileDialog;
       else
         Exit;
       end;
@@ -1431,6 +1435,21 @@ begin
   if Dlg <> nil then begin
     if ExecuteDialog(Dlg, nil) = cmOK then
       MessageBox('Directory changed successfully.', mfInformation + mfOKButton);
+  end;
+end;
+
+procedure TMyApp.TestModernFileDialog;
+var
+  Dlg: TModernFileDialog;
+  FileName: PathStr;
+begin
+  Dlg := TModernFileDialog.Create('*.*', 'Open File', 0, 0);
+  if Dlg <> nil then begin
+    if Desktop.ExecView(Dlg) = cmFileOpen then begin
+      Dlg.GetFileName(FileName);
+      MessageBox('Selected: ' + FileName, mfInformation + mfOKButton);
+    end;
+    Dlg.Free;
   end;
 end;
 

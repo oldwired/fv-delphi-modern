@@ -270,6 +270,7 @@ const
   cmRevert      = 805;   { Used by TChDirDialog internally }
   cmFileFocused = 806;    { A new file was focused in the TFileList }
   cmFileDoubleClicked = 807;  { A file was selected in the TFileList }
+  cmDirSelected = 808;    { Directory selected in tree (single-click/focus) }
 
   { Config Unit   130-140, 900-999 }
   cmConfigMouse       = 130; { Mouse command disabled by Init if no mouse }

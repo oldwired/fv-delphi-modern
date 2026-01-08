@@ -141,9 +141,11 @@ type
     FRoot: PDirNode;
     FDir: DirStr;
     FDrivesNode: PDirNode;    { Special "Drives" root node }
+    FActivePath: string;      { Currently active/highlighted path }
     procedure LoadChildren(Node: PDirNode);
     procedure ExpandToPath(const APath: string);
     function FindNodeByPath(const APath: string): PDirNode;
+    function FindNodePosition(TargetNode: PDirNode): Sw_Integer;
     procedure FreeNode(Node: PDirNode);
     procedure BuildDriveNodes;
   public
@@ -154,13 +156,18 @@ type
     function GetNumChildren(Node: Pointer): Sw_Integer; override;
     function GetRoot: Pointer; override;
     function GetText(Node: Pointer): string; override;
+    function GetPalette: PPalette; override;
     function HasChildren(Node: Pointer): Boolean; override;
     function IsExpanded(Node: Pointer): Boolean; override;
+    function IsSelected(I: Sw_Integer): Boolean; override;
+    procedure Focused(I: Sw_Integer); override;
     procedure HandleEvent(var Event: TEvent); override;
     procedure SetState(AState: Word; Enable: Boolean); override;
     procedure NewDirectory(var ADir: DirStr);
     function GetSelectedPath: string;
+    procedure SetActivePath(const APath: string);
     property Dir: DirStr read FDir;
+    property ActivePath: string read FActivePath write SetActivePath;
   end;
 
 const
@@ -192,6 +199,26 @@ type
     function DataSize: Word; override;
     procedure GetData(var Rec); override;
     procedure SetData(var Rec); override;
+  end;
+
+  { TModernFileDialog - Split-pane file dialog with directory tree }
+  TModernFileDialog = class(TDialog)
+    DirTree: TDirOutline;       { Left pane - directory tree }
+    FileList: TFileList;        { Right pane - file list }
+    FileName: TFileInputLine;   { Filename input }
+    InfoPane: TFileInfoPane;    { File info display }
+    WildCard: TWildStr;         { File filter pattern }
+    Directory: string;          { Current directory }
+    constructor Create(AWildCard: TWildStr; const ATitle: string;
+      AOptions: Word; AHistoryId: Byte); reintroduce; virtual;
+    destructor Destroy; override;
+    procedure HandleEvent(var Event: TEvent); override;
+    procedure SetState(AState: Word; Enable: Boolean); override;
+    procedure GetFileName(var S: PathStr);
+    function Valid(Command: Word): Boolean; override;
+  private
+    procedure ReadDirectory;
+    procedure SyncTreeToList;
   end;
 
   { TDirValidator }
@@ -1563,8 +1590,11 @@ begin
   begin
     if (SR.Attr and Directory <> 0) and (SR.Name <> '.') and (SR.Name <> '..') then
     begin
-      ChildNode := NewDirNode(SR.Name,
-        Node^.FullPath + DirSeparator + SR.Name, False);
+      { Build child path - avoid double backslash if parent ends with separator }
+      if (Node^.FullPath <> '') and (Node^.FullPath[Length(Node^.FullPath)] = DirSeparator) then
+        ChildNode := NewDirNode(SR.Name, Node^.FullPath + SR.Name, False)
+      else
+        ChildNode := NewDirNode(SR.Name, Node^.FullPath + DirSeparator + SR.Name, False);
       if LastChild = nil then
         Node^.ChildList := ChildNode
       else
@@ -1656,6 +1686,47 @@ begin
   Result := Node;
 end;
 
+function TDirOutline.FindNodePosition(TargetNode: PDirNode): Sw_Integer;
+{ Find the position of a node in the flattened tree view }
+var
+  Position: Sw_Integer;
+  Found: Boolean;
+
+  procedure CountNodes(Node: PDirNode);
+  var
+    Child: PDirNode;
+  begin
+    if (Node = nil) or Found then Exit;
+
+    Inc(Position);
+    if Node = TargetNode then
+    begin
+      Found := True;
+      Exit;
+    end;
+
+    if Node^.Expanded then
+    begin
+      Child := Node^.ChildList;
+      while (Child <> nil) and not Found do
+      begin
+        CountNodes(Child);
+        Child := Child^.Next;
+      end;
+    end;
+  end;
+
+begin
+  Position := -1;
+  Found := False;
+  if FRoot <> nil then
+    CountNodes(FRoot);
+  if Found then
+    Result := Position
+  else
+    Result := -1;
+end;
+
 procedure TDirOutline.ExpandToPath(const APath: string);
 var
   Path, Part: string;
@@ -1742,10 +1813,19 @@ begin
   { Focus on target node }
   if TargetNode <> nil then
   begin
-    I := 0;
-    Node := GetRoot;
-    { Count position of target node - simplified approach }
-    { The Update call above will set limits correctly }
+    I := FindNodePosition(TargetNode);
+    if (I >= 0) and (I < Limit.Y) then
+    begin
+      { Set focus directly - SetFocus may not work during initialization }
+      Foc := I;
+      { Ensure node is visible by scrolling if needed }
+      if I < Delta.Y then
+        ScrollTo(Delta.X, I)
+      else if I - Size.Y >= Delta.Y then
+        ScrollTo(Delta.X, I - Size.Y + 1);
+    end;
+    { Also set as active path for highlighting }
+    FActivePath := TargetNode^.FullPath;
   end;
 end;
 
@@ -1873,22 +1953,100 @@ begin
     Result := DirNode^.Expanded;
 end;
 
+function TDirOutline.GetPalette: PPalette;
+const
+  { Custom palette: Normal=#6, Focus=#8 (same as Select), Select=#8 }
+  { This ensures the active folder is always highlighted the same way }
+  { whether the tree has focus or not }
+  CDirOutline: ShortString = #6#8#8#8;
+begin
+  Result := PPalette(@CDirOutline);
+end;
+
+function TDirOutline.IsSelected(I: Sw_Integer): Boolean;
+var
+  Node: PDirNode;
+begin
+  { Item is selected if it's the focused item OR if its path matches ActivePath }
+  Result := (Foc = I);
+  if not Result and (FActivePath <> '') then
+  begin
+    Node := PDirNode(GetNode(I));
+    if Node <> nil then
+      Result := SameText(Node^.FullPath, FActivePath);
+  end;
+end;
+
+procedure TDirOutline.SetActivePath(const APath: string);
+begin
+  FActivePath := APath;
+  DrawView;  { Always redraw to ensure highlighting is visible }
+end;
+
+procedure TDirOutline.Focused(I: Sw_Integer);
+var
+  Node: PDirNode;
+  NewPath: string;
+begin
+  inherited Focused(I);
+
+  { Update ActivePath to match focused node and redraw }
+  Node := PDirNode(GetNode(I));
+  if Node <> nil then
+  begin
+    NewPath := Node^.FullPath;
+    if FActivePath <> NewPath then
+    begin
+      FActivePath := NewPath;
+      DrawView;
+    end;
+  end;
+
+  { Broadcast directory selection change to owner when visible }
+  if (Owner <> nil) and (State and sfVisible <> 0) then
+    Message(Owner, evCommand, cmDirSelected, @Self);
+end;
+
 procedure TDirOutline.HandleEvent(var Event: TEvent);
 var
   SelectedNode: PDirNode;
+  Mouse: TPoint;
+  ClickedItem: Sw_Integer;
+  WasAlreadyFocused: Boolean;
 begin
   case Event.What of
     evMouseDown:
-      if Event.Double then
       begin
-        { Double-click navigates into directory }
-        SelectedNode := PDirNode(GetNode(Foc));
-        if SelectedNode <> nil then
+        { Calculate which item was clicked }
+        MakeLocal(Event.Where, Mouse);
+        if MouseInView(Event.Where) then
         begin
-          Event.What := evCommand;
-          Event.Command := cmChangeDir;
-          PutEvent(Event);
-          ClearEvent(Event);
+          ClickedItem := Delta.Y + Mouse.Y;
+          WasAlreadyFocused := (ClickedItem = Foc);
+        end
+        else
+          WasAlreadyFocused := False;
+
+        if Event.Double then
+        begin
+          { Double-click navigates into directory }
+          SelectedNode := PDirNode(GetNode(Foc));
+          if SelectedNode <> nil then
+          begin
+            Event.What := evCommand;
+            Event.Command := cmChangeDir;
+            PutEvent(Event);
+            ClearEvent(Event);
+          end;
+        end
+        else
+        begin
+          { Let inherited handle the click first }
+          inherited HandleEvent(Event);
+          { If clicked on already-focused item, manually trigger update }
+          if WasAlreadyFocused and (Owner <> nil) and (State and sfVisible <> 0) then
+            Message(Owner, evCommand, cmDirSelected, @Self);
+          Exit; { Already called inherited }
         end;
       end;
   end;
@@ -2108,6 +2266,343 @@ begin
       else
         DirInput.Data := CurDir;
       DirInput.DrawView;
+    end;
+  end;
+end;
+
+{ TModernFileDialog - Split-pane file dialog with directory tree and file list }
+
+constructor TModernFileDialog.Create(AWildCard: TWildStr; const ATitle: string;
+  AOptions: Word; AHistoryId: Byte);
+var
+  R: TRect;
+  TreeScroll, ListScroll: TScrollBar;
+begin
+  { Dialog: 76 wide x 20 tall, centered }
+  R.Assign(0, 0, 76, 20);
+  inherited Create(R, ATitle);
+  Options := Options or ofCentered;
+
+  WildCard := AWildCard;
+  Directory := GetCurDir;
+  if (Directory <> '') and (Directory[Length(Directory)] <> DirSeparator) then
+    Directory := Directory + DirSeparator;
+
+  { === Top row: Label + Filename input + Buttons === }
+
+  { Label "Name" }
+  R.Assign(3, 2, 8, 3);
+  Insert(TLabel.Create(R, 'Name', nil));
+
+  { Filename input field }
+  R.Assign(9, 2, 48, 3);
+  FileName := TFileInputLine.Create(R, 128);
+  FileName.Data := WildCard;
+  Insert(FileName);
+
+  { Open button }
+  R.Assign(55, 2, 65, 4);
+  Insert(TButton.Create(R, '~O~pen', cmFileOpen, bfDefault));
+
+  { Cancel button }
+  R.Assign(66, 2, 75, 4);
+  Insert(TButton.Create(R, 'Cancel', cmCancel, bfNormal));
+
+  { === Left pane: Directory tree === }
+
+  { Tree label }
+  R.Assign(2, 4, 15, 5);
+  Insert(TLabel.Create(R, '~D~irectory', nil));
+
+  { Tree scrollbar }
+  R.Assign(35, 5, 36, 17);
+  TreeScroll := TScrollBar.Create(R);
+  Insert(TreeScroll);
+
+  { Directory tree }
+  R.Assign(2, 5, 35, 17);
+  DirTree := TDirOutline.Create(R, nil, TreeScroll);
+  Insert(DirTree);
+
+  { === Right pane: File list === }
+
+  { Files label }
+  R.Assign(38, 4, 48, 5);
+  Insert(TLabel.Create(R, '~F~iles', nil));
+
+  { File list scrollbar }
+  R.Assign(73, 5, 74, 17);
+  ListScroll := TScrollBar.Create(R);
+  Insert(ListScroll);
+
+  { File list }
+  R.Assign(38, 5, 73, 17);
+  FileList := TFileList.Create(R, ListScroll);
+  Insert(FileList);
+
+  { No InfoPane - it requires TFileDialog as owner }
+  InfoPane := nil;
+
+  { Initialize tree to current directory and set active path }
+  if DirTree <> nil then
+  begin
+    DirTree.NewDirectory(DirStr(Directory));
+    DirTree.ActivePath := ExcludeTrailingPathDelimiter(Directory);
+  end;
+
+  { Load initial file list }
+  if FileList <> nil then
+    FileList.ReadDirectory(Directory + WildCard);
+
+  SelectNext(False);
+end;
+
+destructor TModernFileDialog.Destroy;
+begin
+  inherited Destroy;
+end;
+
+procedure TModernFileDialog.SetState(AState: Word; Enable: Boolean);
+begin
+  inherited SetState(AState, Enable);
+  { When dialog becomes visible, ensure tree highlighting is shown }
+  if (AState and sfVisible <> 0) and Enable then
+  begin
+    if DirTree <> nil then
+      DirTree.DrawView;
+  end;
+end;
+
+procedure TModernFileDialog.ReadDirectory;
+begin
+  if FileList <> nil then
+  begin
+    FileList.ReadDirectory(Directory + WildCard);
+    { Reset scroll to top and focus first item }
+    FileList.FocusItem(0);
+    FileList.DrawView;
+  end;
+  { Update active path highlighting in tree }
+  if DirTree <> nil then
+  begin
+    DirTree.ActivePath := ExcludeTrailingPathDelimiter(Directory);
+  end;
+end;
+
+procedure TModernFileDialog.SyncTreeToList;
+var
+  TreePath: string;
+begin
+  if DirTree <> nil then
+  begin
+    TreePath := DirTree.GetSelectedPath;
+    if (TreePath <> '') and (TreePath <> DrivesStr) then
+    begin
+      Directory := TreePath;
+      if (Directory <> '') and (Directory[Length(Directory)] <> DirSeparator) then
+        Directory := Directory + DirSeparator;
+    end;
+  end;
+  ReadDirectory;
+end;
+
+procedure TModernFileDialog.HandleEvent(var Event: TEvent);
+var
+  FocusedFile: PSearchRec;
+  NewDir: string;
+
+  function NavigateToDirectory: Boolean;
+  { If focused item is a directory, navigate into it and return True }
+  begin
+    Result := False;
+    if (FileList <> nil) and (FileList.Files <> nil) and
+       (FileList.Focused < FileList.Files.Count) then
+    begin
+      FocusedFile := FileList.Files[FileList.Focused];
+      if (FocusedFile <> nil) and ((FocusedFile^.Attr and faDirectory) <> 0) then
+      begin
+        { Navigate into directory }
+        if FocusedFile^.Name = '..' then
+        begin
+          { Go up one level }
+          NewDir := ExtractFileDir(ExcludeTrailingPathDelimiter(Directory));
+          if NewDir = '' then
+            NewDir := ExtractFileDrive(Directory);
+        end
+        else
+        begin
+          { Go into subdirectory }
+          NewDir := Directory + FocusedFile^.Name;
+        end;
+
+        if NewDir <> '' then
+        begin
+          if NewDir[Length(NewDir)] <> DirSeparator then
+            NewDir := NewDir + DirSeparator;
+          Directory := NewDir;
+
+          { Update tree to match }
+          if DirTree <> nil then
+          begin
+            DirTree.NewDirectory(DirStr(Directory));
+            DirTree.DrawView;
+          end;
+
+          { Update file list }
+          ReadDirectory;
+
+          { Update filename field with wildcard }
+          if FileName <> nil then
+          begin
+            FileName.Data := WildCard;
+            FileName.DrawView;
+          end;
+        end;
+        Result := True;
+      end;
+    end;
+  end;
+
+begin
+  case Event.What of
+    evCommand:
+      begin
+        case Event.Command of
+          cmDirSelected:
+            begin
+              { Directory tree selection changed - update file list }
+              SyncTreeToList;
+              ClearEvent(Event);
+            end;
+
+          cmOK:
+            begin
+              { Double-click in file list sends cmOK }
+              { If it's a directory, navigate; if file, close with cmFileOpen }
+              if NavigateToDirectory then
+                ClearEvent(Event)
+              else
+              begin
+                { It's a file - close dialog with cmFileOpen result }
+                ClearEvent(Event);
+                EndModal(cmFileOpen);
+              end;
+            end;
+
+          cmFileOpen:
+            begin
+              { Open button clicked - check if directory selected }
+              if NavigateToDirectory then
+                ClearEvent(Event)
+              else
+              begin
+                { It's a file - close dialog }
+                ClearEvent(Event);
+                EndModal(cmFileOpen);
+              end;
+            end;
+        end;
+      end;
+  end;
+
+  if Event.What <> evNothing then
+    inherited HandleEvent(Event);
+
+  { Handle broadcasts after inherited }
+  if Event.What = evBroadcast then
+  begin
+    if Event.Command = cmFileFocused then
+    begin
+      { Update filename field when file is focused }
+      if (FileList <> nil) and (FileList.Files <> nil) and
+         (FileList.Focused < FileList.Files.Count) then
+      begin
+        FocusedFile := FileList.Files[FileList.Focused];
+        if (FocusedFile <> nil) and ((FocusedFile^.Attr and faDirectory) = 0) then
+        begin
+          { It's a file - show in filename field }
+          if FileName <> nil then
+          begin
+            FileName.Data := FocusedFile^.Name;
+            FileName.DrawView;
+          end;
+        end;
+      end;
+    end;
+  end;
+end;
+
+procedure TModernFileDialog.GetFileName(var S: PathStr);
+begin
+  if FileName <> nil then
+    S := FExpand(Directory + FileName.Data)
+  else
+    S := '';
+end;
+
+function TModernFileDialog.Valid(Command: Word): Boolean;
+var
+  T: PathStr;
+  Dir: DirStr;
+  Name: NameStr;
+  Ext: ExtStr;
+begin
+  Result := inherited Valid(Command);
+  if not Result then Exit;
+
+  if Command = cmFileOpen then
+  begin
+    GetFileName(T);
+    if T = '' then
+    begin
+      Result := False;
+      Exit;
+    end;
+
+    { Parse the path }
+    FSplit(T, Dir, Name, Ext);
+
+    { Check if it's a wildcard or directory }
+    if (Pos('*', Name) > 0) or (Pos('?', Name) > 0) then
+    begin
+      { It's a wildcard - update filter and directory }
+      WildCard := Name + Ext;
+      if Dir <> '' then
+        Directory := Dir;
+      ReadDirectory;
+      if FileName <> nil then
+      begin
+        FileName.Data := WildCard;
+        FileName.DrawView;
+      end;
+      Result := False;  { Don't close dialog }
+    end
+    else if DirectoryExists(T) then
+    begin
+      { It's a directory - navigate into it }
+      Directory := T;
+      if Directory[Length(Directory)] <> DirSeparator then
+        Directory := Directory + DirSeparator;
+
+      if DirTree <> nil then
+      begin
+        DirTree.NewDirectory(DirStr(Directory));
+        DirTree.DrawView;
+      end;
+
+      ReadDirectory;
+      if FileName <> nil then
+      begin
+        FileName.Data := WildCard;
+        FileName.DrawView;
+      end;
+      Result := False;  { Don't close dialog }
+    end
+    else if not FileExists(T) then
+    begin
+      { File doesn't exist }
+      MessageBox(^C'File not found:'^M + T, mfError + mfOkButton);
+      Result := False;
     end;
   end;
 end;
