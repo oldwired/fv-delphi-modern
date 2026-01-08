@@ -9,6 +9,8 @@ Free Vision is a classic console-based GUI toolkit originally derived from Borla
 - **Complete TUI Framework**: Windows, dialogs, menus, status bars, buttons, input fields, and more
 - **Modern Architecture**: Interfaces (`IFVDrawable`, `ISerializable`), RTL generics (`TObjectList<T>`, `TStringList`)
 - **Text Editor**: Full-featured editor with find/replace, clipboard, undo, and file operations
+- **Hex Editor**: Binary file viewer/editor with hex and ASCII modes
+- **String Grid**: Spreadsheet-like grid with sorting, editing, selection, and CSV import/export
 - **Standard Dialogs**: Message boxes, file open/save dialogs, color selection, ASCII table
 - **Advanced Controls**: Tab controls, outline/tree views, progress gauges, timed dialogs
 - **Input Validation**: Built-in validators for ranges, patterns, and lookups
@@ -47,6 +49,98 @@ After exiting capture mode with Ctrl+A:
 - Window title from OSC sequences
 - Session logging
 - Text reflow on resize
+
+## String Grid
+
+The `TStringGrid` component (`Grid.pas`) provides a spreadsheet-like data grid for console applications.
+
+### Features
+
+- Sortable columns with visual indicators
+- Cell editing (F2 or direct typing)
+- Row and cell selection modes
+- Clipboard support (copy/paste)
+- Undo support
+- Column resizing and auto-fit
+- Fixed header rows
+- JSON serialization for layout
+
+### CSV Import/Export
+
+The grid supports RFC 4180-compliant CSV files:
+
+```pascal
+// Load CSV file
+Grid.LoadFromCSV('data.csv');
+
+// Save to CSV
+Grid.SaveToCSV('output.csv');
+
+// With options
+var Opts := TCSVOptions.Create;
+Opts.Delimiter := cdSemicolon;        // or cdComma, cdTab, cdPipe, cdAuto
+Opts.CustomDelimiter := '~';          // Override with any character
+Opts.UseFixedHeaderRow := True;       // Headers as fixed row 0
+Opts.Encoding := ceUTF8BOM;           // UTF-8 with BOM (Excel compatible)
+Grid.LoadFromCSV('data.csv', Opts);
+Opts.Free;
+```
+
+### TCSVOptions Properties
+
+| Property | Default | Description |
+|----------|---------|-------------|
+| `Delimiter` | `cdComma` | Field delimiter (comma, semicolon, tab, pipe, auto-detect) |
+| `CustomDelimiter` | `#0` | Override delimiter with any character |
+| `Encoding` | `ceUTF8BOM` | File encoding (UTF-8 BOM, UTF-8, ANSI) |
+| `HasHeaders` | `True` | First row contains column headers |
+| `UseFixedHeaderRow` | `False` | Put headers in fixed row 0 |
+| `TrimWhitespace` | `False` | Trim spaces from values |
+| `AutoCreateColumns` | `True` | Create columns from CSV structure |
+
+## Hex Editor
+
+The `THexEditor` component (`HexEdit.pas`) provides a binary file viewer and editor.
+
+### Features
+
+- Classic hex editor layout (address | hex bytes | ASCII)
+- Dual editing modes: hex nibbles or ASCII characters
+- Selection support with keyboard (Shift+arrows) and mouse
+- Modified byte highlighting
+- File load/save operations
+- Pluggable data source interface (`IHexDataSource`)
+
+### Keyboard Controls
+
+| Key | Action |
+|-----|--------|
+| **Arrow keys** | Navigate bytes |
+| **Tab** | Toggle between hex and ASCII mode |
+| **Shift+Arrows** | Extend selection |
+| **0-9, A-F** | Edit hex nibble (in hex mode) |
+| **Any printable** | Edit ASCII character (in ASCII mode) |
+| **Home/End** | Jump to start/end of row |
+| **Ctrl+Home/End** | Jump to start/end of file |
+| **Page Up/Down** | Scroll by page |
+
+### Usage
+
+```pascal
+var
+  HexEdit: THexEditor;
+  Source: TMemoryHexSource;
+begin
+  Source := TMemoryHexSource.Create;
+  Source.LoadFromFile('data.bin');
+
+  HexEdit := THexEditor.Create(Bounds, Source);
+  // ... add to window
+
+  // Save changes
+  Source.SaveToFile('data.bin');
+end;
+```
 
 ## Requirements
 
@@ -120,6 +214,8 @@ src/
   Menus.pas         - Menu system (TMenuBar, TMenuBox, TStatusLine)
   App.pas           - Application framework (TApplication)
   Dialogs.pas       - Dialog controls (TDialog, TButton, TInputLine, etc.)
+  Grid.pas          - TStringGrid with CSV import/export
+  HexEdit.pas       - THexEditor binary viewer/editor
   Validate.pas      - Input validation
   MsgBox.pas        - Message box helpers
   StdDlg.pas        - Standard file dialogs

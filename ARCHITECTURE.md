@@ -229,6 +229,10 @@ TView
     |     +-- TLabel (linked label)
     |
     +-- THistory (input history dropdown)
+    |
+    +-- TStringGrid (spreadsheet-like data grid)
+    |
+    +-- THexEditor (binary hex viewer/editor)
 
 TListViewer
     |
@@ -250,6 +254,50 @@ TDialog
     +-- TChDirDialog (change directory)
           |
           +-- TEditChDirDialog (editable directory)
+```
+
+### TStringGrid Architecture
+
+The `TStringGrid` component provides a spreadsheet-like grid with the following structure:
+
+```
+TStringGrid (TView)
+    |
+    +-- FData: TDictionary<string, string>  (sparse cell storage, key="Col,Row")
+    +-- FColumns: TGridColumns              (TObjectList<TGridColumn>)
+    +-- FRowIDs: TList<Integer>             (row tracking for sort stability)
+    +-- Selection state (FFocusedCell, FSelectedCells, FAnchorCell)
+    +-- Scrolling (FTopRow, FLeftCol, scrollbars)
+    +-- Edit state (FEditMode, FEditing, undo support)
+    +-- Sort state (FSortColumn, FSortDirection)
+
+TGridColumn
+    +-- Title, Width, Alignment
+    +-- MinWidth, MaxWidth
+    +-- Sortable, Visible
+    +-- Validator, DefaultValue
+
+TCSVOptions
+    +-- Delimiter (cdComma, cdSemicolon, cdTab, cdPipe, cdAuto)
+    +-- CustomDelimiter (override with any char)
+    +-- Encoding (ceUTF8BOM, ceUTF8, ceANSI)
+    +-- HasHeaders, UseFixedHeaderRow
+    +-- TrimWhitespace, AutoCreateColumns
+```
+
+#### CSV Import/Export Flow
+
+```
+LoadFromCSV          SaveToCSV
+     |                    |
+     v                    v
+LoadFromCSVStream    SaveToCSVStream
+     |                    |
+     v                    v
+LoadFromCSVString    SaveToCSVString
+     |                    |
+     +-- DetectDelimiter  +-- QuoteCSVField (RFC 4180)
+     +-- ParseCSVLine     +-- GetDelimiterChar
 ```
 
 ### Stream Hierarchy
@@ -446,6 +494,8 @@ src/
   Menus.pas           Menu system (TMenuBar, TMenuBox, TStatusLine)
   App.pas             Application framework (TApplication)
   Dialogs.pas         Dialog controls (TDialog, TButton, TInputLine, etc.)
+  Grid.pas            TStringGrid component with CSV import/export
+  HexEdit.pas         THexEditor binary viewer/editor
   Validate.pas        Input validators
   MsgBox.pas          Message box helpers
   StdDlg.pas          File dialogs (TFileDialog, TChDirDialog)

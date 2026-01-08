@@ -75,6 +75,8 @@ const
   cmTestStringGridCSV = 1033;
   cmGridLoadCSV = 1034;
   cmGridSaveCSV = 1035;
+  cmHexLoadFile = 1036;
+  cmHexSaveFile = 1037;
 
 var
   ExceptionLog: TextFile;
@@ -197,6 +199,22 @@ type
     function GetCSVOptions: TCSVOptions;
     property StatusLabel: TStaticText read FStatusLabel write FStatusLabel;
     property Grid: TStringGrid read FGrid write FGrid;
+  end;
+
+  { Custom window for hex editor load/save testing }
+  THexTestWindow = class(TWindow)
+  private
+    FStatusLabel: TStaticText;
+    FEditor: THexEditor;
+    FDataSource: TMemoryHexSource;
+  public
+    constructor Create(var Bounds: TRect); reintroduce; virtual;
+    destructor Destroy; override;
+    procedure HandleEvent(var Event: TEvent); override;
+    procedure LoadFile;
+    procedure SaveFile;
+    property StatusLabel: TStaticText read FStatusLabel write FStatusLabel;
+    property Editor: THexEditor read FEditor;
   end;
 
   { Custom scroller that displays numbered lines }
@@ -650,6 +668,179 @@ begin
         end;
       finally
         Opts.Free;
+      end;
+    end;
+    Dlg.Free;
+  end;
+end;
+
+{ THexTestWindow }
+constructor THexTestWindow.Create(var Bounds: TRect);
+var
+  R: TRect;
+  LoadBtn, SaveBtn: TButton;
+  HScrollBar, VScrollBar: TScrollBar;
+  I: Integer;
+begin
+  inherited Create(Bounds, 'Hex Editor Test', wnNoNumber);
+  Options := Options or ofTileable;
+  Flags := Flags and not wfZoom;
+
+  { Create vertical scrollbar }
+  GetExtent(R);
+  R.A.X := R.B.X - 2;
+  R.B.X := R.B.X - 1;
+  R.A.Y := 1;
+  R.B.Y := R.B.Y - 4;
+  VScrollBar := TScrollBar.Create(R);
+  VScrollBar.GrowMode := gfGrowLoX + gfGrowHiX + gfGrowHiY;
+  Insert(VScrollBar);
+
+  { Create horizontal scrollbar }
+  GetExtent(R);
+  R.A.X := 1;
+  R.B.X := R.B.X - 2;
+  R.A.Y := R.B.Y - 4;
+  R.B.Y := R.B.Y - 3;
+  HScrollBar := TScrollBar.Create(R);
+  HScrollBar.GrowMode := gfGrowLoY + gfGrowHiY + gfGrowHiX;
+  Insert(HScrollBar);
+
+  { Create the hex editor }
+  GetExtent(R);
+  R.A.X := 1;
+  R.A.Y := 1;
+  R.B.X := R.B.X - 2;
+  R.B.Y := R.B.Y - 4;
+  FEditor := THexEditor.Create(R, HScrollBar, VScrollBar);
+  FEditor.GrowMode := gfGrowHiX + gfGrowHiY;
+  Insert(FEditor);
+
+  { Create sample data (256 bytes) }
+  FDataSource := TMemoryHexSource.Create(256);
+  for I := 0 to 255 do
+    FDataSource.SetByte(I, Byte(I));
+  FDataSource.ClearModified;
+  FEditor.SetDataSource(FDataSource);
+
+  { Create status label }
+  GetExtent(R);
+  R.A.X := 1;
+  R.A.Y := R.B.Y - 2;
+  R.B.X := R.B.X - 16;
+  R.B.Y := R.A.Y + 1;
+  FStatusLabel := TStaticText.Create(R, 'Sample data (256 bytes)');
+  FStatusLabel.GrowMode := gfGrowLoY + gfGrowHiY;
+  Insert(FStatusLabel);
+
+  { Create Load button }
+  GetExtent(R);
+  R.A.X := R.B.X - 15;
+  R.A.Y := R.B.Y - 2;
+  R.B.X := R.B.X - 8;
+  R.B.Y := R.B.Y;
+  LoadBtn := TButton.Create(R, '~L~oad', cmHexLoadFile, bfNormal);
+  LoadBtn.GrowMode := gfGrowLoX + gfGrowLoY + gfGrowHiX + gfGrowHiY;
+  Insert(LoadBtn);
+
+  { Create Save button }
+  GetExtent(R);
+  R.A.X := R.B.X - 8;
+  R.A.Y := R.B.Y - 2;
+  R.B.X := R.B.X - 1;
+  R.B.Y := R.B.Y;
+  SaveBtn := TButton.Create(R, '~S~ave', cmHexSaveFile, bfNormal);
+  SaveBtn.GrowMode := gfGrowLoX + gfGrowLoY + gfGrowHiX + gfGrowHiY;
+  Insert(SaveBtn);
+end;
+
+destructor THexTestWindow.Destroy;
+begin
+  { TMemoryHexSource inherits from TInterfacedObject with reference counting.
+    Don't call Free - let the editor's interface reference handle cleanup.
+    When inherited Destroy frees FEditor, it releases the interface reference,
+    which decrements refcount to 0 and auto-frees the data source. }
+  FDataSource := nil;  { Clear our object reference (doesn't affect refcount) }
+  inherited Destroy;
+end;
+
+procedure THexTestWindow.HandleEvent(var Event: TEvent);
+begin
+  inherited HandleEvent(Event);
+
+  if Event.What = evCommand then begin
+    case Event.Command of
+      cmHexLoadFile:
+        begin
+          LoadFile;
+          ClearEvent(Event);
+        end;
+      cmHexSaveFile:
+        begin
+          SaveFile;
+          ClearEvent(Event);
+        end;
+    end;
+  end;
+end;
+
+procedure THexTestWindow.LoadFile;
+var
+  Dlg: TFileDialog;
+  FileName: PathStr;
+  C: Word;
+begin
+  FileName := '*.*';
+  Dlg := TFileDialog.Create('*.*', 'Load Binary File', '~N~ame', fdOpenButton, 1);
+  if Dlg <> nil then begin
+    C := Desktop.ExecView(Dlg);
+    if C = cmFileOpen then begin
+      Dlg.GetData(FileName);
+      try
+        FDataSource.LoadFromFile(FileName);
+        FEditor.SetDataSource(FDataSource);  { Refresh the editor }
+        FStatusLabel.Text := 'Loaded: ' + ExtractFileName(FileName) +
+          ' (' + IntToStr(FDataSource.GetSize) + ' bytes)';
+        FStatusLabel.DrawView;
+        FEditor.DrawView;
+      except
+        on E: Exception do begin
+          MessageBox('Error loading file: ' + E.Message, mfError + mfOKButton);
+          FStatusLabel.Text := 'Load failed';
+          FStatusLabel.DrawView;
+        end;
+      end;
+    end;
+    Dlg.Free;
+  end;
+end;
+
+procedure THexTestWindow.SaveFile;
+var
+  Dlg: TFileDialog;
+  FileName: PathStr;
+  C: Word;
+begin
+  FileName := 'output.bin';
+  Dlg := TFileDialog.Create('*.*', 'Save Binary File', '~N~ame', fdOKButton, 1);
+  if Dlg <> nil then begin
+    Dlg.SetData(FileName);
+    C := Desktop.ExecView(Dlg);
+    if C = cmFileOpen then begin
+      Dlg.GetData(FileName);
+      try
+        FDataSource.SaveToFile(FileName);
+        FDataSource.ClearModified;
+        FStatusLabel.Text := 'Saved: ' + ExtractFileName(FileName);
+        FStatusLabel.DrawView;
+        FEditor.DrawView;  { Refresh to clear modified markers }
+        MessageBox('Binary file saved successfully!', mfInformation + mfOKButton);
+      except
+        on E: Exception do begin
+          MessageBox('Error saving file: ' + E.Message, mfError + mfOKButton);
+          FStatusLabel.Text := 'Save failed';
+          FStatusLabel.DrawView;
+        end;
       end;
     end;
     Dlg.Free;
@@ -2319,25 +2510,14 @@ begin
 end;
 
 procedure TMyApp.TestHexEditor;
-{ Test hex editor component }
+{ Test hex editor component with load/save }
 var
   R: TRect;
-  Win: THexWindow;
-  Source: TMemoryHexSource;
-  I: Integer;
+  Win: THexTestWindow;
 begin
-  Inc(WindowCount);
   R.Assign(2, 1, 82, 24);
-  R.Move((WindowCount mod 4) * 2, (WindowCount mod 4));
-  Win := THexWindow.Create(R, 'Hex Editor Test', WindowCount);
+  Win := THexTestWindow.Create(R);
   if Win <> nil then begin
-    { Create sample data }
-    Source := TMemoryHexSource.Create(256);
-    for I := 0 to 255 do
-      Source.SetByte(I, Byte(I));
-    Source.ClearModified;  { Don't mark initial data as modified }
-
-    Win.SetDataSource(Source);
     Desktop.Insert(Win);
 
     MessageBox('Hex Editor Controls:'#13#10 +
@@ -2347,7 +2527,9 @@ begin
                '0-9, A-F - Edit hex values'#13#10 +
                'Printable chars - Edit ASCII'#13#10 +
                'PgUp/PgDn - Scroll by page'#13#10 +
-               'Ctrl+Home/End - Go to start/end',
+               'Ctrl+Home/End - Go to start/end'#13#10 +
+               #13#10 +
+               'Use Load/Save buttons for files',
                mfInformation or mfOKButton);
   end;
 end;

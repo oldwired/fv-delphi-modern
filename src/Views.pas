@@ -2168,6 +2168,14 @@ begin
     MakeLocal(Event.Where, Mouse);
     WinFlags := TWindow(Owner).Flags;
 
+    { First click on inactive window should activate it only }
+    if (State and sfActive = 0) and (Owner.Owner <> nil) then begin
+      Owner.Select;
+      Owner.DrawView;
+      ClearEvent(Event);
+      Exit;  { Don't process button clicks on first click }
+    end;
+
     if Mouse.Y = 0 then begin
       { Title bar click }
       { Check close button at positions 2-4 }
