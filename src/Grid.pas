@@ -69,12 +69,17 @@ type
   TStringGrid = class;
   TGridColumn = class;
   TGridColumns = class;
+  TCSVOptions = class;
 
   { Enumerations }
   TGridAlignment = (gaLeft, gaCenter, gaRight);
   TSelectionMode = (smRow, smCell);
   TEditMode = (emNone, emF2, emEnter, emTyping);
   TSortDirection = (sdNone, sdAscending, sdDescending);
+
+  { CSV support types }
+  TCSVDelimiter = (cdComma, cdSemicolon, cdTab, cdPipe, cdAuto);
+  TCSVEncoding = (ceUTF8BOM, ceUTF8, ceANSI);
 
   { TGridCell - cell coordinate record }
   TGridCell = record
@@ -91,6 +96,27 @@ type
     NewValue: string;
   end;
   PGridChangeEntry = ^TGridChangeEntry;
+
+  { TCSVOptions - CSV import/export configuration }
+  TCSVOptions = class(TObject)
+  private
+    FDelimiter: TCSVDelimiter;
+    FCustomDelimiter: Char;
+    FEncoding: TCSVEncoding;
+    FHasHeaders: Boolean;
+    FUseFixedHeaderRow: Boolean;
+    FTrimWhitespace: Boolean;
+    FAutoCreateColumns: Boolean;
+  public
+    constructor Create;
+    property Delimiter: TCSVDelimiter read FDelimiter write FDelimiter;
+    property CustomDelimiter: Char read FCustomDelimiter write FCustomDelimiter;
+    property Encoding: TCSVEncoding read FEncoding write FEncoding;
+    property HasHeaders: Boolean read FHasHeaders write FHasHeaders;
+    property UseFixedHeaderRow: Boolean read FUseFixedHeaderRow write FUseFixedHeaderRow;
+    property TrimWhitespace: Boolean read FTrimWhitespace write FTrimWhitespace;
+    property AutoCreateColumns: Boolean read FAutoCreateColumns write FAutoCreateColumns;
+  end;
 
   { Event callback types }
   TGridCellEvent = procedure(Sender: TObject; Col, Row: Integer) of object;
@@ -292,6 +318,14 @@ type
     procedure CopyToClipboard;
     procedure PasteFromClipboard;
 
+    { CSV Import/Export }
+    procedure LoadFromCSV(const FileName: string; Options: TCSVOptions = nil);
+    procedure SaveToCSV(const FileName: string; Options: TCSVOptions = nil);
+    procedure LoadFromCSVStream(Stream: TStream; Options: TCSVOptions = nil);
+    procedure SaveToCSVStream(Stream: TStream; Options: TCSVOptions = nil);
+    procedure LoadFromCSVString(const CSVData: string; Options: TCSVOptions = nil);
+    function SaveToCSVString(Options: TCSVOptions = nil): string;
+
     { Undo }
     procedure Undo;
     function CanUndo: Boolean;
@@ -372,6 +406,250 @@ end;
 function TGridCell.Equals(const Other: TGridCell): Boolean;
 begin
   Result := (Col = Other.Col) and (Row = Other.Row);
+end;
+
+{***************************************************************************}
+{                            TCSVOptions                                    }
+{***************************************************************************}
+
+constructor TCSVOptions.Create;
+begin
+  inherited Create;
+  FDelimiter := cdComma;
+  FCustomDelimiter := #0;  { #0 means use Delimiter enum }
+  FEncoding := ceUTF8BOM;
+  FHasHeaders := True;
+  FUseFixedHeaderRow := False;
+  FTrimWhitespace := False;
+  FAutoCreateColumns := True;
+end;
+
+{***************************************************************************}
+{                          CSV Helper Functions                             }
+{***************************************************************************}
+
+function GetDelimiterChar(Delim: TCSVDelimiter): Char;
+begin
+  case Delim of
+    cdComma:     Result := ',';
+    cdSemicolon: Result := ';';
+    cdTab:       Result := #9;
+    cdPipe:      Result := '|';
+  else
+    Result := ',';  { Default for cdAuto }
+  end;
+end;
+
+function QuoteCSVField(const Value: string; Delimiter: Char): string;
+var
+  NeedsQuoting: Boolean;
+  I: Integer;
+begin
+  { Check if quoting is needed per RFC 4180 }
+  NeedsQuoting := False;
+  for I := 1 to Length(Value) do
+  begin
+    if (Value[I] = Delimiter) or (Value[I] = '"') or
+       (Value[I] = #13) or (Value[I] = #10) then
+    begin
+      NeedsQuoting := True;
+      Break;
+    end;
+  end;
+
+  if not NeedsQuoting then
+    Result := Value
+  else
+    { Quote the field and escape embedded quotes by doubling them }
+    Result := '"' + StringReplace(Value, '"', '""', [rfReplaceAll]) + '"';
+end;
+
+function CountDelimitersOutsideQuotes(const Line: string; Delim: Char): Integer;
+var
+  I: Integer;
+  InQuotes: Boolean;
+begin
+  Result := 0;
+  InQuotes := False;
+  for I := 1 to Length(Line) do
+  begin
+    if Line[I] = '"' then
+      InQuotes := not InQuotes
+    else if (Line[I] = Delim) and (not InQuotes) then
+      Inc(Result);
+  end;
+end;
+
+function DetectDelimiter(const Data: string): TCSVDelimiter;
+const
+  Candidates: array[0..3] of TCSVDelimiter = (cdComma, cdSemicolon, cdTab, cdPipe);
+  CandidateChars: array[0..3] of Char = (',', ';', #9, '|');
+var
+  Lines: TStringList;
+  I, J, LineCount: Integer;
+  Counts: array[0..3] of Integer;
+  FirstLineCounts: array[0..3] of Integer;
+  Consistent: array[0..3] of Boolean;
+  BestIdx: Integer;
+  BestCount: Integer;
+begin
+  Result := cdComma;  { Default }
+
+  Lines := TStringList.Create;
+  try
+    Lines.Text := Data;
+    LineCount := Min(Lines.Count, 5);  { Analyze first 5 lines }
+    if LineCount = 0 then Exit;
+
+    { Initialize }
+    for I := 0 to 3 do
+    begin
+      FirstLineCounts[I] := 0;
+      Consistent[I] := True;
+    end;
+
+    { Count delimiters in each line }
+    for J := 0 to LineCount - 1 do
+    begin
+      for I := 0 to 3 do
+      begin
+        Counts[I] := CountDelimitersOutsideQuotes(Lines[J], CandidateChars[I]);
+        if J = 0 then
+          FirstLineCounts[I] := Counts[I]
+        else if Counts[I] <> FirstLineCounts[I] then
+          Consistent[I] := False;
+      end;
+    end;
+
+    { Find best delimiter: highest consistent count }
+    BestIdx := 0;
+    BestCount := 0;
+    for I := 0 to 3 do
+    begin
+      if Consistent[I] and (FirstLineCounts[I] > BestCount) then
+      begin
+        BestCount := FirstLineCounts[I];
+        BestIdx := I;
+      end;
+    end;
+
+    if BestCount > 0 then
+      Result := Candidates[BestIdx];
+  finally
+    Lines.Free;
+  end;
+end;
+
+type
+  TCSVParserState = (psFieldStart, psUnquotedField, psQuotedField, psQuoteInQuoted);
+
+procedure ParseCSVLine(const Line: string; Delimiter: Char; var Fields: TArray<string>);
+var
+  State: TCSVParserState;
+  Field: TStringBuilder;
+  I: Integer;
+  C: Char;
+  FieldList: TList<string>;
+begin
+  FieldList := TList<string>.Create;
+  Field := TStringBuilder.Create;
+  try
+    State := psFieldStart;
+
+    for I := 1 to Length(Line) do
+    begin
+      C := Line[I];
+
+      case State of
+        psFieldStart:
+          begin
+            if C = '"' then
+              State := psQuotedField
+            else if C = Delimiter then
+            begin
+              FieldList.Add(Field.ToString);
+              Field.Clear;
+            end
+            else if (C = #13) or (C = #10) then
+            begin
+              { End of line - emit field }
+              FieldList.Add(Field.ToString);
+              Field.Clear;
+            end
+            else
+            begin
+              Field.Append(C);
+              State := psUnquotedField;
+            end;
+          end;
+
+        psUnquotedField:
+          begin
+            if C = Delimiter then
+            begin
+              FieldList.Add(Field.ToString);
+              Field.Clear;
+              State := psFieldStart;
+            end
+            else if (C = #13) or (C = #10) then
+            begin
+              FieldList.Add(Field.ToString);
+              Field.Clear;
+              State := psFieldStart;
+            end
+            else
+              Field.Append(C);
+          end;
+
+        psQuotedField:
+          begin
+            if C = '"' then
+              State := psQuoteInQuoted
+            else
+              Field.Append(C);
+          end;
+
+        psQuoteInQuoted:
+          begin
+            if C = '"' then
+            begin
+              { Escaped quote - add single quote and continue }
+              Field.Append('"');
+              State := psQuotedField;
+            end
+            else if C = Delimiter then
+            begin
+              FieldList.Add(Field.ToString);
+              Field.Clear;
+              State := psFieldStart;
+            end
+            else if (C = #13) or (C = #10) then
+            begin
+              FieldList.Add(Field.ToString);
+              Field.Clear;
+              State := psFieldStart;
+            end
+            else
+            begin
+              { Recovery: treat quote as end of field, start new unquoted }
+              FieldList.Add(Field.ToString);
+              Field.Clear;
+              Field.Append(C);
+              State := psUnquotedField;
+            end;
+          end;
+      end;
+    end;
+
+    { Handle final field }
+    if (State <> psFieldStart) or (FieldList.Count > 0) or (Field.Length > 0) then
+      FieldList.Add(Field.ToString);
+
+    Fields := FieldList.ToArray;
+  finally
+    Field.Free;
+    FieldList.Free;
+  end;
 end;
 
 {***************************************************************************}
@@ -1736,6 +2014,310 @@ begin
   finally
     Cols.Free;
     Lines.Free;
+  end;
+end;
+
+{--- CSV Import/Export ---}
+
+function TStringGrid.SaveToCSVString(Options: TCSVOptions): string;
+var
+  SB: TStringBuilder;
+  Row, Col, StartRow: Integer;
+  DelimChar: Char;
+  Value: string;
+  OwnOptions: Boolean;
+begin
+  OwnOptions := (Options = nil);
+  if OwnOptions then
+    Options := TCSVOptions.Create;
+  try
+    { Determine delimiter character - CustomDelimiter overrides enum }
+    if Options.CustomDelimiter <> #0 then
+      DelimChar := Options.CustomDelimiter
+    else
+      DelimChar := GetDelimiterChar(Options.Delimiter);
+
+    SB := TStringBuilder.Create;
+    try
+      { Determine starting row for data }
+      if Options.UseFixedHeaderRow and (FFixedRows > 0) then
+        StartRow := FFixedRows  { Skip fixed header rows }
+      else
+        StartRow := 0;
+
+      { Write header row if enabled }
+      if Options.HasHeaders then
+      begin
+        if Options.UseFixedHeaderRow and (FFixedRows > 0) and (FRowCount > 0) then
+        begin
+          { Use row 0 (fixed header row) as the header source }
+          for Col := 0 to FColumns.Count - 1 do
+          begin
+            if Col > 0 then
+              SB.Append(DelimChar);
+            Value := GetCell(Col, 0);
+            SB.Append(QuoteCSVField(Value, DelimChar));
+          end;
+        end
+        else
+        begin
+          { Use column titles as headers }
+          for Col := 0 to FColumns.Count - 1 do
+          begin
+            if Col > 0 then
+              SB.Append(DelimChar);
+            SB.Append(QuoteCSVField(FColumns[Col].Title, DelimChar));
+          end;
+        end;
+        SB.AppendLine;
+      end;
+
+      { Write data rows }
+      for Row := StartRow to FRowCount - 1 do
+      begin
+        for Col := 0 to FColumns.Count - 1 do
+        begin
+          if Col > 0 then
+            SB.Append(DelimChar);
+          Value := GetCell(Col, Row);
+          SB.Append(QuoteCSVField(Value, DelimChar));
+        end;
+        SB.AppendLine;
+      end;
+
+      Result := SB.ToString;
+    finally
+      SB.Free;
+    end;
+  finally
+    if OwnOptions then
+      Options.Free;
+  end;
+end;
+
+procedure TStringGrid.SaveToCSVStream(Stream: TStream; Options: TCSVOptions);
+var
+  Data: string;
+  Bytes: TBytes;
+  BOM: array[0..2] of Byte;
+  OwnOptions: Boolean;
+  Enc: TCSVEncoding;
+begin
+  OwnOptions := (Options = nil);
+  if OwnOptions then
+    Options := TCSVOptions.Create;
+  try
+    { Generate CSV string }
+    Data := SaveToCSVString(Options);
+    Enc := Options.Encoding;
+
+    { Convert to bytes based on encoding }
+    case Enc of
+      ceUTF8BOM:
+      begin
+        { Write UTF-8 BOM }
+        BOM[0] := $EF; BOM[1] := $BB; BOM[2] := $BF;
+        Stream.WriteBuffer(BOM, 3);
+        Bytes := TEncoding.UTF8.GetBytes(Data);
+        if Length(Bytes) > 0 then
+          Stream.WriteBuffer(Bytes[0], Length(Bytes));
+      end;
+      ceUTF8:
+      begin
+        Bytes := TEncoding.UTF8.GetBytes(Data);
+        if Length(Bytes) > 0 then
+          Stream.WriteBuffer(Bytes[0], Length(Bytes));
+      end;
+      ceANSI:
+      begin
+        Bytes := TEncoding.ANSI.GetBytes(Data);
+        if Length(Bytes) > 0 then
+          Stream.WriteBuffer(Bytes[0], Length(Bytes));
+      end;
+    end;
+  finally
+    if OwnOptions then
+      Options.Free;
+  end;
+end;
+
+procedure TStringGrid.SaveToCSV(const FileName: string; Options: TCSVOptions);
+var
+  Stream: TFileStream;
+begin
+  Stream := TFileStream.Create(FileName, fmCreate);
+  try
+    SaveToCSVStream(Stream, Options);
+  finally
+    Stream.Free;
+  end;
+end;
+
+procedure TStringGrid.LoadFromCSVString(const CSVData: string; Options: TCSVOptions);
+var
+  Lines: TStringList;
+  Fields: TArray<string>;
+  Row, Col, DataRow: Integer;
+  EffectiveDelim: TCSVDelimiter;
+  DelimChar: Char;
+  OwnOptions: Boolean;
+  Value: string;
+begin
+  OwnOptions := (Options = nil);
+  if OwnOptions then
+    Options := TCSVOptions.Create;
+  try
+    { Determine delimiter - CustomDelimiter overrides enum }
+    if Options.CustomDelimiter <> #0 then
+      DelimChar := Options.CustomDelimiter
+    else if Options.Delimiter = cdAuto then
+    begin
+      EffectiveDelim := DetectDelimiter(CSVData);
+      DelimChar := GetDelimiterChar(EffectiveDelim);
+    end
+    else
+      DelimChar := GetDelimiterChar(Options.Delimiter);
+
+    { Clear existing data }
+    ClearRows;
+
+    Lines := TStringList.Create;
+    try
+      Lines.Text := CSVData;
+      DataRow := 0;
+
+      for Row := 0 to Lines.Count - 1 do
+      begin
+        if Lines[Row] = '' then Continue;  { Skip empty lines }
+
+        ParseCSVLine(Lines[Row], DelimChar, Fields);
+
+        if (Row = 0) and Options.HasHeaders then
+        begin
+          { Process header row }
+          if Options.AutoCreateColumns then
+          begin
+            FColumns.Clear;
+            for Col := 0 to High(Fields) do
+            begin
+              Value := Fields[Col];
+              if Options.TrimWhitespace then
+                Value := Trim(Value);
+              FColumns.Add(Value, 10);
+            end;
+          end
+          else
+          begin
+            { Update existing column titles }
+            for Col := 0 to Min(High(Fields), FColumns.Count - 1) do
+            begin
+              Value := Fields[Col];
+              if Options.TrimWhitespace then
+                Value := Trim(Value);
+              FColumns[Col].Title := Value;
+            end;
+          end;
+
+          { If UseFixedHeaderRow, also add headers as row 0 data }
+          if Options.UseFixedHeaderRow then
+          begin
+            AddRow;
+            for Col := 0 to High(Fields) do
+            begin
+              if Col < FColumns.Count then
+              begin
+                Value := Fields[Col];
+                if Options.TrimWhitespace then
+                  Value := Trim(Value);
+                SetCell(Col, 0, Value);
+              end;
+            end;
+            DataRow := 1;
+            FFixedRows := 1;
+          end;
+        end
+        else
+        begin
+          { Process data row }
+          if Options.AutoCreateColumns and (FColumns.Count = 0) then
+          begin
+            { No headers - create generic columns }
+            for Col := 0 to High(Fields) do
+              FColumns.Add('Column ' + IntToStr(Col + 1), 10);
+          end;
+
+          { Add new row }
+          AddRow;
+          for Col := 0 to High(Fields) do
+          begin
+            if Col < FColumns.Count then
+            begin
+              Value := Fields[Col];
+              if Options.TrimWhitespace then
+                Value := Trim(Value);
+              SetCell(Col, DataRow, Value);
+            end;
+          end;
+          Inc(DataRow);
+        end;
+      end;
+
+      { Auto-fit columns to content }
+      AutoFitAllColumns;
+    finally
+      Lines.Free;
+    end;
+
+    { Reset state }
+    FModified := False;
+    if Options.UseFixedHeaderRow and (FRowCount > 0) then
+      FFocusedCell := TGridCell.Create(0, FFixedRows)
+    else
+      FFocusedCell := TGridCell.Create(0, 0);
+    FTopRow := 0;
+    FLeftCol := 0;
+    UpdateScrollBars;
+    DrawView;
+  finally
+    if OwnOptions then
+      Options.Free;
+  end;
+end;
+
+procedure TStringGrid.LoadFromCSVStream(Stream: TStream; Options: TCSVOptions);
+var
+  Bytes: TBytes;
+  Data: string;
+  StartPos: Integer;
+begin
+  { Read all bytes from stream }
+  SetLength(Bytes, Stream.Size - Stream.Position);
+  if Length(Bytes) > 0 then
+    Stream.ReadBuffer(Bytes[0], Length(Bytes));
+
+  { Detect and skip UTF-8 BOM if present }
+  StartPos := 0;
+  if (Length(Bytes) >= 3) and (Bytes[0] = $EF) and (Bytes[1] = $BB) and (Bytes[2] = $BF) then
+    StartPos := 3;
+
+  { Convert to string (UTF-8) }
+  if StartPos > 0 then
+    Data := TEncoding.UTF8.GetString(Bytes, StartPos, Length(Bytes) - StartPos)
+  else
+    Data := TEncoding.UTF8.GetString(Bytes);
+
+  LoadFromCSVString(Data, Options);
+end;
+
+procedure TStringGrid.LoadFromCSV(const FileName: string; Options: TCSVOptions);
+var
+  Stream: TFileStream;
+begin
+  Stream := TFileStream.Create(FileName, fmOpenRead or fmShareDenyWrite);
+  try
+    LoadFromCSVStream(Stream, Options);
+  finally
+    Stream.Free;
   end;
 end;
 

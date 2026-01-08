@@ -72,6 +72,9 @@ const
   cmTestTerminalPwsh = 1030;
   cmTestTerminalCustom = 1031;
   cmTestHexEditor = 1032;
+  cmTestStringGridCSV = 1033;
+  cmGridLoadCSV = 1034;
+  cmGridSaveCSV = 1035;
 
 var
   ExceptionLog: TextFile;
@@ -147,6 +150,7 @@ type
     procedure TestStringGrid;
     procedure TestStringGrid2;
     procedure TestStringGrid3;
+    procedure TestStringGridCSV;
     procedure OnCalendarDateSelect(Calendar: TCalendarView);
     procedure OnGridCellFocused(Sender: TObject; Col, Row: Integer);
     procedure TestTerminalCmd;
@@ -175,6 +179,23 @@ type
     constructor Create(var Bounds: TRect); reintroduce; virtual;
     procedure HandleEvent(var Event: TEvent); override;
     property CellLabel: TStaticText read FCellLabel write FCellLabel;
+    property Grid: TStringGrid read FGrid write FGrid;
+  end;
+
+  { Custom window for grid CSV load/save testing }
+  TGridCSVTestWindow = class(TWindow)
+  private
+    FStatusLabel: TStaticText;
+    FGrid: TStringGrid;
+    FFixedHeaderCheck: TCheckBoxes;
+    FDelimiterInput: TInputLine;
+  public
+    constructor Create(var Bounds: TRect); reintroduce; virtual;
+    procedure HandleEvent(var Event: TEvent); override;
+    procedure LoadCSV;
+    procedure SaveCSV;
+    function GetCSVOptions: TCSVOptions;
+    property StatusLabel: TStaticText read FStatusLabel write FStatusLabel;
     property Grid: TStringGrid read FGrid write FGrid;
   end;
 
@@ -394,6 +415,247 @@ begin
   end;
 end;
 
+{ TGridCSVTestWindow - demonstrates grid CSV load/save }
+constructor TGridCSVTestWindow.Create(var Bounds: TRect);
+var
+  R: TRect;
+  HScrollBar, VScrollBar: TScrollBar;
+  LoadBtn, SaveBtn: TButton;
+begin
+  inherited Create(Bounds, 'StringGrid CSV Test', wnNoNumber);
+  Options := Options or ofTileable;
+  Flags := Flags and not wfZoom;
+
+  { Create vertical scrollbar }
+  GetExtent(R);
+  R.A.X := R.B.X - 2;
+  R.B.X := R.B.X - 1;
+  R.A.Y := 1;
+  R.B.Y := R.B.Y - 6;
+  VScrollBar := TScrollBar.Create(R);
+  VScrollBar.GrowMode := gfGrowLoX + gfGrowHiX + gfGrowHiY;
+  Insert(VScrollBar);
+
+  { Create horizontal scrollbar }
+  GetExtent(R);
+  R.A.X := 1;
+  R.B.X := R.B.X - 2;
+  R.A.Y := R.B.Y - 6;
+  R.B.Y := R.B.Y - 5;
+  HScrollBar := TScrollBar.Create(R);
+  HScrollBar.GrowMode := gfGrowLoY + gfGrowHiY + gfGrowHiX;
+  Insert(HScrollBar);
+
+  { Create the string grid }
+  GetExtent(R);
+  R.A.X := 1;
+  R.A.Y := 1;
+  R.B.X := R.B.X - 2;
+  R.B.Y := R.B.Y - 6;
+  FGrid := TStringGrid.Create(R, 3, HScrollBar, VScrollBar);
+  FGrid.GrowMode := gfGrowHiX + gfGrowHiY;
+
+  { Configure default columns }
+  FGrid.Columns[0].Title := 'Name';
+  FGrid.Columns[0].Width := 15;
+  FGrid.Columns[1].Title := 'Value';
+  FGrid.Columns[1].Width := 10;
+  FGrid.Columns[2].Title := 'Description';
+  FGrid.Columns[2].Width := 20;
+
+  { Set grid options }
+  FGrid.FixedRows := 0;
+  FGrid.ShowGridLines := True;
+  FGrid.SelectionMode := smCell;
+  FGrid.EditMode := emF2;
+
+  { Add sample data }
+  FGrid.RowCount := 3;
+  FGrid[0, 0] := 'Alpha';
+  FGrid[1, 0] := '100';
+  FGrid[2, 0] := 'First item';
+  FGrid[0, 1] := 'Beta';
+  FGrid[1, 1] := '200';
+  FGrid[2, 1] := 'Second item';
+  FGrid[0, 2] := 'Gamma';
+  FGrid[1, 2] := '300';
+  FGrid[2, 2] := 'Third item';
+
+  Insert(FGrid);
+
+  { Options row - Fixed Header checkbox }
+  GetExtent(R);
+  R.A.X := 1;
+  R.A.Y := R.B.Y - 5;
+  R.B.X := 24;
+  R.B.Y := R.B.Y - 4;
+  FFixedHeaderCheck := TCheckBoxes.Create(R, NewSItem('~F~ixed Header Row', nil));
+  Insert(FFixedHeaderCheck);
+
+  { Delimiter label }
+  GetExtent(R);
+  R.A.X := 25;
+  R.A.Y := R.B.Y - 5;
+  R.B.X := 36;
+  R.B.Y := R.B.Y - 4;
+  Insert(TStaticText.Create(R, 'Delimiter:'));
+
+  { Delimiter input (single char) }
+  GetExtent(R);
+  R.A.X := 36;
+  R.A.Y := R.B.Y - 5;
+  R.B.X := 40;
+  R.B.Y := R.B.Y - 4;
+  FDelimiterInput := TInputLine.Create(R, 1);
+  Insert(FDelimiterInput);
+
+  { Hint for auto-detect }
+  GetExtent(R);
+  R.A.X := 41;
+  R.A.Y := R.B.Y - 5;
+  R.B.X := R.B.X - 1;
+  R.B.Y := R.B.Y - 4;
+  Insert(TStaticText.Create(R, '(empty=auto)'));
+
+  { Add status label }
+  GetExtent(R);
+  R.A.X := 1;
+  R.A.Y := R.B.Y - 3;
+  R.B.X := R.B.X - 22;
+  R.B.Y := R.B.Y - 2;
+  FStatusLabel := TStaticText.Create(R, 'Press Load or Save button');
+  Insert(FStatusLabel);
+
+  { Add Load button }
+  GetExtent(R);
+  R.A.X := R.B.X - 21;
+  R.A.Y := R.B.Y - 3;
+  R.B.X := R.B.X - 12;
+  R.B.Y := R.B.Y - 1;
+  LoadBtn := TButton.Create(R, '~L~oad', cmGridLoadCSV, bfNormal);
+  Insert(LoadBtn);
+
+  { Add Save button }
+  GetExtent(R);
+  R.A.X := R.B.X - 11;
+  R.A.Y := R.B.Y - 3;
+  R.B.X := R.B.X - 2;
+  R.B.Y := R.B.Y - 1;
+  SaveBtn := TButton.Create(R, '~S~ave', cmGridSaveCSV, bfNormal);
+  Insert(SaveBtn);
+
+  FGrid.Select;
+end;
+
+procedure TGridCSVTestWindow.HandleEvent(var Event: TEvent);
+begin
+  inherited HandleEvent(Event);
+
+  if Event.What = evCommand then begin
+    case Event.Command of
+      cmGridLoadCSV:
+        begin
+          LoadCSV;
+          ClearEvent(Event);
+        end;
+      cmGridSaveCSV:
+        begin
+          SaveCSV;
+          ClearEvent(Event);
+        end;
+    end;
+  end;
+end;
+
+function TGridCSVTestWindow.GetCSVOptions: TCSVOptions;
+var
+  DelimStr: string;
+begin
+  Result := TCSVOptions.Create;
+
+  { Check if Fixed Header Row is selected }
+  if (FFixedHeaderCheck.Value and 1) <> 0 then
+    Result.UseFixedHeaderRow := True;
+
+  { Get custom delimiter if specified }
+  DelimStr := FDelimiterInput.Data;
+  if Length(DelimStr) > 0 then
+    Result.CustomDelimiter := DelimStr[1];
+end;
+
+procedure TGridCSVTestWindow.LoadCSV;
+var
+  Dlg: TFileDialog;
+  FileName: PathStr;
+  C: Word;
+  Opts: TCSVOptions;
+begin
+  FileName := '*.csv';
+  Dlg := TFileDialog.Create('*.csv', 'Load CSV File', '~N~ame', fdOpenButton, 1);
+  if Dlg <> nil then begin
+    C := Desktop.ExecView(Dlg);
+    if C = cmFileOpen then begin
+      Dlg.GetData(FileName);
+      Opts := GetCSVOptions;
+      try
+        try
+          FGrid.LoadFromCSV(FileName, Opts);
+          if Opts.UseFixedHeaderRow then
+            FStatusLabel.Text := 'Loaded (fixed hdr): ' + ExtractFileName(FileName)
+          else
+            FStatusLabel.Text := 'Loaded: ' + ExtractFileName(FileName);
+          FStatusLabel.DrawView;
+        except
+          on E: Exception do begin
+            MessageBox('Error loading CSV: ' + E.Message, mfError + mfOKButton);
+            FStatusLabel.Text := 'Load failed';
+            FStatusLabel.DrawView;
+          end;
+        end;
+      finally
+        Opts.Free;
+      end;
+    end;
+    Dlg.Free;
+  end;
+end;
+
+procedure TGridCSVTestWindow.SaveCSV;
+var
+  Dlg: TFileDialog;
+  FileName: PathStr;
+  C: Word;
+  Opts: TCSVOptions;
+begin
+  FileName := 'grid_data.csv';
+  Dlg := TFileDialog.Create('*.csv', 'Save CSV File', '~N~ame', fdOKButton, 1);
+  if Dlg <> nil then begin
+    Dlg.SetData(FileName);
+    C := Desktop.ExecView(Dlg);
+    if C = cmFileOpen then begin
+      Dlg.GetData(FileName);
+      Opts := GetCSVOptions;
+      try
+        try
+          FGrid.SaveToCSV(FileName, Opts);
+          FStatusLabel.Text := 'Saved: ' + ExtractFileName(FileName);
+          FStatusLabel.DrawView;
+          MessageBox('CSV file saved successfully!', mfInformation + mfOKButton);
+        except
+          on E: Exception do begin
+            MessageBox('Error saving CSV: ' + E.Message, mfError + mfOKButton);
+            FStatusLabel.Text := 'Save failed';
+            FStatusLabel.DrawView;
+          end;
+        end;
+      finally
+        Opts.Free;
+      end;
+    end;
+    Dlg.Free;
+  end;
+end;
+
 { TTabTestDialog }
 constructor TTabTestDialog.Create(var Bounds: TRect; const ATitle: string);
 begin
@@ -543,7 +805,8 @@ begin
         NewItem('~B~asic Test', '', kbNoKey, cmTestStringGrid, hcNoContext,
         NewItem('~B~roadcast Label', '', kbNoKey, cmTestStringGrid2, hcNoContext,
         NewItem('~C~allback Label', '', kbNoKey, cmTestStringGrid3, hcNoContext,
-        nil)))),
+        NewItem('C~S~V Load/Save', '', kbNoKey, cmTestStringGridCSV, hcNoContext,
+        nil))))),
       NewSubMenu('Ca~l~endar', hcNoContext, NewMenu(
         NewItem('~C~allback', '', kbNoKey, cmTestCalendar, hcNoContext,
         NewItem('~B~roadcast', '', kbNoKey, cmTestCalendarBroadcast, hcNoContext,
@@ -640,6 +903,7 @@ begin
         cmTestStringGrid: TestStringGrid;
         cmTestStringGrid2: TestStringGrid2;
         cmTestStringGrid3: TestStringGrid3;
+        cmTestStringGridCSV: TestStringGridCSV;
         cmTestTerminalCmd: TestTerminalCmd;
         cmTestTerminalPwsh: TestTerminalPwsh;
         cmTestTerminalCustom: TestTerminalCustom;
@@ -1772,6 +2036,18 @@ begin
     FGridCellLabel.Text := S;
     FGridCellLabel.DrawView;
   end;
+end;
+
+procedure TMyApp.TestStringGridCSV;
+{ Test the TStringGrid CSV import/export with options }
+var
+  R: TRect;
+  Win: TGridCSVTestWindow;
+begin
+  R.Assign(3, 1, 72, 22);  { Larger window to fit options row }
+  Win := TGridCSVTestWindow.Create(R);
+  if Win <> nil then
+    Desktop.Insert(Win);
 end;
 
 { Editor test cases }
