@@ -36,7 +36,23 @@ uses
   Grid in 'src\Grid.pas',
   ConPTY in 'src\ConPTY.pas',
   Terminal in 'src\Terminal.pas',
-  HexEdit in 'src\HexEdit.pas';
+  HexEdit in 'src\HexEdit.pas',
+  UptimeView in 'src\UptimeView.pas',
+  ToggleSwitch in 'src\ToggleSwitch.pas',
+  LogViewer in 'src\LogViewer.pas',
+  LEDDigits in 'src\LEDDigits.pas',
+  BlinkIndicator in 'src\BlinkIndicator.pas',
+  Marquee in 'src\Marquee.pas',
+  Sparkline in 'src\Sparkline.pas',
+  BarChart in 'src\BarChart.pas',
+  VUMeter in 'src\VUMeter.pas',
+  RAMView in 'src\RAMView.pas',
+  DiskUsageView in 'src\DiskUsageView.pas',
+  ProcessView in 'src\ProcessView.pas',
+  CPUMeter in 'src\CPUMeter.pas',
+  BatteryView in 'src\BatteryView.pas',
+  NetworkView in 'src\NetworkView.pas',
+  CPUCoreView in 'src\CPUCoreView.pas';
 
 const
   cmNewWindow = 100;
@@ -78,6 +94,12 @@ const
   cmHexLoadFile = 1036;
   cmHexSaveFile = 1037;
   cmTestModernFileDialog = 1038;
+  cmTestNewGadgets = 1039;
+  cmAddLogEntry = 1040;
+  cmTestGadgetsPhase2 = 1041;
+  cmAddSparkValue = 1042;
+  cmAddBarValue = 1043;
+  cmTestSystemInfo = 1044;
 
 var
   ExceptionLog: TextFile;
@@ -87,6 +109,7 @@ var
   LastSecond: Word = 65535;
   ClockView: TClockView = nil;
   HeapView: THeapView = nil;
+  UptimeViewGadget: TUptimeView = nil;
 
 procedure LogException(const Context: string; E: Exception);
 begin
@@ -161,6 +184,9 @@ type
     procedure TestTerminalCustom;
     procedure TestHexEditor;
     procedure TestModernFileDialog;
+    procedure TestNewGadgets;
+    procedure TestGadgetsPhase2;
+    procedure TestSystemInfo;
     property CalendarDateLabel: TStaticText read FCalendarDateLabel write FCalendarDateLabel;
   end;
 
@@ -219,6 +245,39 @@ type
     property Editor: THexEditor read FEditor;
   end;
 
+  { Custom dialog for new gadgets demo }
+  TGadgetsDemoDialog = class(TDialog)
+  private
+    FLogView: TLogViewer;
+    FAutoScrollToggle: TToggleSwitch;
+    FTimestampToggle: TToggleSwitch;
+    FDebugToggle: TToggleSwitch;
+    FLogCounter: Integer;
+  public
+    constructor Create; reintroduce;
+    procedure HandleEvent(var Event: TEvent); override;
+    procedure AddRandomLogEntry;
+    property LogView: TLogViewer read FLogView;
+  end;
+
+  { Phase 2 gadgets demo dialog }
+  TPhase2DemoDialog = class(TDialog)
+  private
+    FLEDDigits: TLEDDigits;
+    FBlinker1, FBlinker2, FBlinker3: TBlinkIndicator;
+    FMarquee: TMarquee;
+    FSparkline: TSparkline;
+    FBarChart: TBarChart;
+    FVUMeter: TVUMeter;
+    FCounter: Integer;
+    FVUValue: Double;
+    FVUDirection: Integer;
+  public
+    constructor Create; reintroduce;
+    procedure HandleEvent(var Event: TEvent); override;
+    procedure UpdateGadgets;
+  end;
+
   { Custom scroller that displays numbered lines }
   TTextScroller = class(TScroller)
   public
@@ -245,9 +304,25 @@ type
     property TabCounter: Integer read FTabCounter write FTabCounter;
   end;
 
+  { System Information demo dialog }
+  TSystemInfoDialog = class(TDialog)
+  private
+    FCPUCores: array of TCPUCoreView;
+    FRAMView: TRAMView;
+    FDiskView: TDiskUsageView;
+    FProcessView: TProcessCountView;
+    FNetworkView: TNetworkActivityView;
+    FBatteryView: TBatteryStatusView;
+  public
+    constructor Create; reintroduce;
+    procedure UpdateWidgets;
+  end;
+
 var
   MyApp: TMyApp;
   WindowCount: Integer;
+  Phase2Dialog: TPhase2DemoDialog = nil;
+  SystemInfoDialog: TSystemInfoDialog = nil;
 
 function TMyStatusLine.Hint(AHelpCtx: Word): string;
 begin
@@ -849,6 +924,409 @@ begin
   end;
 end;
 
+{ TGadgetsDemoDialog }
+constructor TGadgetsDemoDialog.Create;
+var
+  R: TRect;
+  ScrollBar: TScrollBar;
+  Uptime: TUptimeView;
+  Btn: TButton;
+begin
+  R.Assign(5, 2, 75, 22);
+  inherited Create(R, 'New Gadgets Demo');
+  FLogCounter := 0;
+
+  { Add uptime view at the top }
+  R.Assign(2, 1, 22, 2);
+  Uptime := TUptimeView.CreateCompact(R);
+  Insert(Uptime);
+  UptimeViewGadget := Uptime;
+
+  R.Assign(23, 1, 43, 2);
+  Insert(TStaticText.Create(R, 'System Uptime'));
+
+  { Add toggle switches with distinct commands }
+  R.Assign(2, 3, 35, 4);
+  FAutoScrollToggle := TToggleSwitch.Create(R, '~A~uto-scroll log', cmToggleChanged, True);
+  FAutoScrollToggle.Style := tsSlider;
+  Insert(FAutoScrollToggle);
+
+  R.Assign(2, 4, 35, 5);
+  FTimestampToggle := TToggleSwitch.Create(R, '~T~imestamps', cmToggleChanged, True);
+  FTimestampToggle.Style := tsCheckbox;
+  Insert(FTimestampToggle);
+
+  R.Assign(2, 5, 35, 6);
+  FDebugToggle := TToggleSwitch.Create(R, 'Show ~D~ebug', cmToggleChanged, True);
+  FDebugToggle.Style := tsBrackets;
+  Insert(FDebugToggle);
+
+  { Add button to add log entries }
+  R.Assign(40, 3, 58, 5);
+  Btn := TButton.Create(R, 'Add ~L~og', cmAddLogEntry, bfNormal);
+  Insert(Btn);
+
+  { Add scrollbar for log viewer }
+  R.Assign(67, 7, 68, 17);
+  ScrollBar := TScrollBar.Create(R);
+  Insert(ScrollBar);
+
+  { Add log viewer }
+  R.Assign(2, 7, 67, 17);
+  FLogView := TLogViewer.Create(R, 500, ScrollBar);
+  Insert(FLogView);
+
+  { Add sample log entries }
+  FLogView.Debug('Application started');
+  FLogView.Info('Loading configuration...');
+  FLogView.Info('Configuration loaded successfully');
+  FLogView.Warn('Deprecated setting detected: use_legacy_mode');
+  FLogView.Info('Initializing subsystems...');
+  FLogView.Debug('Subsystem A initialized');
+  FLogView.Debug('Subsystem B initialized');
+  FLogView.Info('All subsystems ready');
+  FLogView.Error('Connection to server failed: timeout');
+  FLogView.Info('Retrying connection...');
+  FLogView.Info('Connection established');
+  FLogView.Debug('Handshake complete');
+  FLogView.Info('Ready for user input');
+
+  { Add close button }
+  R.Assign(28, 18, 42, 20);
+  Btn := TButton.Create(R, '~C~lose', cmCancel, bfDefault);
+  Insert(Btn);
+end;
+
+procedure TGadgetsDemoDialog.HandleEvent(var Event: TEvent);
+begin
+  { Handle toggle broadcasts BEFORE inherited, so they don't get consumed }
+  if (Event.What = evBroadcast) and (Event.Command = cmToggleChanged) then begin
+    { Update log viewer based on toggle states }
+    if Event.InfoPtr = Pointer(FAutoScrollToggle) then begin
+      FLogView.AutoScroll := FAutoScrollToggle.Value;
+      if FAutoScrollToggle.Value then
+        FLogView.ScrollToEnd;
+    end
+    else if Event.InfoPtr = Pointer(FTimestampToggle) then begin
+      FLogView.ShowTimestamp := FTimestampToggle.Value;
+      FLogView.DrawView;
+    end
+    else if Event.InfoPtr = Pointer(FDebugToggle) then begin
+      if FDebugToggle.Value then
+        FLogView.ShowAll
+      else
+        FLogView.HideDebug;
+    end;
+    ClearEvent(Event);
+    Exit;
+  end;
+
+  inherited HandleEvent(Event);
+
+  if Event.What = evCommand then begin
+    case Event.Command of
+      cmAddLogEntry: begin
+        AddRandomLogEntry;
+        ClearEvent(Event);
+      end;
+    end;
+  end;
+end;
+
+procedure TGadgetsDemoDialog.AddRandomLogEntry;
+const
+  InfoMessages: array[0..4] of string = (
+    'Processing user request',
+    'Data synchronized successfully',
+    'Cache refreshed',
+    'Background task completed',
+    'New connection accepted'
+  );
+  DebugMessages: array[0..4] of string = (
+    'Memory allocation: 1024 bytes',
+    'Thread pool size: 4',
+    'Buffer flushed',
+    'Checkpoint created',
+    'GC cycle completed'
+  );
+  WarnMessages: array[0..2] of string = (
+    'High memory usage detected',
+    'Slow query detected (>100ms)',
+    'Rate limit approaching'
+  );
+  ErrorMessages: array[0..2] of string = (
+    'Database connection lost',
+    'File not found: config.ini',
+    'Permission denied'
+  );
+var
+  SeverityRoll: Integer;
+begin
+  Inc(FLogCounter);
+  SeverityRoll := FLogCounter mod 10;
+
+  case SeverityRoll of
+    0: FLogView.Error(ErrorMessages[FLogCounter mod Length(ErrorMessages)]);
+    1, 2: FLogView.Warn(WarnMessages[FLogCounter mod Length(WarnMessages)]);
+    3, 4, 5: FLogView.Debug(DebugMessages[FLogCounter mod Length(DebugMessages)]);
+  else
+    FLogView.Info(InfoMessages[FLogCounter mod Length(InfoMessages)]);
+  end;
+end;
+
+{ TPhase2DemoDialog }
+constructor TPhase2DemoDialog.Create;
+var
+  R: TRect;
+  Btn: TButton;
+begin
+  R.Assign(2, 1, 78, 24);
+  inherited Create(R, 'Phase 2 Gadgets Demo');
+  FCounter := 0;
+  FVUValue := 0;
+  FVUDirection := 1;
+
+  { Row 1: LED Digits (left) and Blink Indicators (right) }
+  R.Assign(2, 1, 18, 4);
+  FLEDDigits := TLEDDigits.Create(R, 4);
+  FLEDDigits.LeadingZeros := True;
+  Insert(FLEDDigits);
+
+  R.Assign(20, 1, 21, 2);
+  Insert(TStaticText.Create(R, 'Counter'));
+
+  { Blink indicators }
+  R.Assign(35, 1, 50, 2);
+  FBlinker1 := TBlinkIndicator.Create(R, 'Network');
+  FBlinker1.Blink;
+  FBlinker1.BlinkInterval := 300;
+  Insert(FBlinker1);
+
+  R.Assign(35, 2, 50, 3);
+  FBlinker2 := TBlinkIndicator.Create(R, 'Disk');
+  FBlinker2.TurnOn;
+  Insert(FBlinker2);
+
+  R.Assign(35, 3, 50, 4);
+  FBlinker3 := TBlinkIndicator.Create(R, 'CPU');
+  FBlinker3.TurnOff;
+  Insert(FBlinker3);
+
+  { Row 2: Marquee (full width) }
+  R.Assign(2, 5, 73, 6);
+  FMarquee := TMarquee.Create(R, 'Welcome to Free Vision Modern!  This is a scrolling marquee demo.  Enjoy the new TUI gadgets!  ');
+  FMarquee.ScrollSpeed := 100;
+  Insert(FMarquee);
+
+  R.Assign(2, 4, 10, 5);
+  Insert(TStaticText.Create(R, 'Ticker:'));
+
+  { Row 3: Sparkline }
+  R.Assign(2, 7, 50, 8);
+  FSparkline := TSparkline.Create(R, 48);
+  { Add some initial data }
+  FSparkline.SetValues([10, 25, 40, 35, 50, 45, 60, 55, 70, 65, 80, 75, 90, 85, 95, 80, 70, 60, 50, 40]);
+  Insert(FSparkline);
+
+  R.Assign(2, 6, 15, 7);
+  Insert(TStaticText.Create(R, 'Sparkline:'));
+
+  R.Assign(52, 6, 73, 8);
+  Btn := TButton.Create(R, 'Add ~V~alue', cmAddSparkValue, bfNormal);
+  Insert(Btn);
+
+  { Row 4: Bar Chart }
+  R.Assign(2, 9, 45, 14);
+  FBarChart := TBarChart.Create(R);
+  FBarChart.AddBar('Alpha', 75);
+  FBarChart.AddBar('Beta', 45);
+  FBarChart.AddBar('Gamma', 90);
+  FBarChart.AddBar('Delta', 30);
+  FBarChart.AddBar('Epsilon', 60);
+  Insert(FBarChart);
+
+  R.Assign(2, 8, 15, 9);
+  Insert(TStaticText.Create(R, 'Bar Chart:'));
+
+  R.Assign(47, 9, 73, 11);
+  Btn := TButton.Create(R, 'Randomize ~B~ars', cmAddBarValue, bfNormal);
+  Insert(Btn);
+
+  { Row 5: VU Meter }
+  R.Assign(2, 15, 52, 16);
+  FVUMeter := TVUMeter.Create(R, False);
+  FVUMeter.SetLevel(50);
+  Insert(FVUMeter);
+
+  R.Assign(2, 14, 15, 15);
+  Insert(TStaticText.Create(R, 'VU Meter:'));
+
+  R.Assign(54, 15, 73, 16);
+  Insert(TStaticText.Create(R, '(auto-animating)'));
+
+  { Close button }
+  R.Assign(30, 18, 46, 20);
+  Btn := TButton.Create(R, '~C~lose', cmCancel, bfDefault);
+  Insert(Btn);
+end;
+
+procedure TPhase2DemoDialog.HandleEvent(var Event: TEvent);
+var
+  I: Integer;
+begin
+  { Handle our commands BEFORE inherited to prevent them being consumed }
+  if Event.What = evCommand then begin
+    case Event.Command of
+      cmAddSparkValue: begin
+        FSparkline.AddValue(Random(100));
+        ClearEvent(Event);
+        Exit;
+      end;
+      cmAddBarValue: begin
+        for I := 0 to 4 do
+          FBarChart.SetBar(I, Random(100));
+        ClearEvent(Event);
+        Exit;
+      end;
+    end;
+  end;
+
+  inherited HandleEvent(Event);
+end;
+
+procedure TPhase2DemoDialog.UpdateGadgets;
+begin
+  { Update LED counter }
+  Inc(FCounter);
+  FLEDDigits.SetValue(FCounter mod 10000);
+
+  { Update blinkers }
+  FBlinker1.Update;
+  FBlinker2.Update;
+  FBlinker3.Update;
+
+  { Toggle disk blinker occasionally }
+  if (FCounter mod 30) = 0 then begin
+    if FBlinker2.State = bsOn then
+      FBlinker2.TurnOff
+    else
+      FBlinker2.TurnOn;
+  end;
+
+  { Toggle CPU blinker more frequently }
+  if (FCounter mod 10) = 0 then begin
+    if FBlinker3.State = bsOn then
+      FBlinker3.TurnOff
+    else
+      FBlinker3.TurnOn;
+  end;
+
+  { Update marquee }
+  FMarquee.Update;
+
+  { Animate VU meter - only update every 3rd call }
+  if (FCounter mod 3) = 0 then begin
+    FVUValue := FVUValue + (FVUDirection * (1 + Random(2)));
+    if FVUValue >= 85 then begin
+      FVUValue := 85;
+      FVUDirection := -1;
+    end
+    else if FVUValue <= 5 then begin
+      FVUValue := 5;
+      FVUDirection := 1;
+    end;
+    FVUMeter.SetLevel(FVUValue);
+    FVUMeter.Update;
+  end;
+end;
+
+{ TSystemInfoDialog }
+constructor TSystemInfoDialog.Create;
+var
+  R: TRect;
+  Btn: TButton;
+  CoreCount, I, Y, MaxCores: Integer;
+begin
+  CoreCount := TCPUCoreView.GetCoreCount;
+  MaxCores := 8;  { Limit display to 8 cores max }
+  if CoreCount > MaxCores then CoreCount := MaxCores;
+
+  { Calculate dialog height based on core count }
+  { Cores + Total + RAM + Disk + separator + Procs + separator + Net + Batt + button }
+  R.Assign(5, 1, 70, 12 + CoreCount + 2);
+  inherited Create(R, 'System Information');
+
+  Y := 1;
+
+  { CPU Total first }
+  SetLength(FCPUCores, CoreCount + 1);
+  R.Assign(2, Y, 62, Y + 1);
+  FCPUCores[0] := TCPUCoreView.Create(R, -1);  { -1 = Total }
+  FCPUCores[0].LabelWidth := 7;
+  Insert(FCPUCores[0]);
+  Inc(Y);
+
+  { Per-core CPU }
+  for I := 0 to CoreCount - 1 do begin
+    R.Assign(2, Y, 62, Y + 1);
+    FCPUCores[I + 1] := TCPUCoreView.Create(R, I);
+    FCPUCores[I + 1].LabelWidth := 7;
+    Insert(FCPUCores[I + 1]);
+    Inc(Y);
+  end;
+
+  { RAM View }
+  R.Assign(2, Y, 62, Y + 1);
+  FRAMView := TRAMView.Create(R, rdBar);
+  Insert(FRAMView);
+  Inc(Y);
+
+  { Disk Usage }
+  R.Assign(2, Y, 62, Y + 1);
+  FDiskView := TDiskUsageView.Create(R, 'C');
+  Insert(FDiskView);
+  Inc(Y);
+
+  { Separator }
+  Inc(Y);
+
+  { Process Count }
+  R.Assign(2, Y, 62, Y + 1);
+  FProcessView := TProcessCountView.Create(R);
+  Insert(FProcessView);
+  Inc(Y);
+
+  { Network Activity }
+  R.Assign(2, Y, 62, Y + 1);
+  FNetworkView := TNetworkActivityView.Create(R);
+  Insert(FNetworkView);
+  Inc(Y);
+
+  { Battery Status }
+  R.Assign(2, Y, 62, Y + 1);
+  FBatteryView := TBatteryStatusView.Create(R);
+  Insert(FBatteryView);
+  Inc(Y, 2);
+
+  { Close button }
+  R.Assign(25, Y, 41, Y + 2);
+  Btn := TButton.Create(R, '~C~lose', cmCancel, bfDefault);
+  Insert(Btn);
+end;
+
+procedure TSystemInfoDialog.UpdateWidgets;
+var
+  I: Integer;
+begin
+  for I := 0 to High(FCPUCores) do
+    FCPUCores[I].Update;
+  FRAMView.Update;
+  FDiskView.Update;
+  FProcessView.Update;
+  FNetworkView.Update;
+  FBatteryView.Update;
+end;
+
 { TTabTestDialog }
 constructor TTabTestDialog.Create(var Bounds: TRect; const ATitle: string);
 begin
@@ -1017,7 +1495,10 @@ begin
         nil)))),
       NewItem('~H~ex Editor', '', kbNoKey, cmTestHexEditor, hcNoContext,
       NewItem('~M~odern File Dialog', '', kbNoKey, cmTestModernFileDialog, hcNoContext,
-      nil))))))))))))))))))))))),
+      NewItem('New ~G~adgets Demo', '', kbNoKey, cmTestNewGadgets, hcNoContext,
+      NewItem('Gadgets ~P~hase 2', '', kbNoKey, cmTestGadgetsPhase2, hcNoContext,
+      NewItem('~S~ystem Info', '', kbNoKey, cmTestSystemInfo, hcNoContext,
+      nil)))))))))))))))))))))))))),
     NewSubMenu('~W~indow', hcNoContext, NewMenu(
       NewItem('~T~ile', '', kbNoKey, cmTile, hcNoContext,
       NewItem('Tile ~H~orizontal', '', kbNoKey, cmTileHorizontal, hcNoContext,
@@ -1103,6 +1584,9 @@ begin
         cmTestTerminalCustom: TestTerminalCustom;
         cmTestHexEditor: TestHexEditor;
         cmTestModernFileDialog: TestModernFileDialog;
+        cmTestNewGadgets: TestNewGadgets;
+        cmTestGadgetsPhase2: TestGadgetsPhase2;
+        cmTestSystemInfo: TestSystemInfo;
       else
         Exit;
       end;
@@ -1130,6 +1614,9 @@ begin
     { Update gadgets }
     if ClockView <> nil then ClockView.Update;
     if HeapView <> nil then HeapView.Update;
+    if UptimeViewGadget <> nil then UptimeViewGadget.Update;
+    if Phase2Dialog <> nil then Phase2Dialog.UpdateGadgets;
+    if SystemInfoDialog <> nil then SystemInfoDialog.UpdateWidgets;
 
     inherited Idle;
   except
@@ -1451,6 +1938,41 @@ begin
     end;
     Dlg.Free;
   end;
+end;
+
+procedure TMyApp.TestNewGadgets;
+{ Window demonstrating TUptimeView, TToggleSwitch, and TLogViewer }
+var
+  Dlg: TGadgetsDemoDialog;
+begin
+  Dlg := TGadgetsDemoDialog.Create;
+  Desktop.ExecView(Dlg);
+  UptimeViewGadget := nil;
+  Dlg.Free;
+end;
+
+procedure TMyApp.TestGadgetsPhase2;
+{ Window demonstrating Phase 2 gadgets: LEDDigits, BlinkIndicator, Marquee, Sparkline, BarChart, VUMeter }
+var
+  Dlg: TPhase2DemoDialog;
+begin
+  Dlg := TPhase2DemoDialog.Create;
+  Phase2Dialog := Dlg;
+  Desktop.ExecView(Dlg);
+  Phase2Dialog := nil;
+  Dlg.Free;
+end;
+
+procedure TMyApp.TestSystemInfo;
+{ Window demonstrating System Information widgets }
+var
+  Dlg: TSystemInfoDialog;
+begin
+  Dlg := TSystemInfoDialog.Create;
+  SystemInfoDialog := Dlg;
+  Desktop.ExecView(Dlg);
+  SystemInfoDialog := nil;
+  Dlg.Free;
 end;
 
 procedure TMyApp.TestColoredText;

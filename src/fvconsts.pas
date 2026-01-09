@@ -160,6 +160,11 @@ const
   idHeapMinAvail = 309;
   idHeapMemAvail = 310;
 
+  { New Gadgets Unit }
+  idUptimeView = 320;
+  idToggleSwitch = 321;
+  idLogViewer = 322;
+
   { FVList Unit }
 
   { ColorTxt Unit }
@@ -369,6 +374,9 @@ const
   cmStatusDone   = 301;
   cmStatusPause  = 302;
   cmStatusResume = 303;
+
+  { New Gadgets }
+  cmToggleChanged = 310;
 
   cmCursorChanged = 700;
 
