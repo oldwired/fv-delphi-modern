@@ -201,6 +201,23 @@ type
     procedure SetData(var Rec); override;
   end;
 
+  { TFolderSelectDialog - Dialog for selecting a folder to use elsewhere
+    Similar to TChDirDialog but does not change current directory.
+    Returns the selected folder path via GetData. }
+  TFolderSelectDialog = class(TDialog)
+    DirInput: TInputLine;
+    DirList: TDirOutline;
+    SelectButton: TButton;
+    constructor Create(AOptions: Word; HistoryId: Word); reintroduce; virtual;
+    function DataSize: Word; override;
+    procedure GetData(var Rec); override;
+    procedure HandleEvent(var Event: TEvent); override;
+    procedure SetData(var Rec); override;
+    function Valid(Command: Word): Boolean; override;
+  private
+    procedure SetUpDialog;
+  end;
+
   { TModernFileDialog - Split-pane file dialog with directory tree }
   TModernFileDialog = class(TDialog)
     DirTree: TDirOutline;       { Left pane - directory tree }
@@ -266,6 +283,7 @@ function PathValid(var Path: PathStr): Boolean;
 procedure RegisterStdDlg;
 function SaveAs(var AFile: FNameStr; HistoryID: Word): Boolean;
 function SelectDir(var ADir: DirStr; HistoryID: Byte): Boolean;
+function SelectFolder(var ADir: DirStr; HistoryID: Byte): Boolean;
 function ShrinkPath(AFile: FNameStr; MaxLen: Byte): FNameStr;
 function StdDeleteFile(AFile: FNameStr): Boolean;
 function StdReplaceFile(AFile: FNameStr): Boolean;
@@ -370,6 +388,7 @@ const
 
 resourcestring
   sChangeDirectory = 'Change Directory';
+  sSelectFolder = 'Select Folder';
   sDeleteFile = 'Delete file?'#13#10#13#3'%s';
   sDirectory = 'Directory';
   sDrives = 'Drives';
@@ -403,6 +422,7 @@ resourcestring
   slName = '~N~ame';
   slOk = '~O~K';
   slOpen = '~O~pen';
+  slSelect = '~S~elect';
   slReplace = '~R~eplace';
   slRevert = '~R~evert';
   slSaveAs = 'Save ~a~s';
@@ -1522,18 +1542,14 @@ end;
 
 procedure TDirOutline.FreeNode(Node: PDirNode);
 var
-  Next, Child: PDirNode;
+  Next: PDirNode;
 begin
   while Node <> nil do
   begin
-    { Free children first }
-    Child := Node^.ChildList;
-    while Child <> nil do
-    begin
-      Next := Child^.Next;
-      FreeNode(Child);
-      Child := Next;
-    end;
+    { Free children first (recursively handles their siblings) }
+    if Node^.ChildList <> nil then
+      FreeNode(Node^.ChildList);
+    { Move to next sibling before disposing current node }
     Next := Node^.Next;
     Dispose(Node);
     Node := Next;
@@ -2270,6 +2286,165 @@ begin
   end;
 end;
 
+{ TFolderSelectDialog - Dialog for selecting a folder without changing current directory }
+
+constructor TFolderSelectDialog.Create(AOptions: Word; HistoryId: Word);
+var
+  R: TRect;
+  Control: TView;
+begin
+  R.Assign(16, 2, 64, 18);
+  inherited Create(R, sSelectFolder);
+  Options := Options or ofCentered;
+
+  R.Assign(3, 3, 30, 4);
+  DirInput := TInputLine.Create(R, FileNameLen + 4);
+  Insert(DirInput);
+  R.Assign(2, 2, 17, 3);
+  Control := TLabel.Create(R, slDirectoryName, DirInput);
+  Insert(Control);
+  R.Assign(30, 3, 33, 4);
+  Control := THistory.Create(R, DirInput, HistoryId);
+  Insert(Control);
+
+  R.Assign(32, 6, 33, 14);
+  Control := TScrollBar.Create(R);
+  Insert(Control);
+  R.Assign(3, 6, 32, 14);
+  DirList := TDirOutline.Create(R, nil, TScrollBar(Control));
+  Insert(DirList);
+  R.Assign(2, 5, 17, 6);
+  Control := TLabel.Create(R, slDirectoryTree, DirList);
+  Insert(Control);
+
+  R.Assign(35, 6, 45, 8);
+  SelectButton := TButton.Create(R, slSelect, cmOK, bfDefault);
+  Insert(SelectButton);
+  Inc(R.A.Y, 3);
+  Inc(R.B.Y, 3);
+  Insert(TButton.Create(R, slCancel, cmCancel, bfNormal));
+
+  if AOptions and cdNoLoadDir = 0 then
+    SetUpDialog;
+
+  SelectNext(False);
+end;
+
+function TFolderSelectDialog.DataSize: Word;
+begin
+  Result := SizeOf(DirStr);
+end;
+
+procedure TFolderSelectDialog.GetData(var Rec);
+var
+  SelectedDir: DirStr absolute Rec;
+begin
+  if DirInput = nil then
+    SelectedDir := ''
+  else
+  begin
+    SelectedDir := DirInput.Data;
+    if (SelectedDir <> '') and (SelectedDir[Length(SelectedDir)] <> DirSeparator) then
+      SelectedDir := SelectedDir + DirSeparator;
+  end;
+end;
+
+procedure TFolderSelectDialog.HandleEvent(var Event: TEvent);
+var
+  SelectedPath: string;
+begin
+  inherited HandleEvent(Event);
+  case Event.What of
+    evCommand:
+      begin
+        case Event.Command of
+          cmDirSelected:
+            begin
+              { Single-click on folder - update the input line }
+              SelectedPath := DirList.GetSelectedPath;
+              if (SelectedPath <> '') and (SelectedPath <> DrivesStr) then
+              begin
+                if (Length(SelectedPath) > 3) and (SelectedPath[Length(SelectedPath)] = DirSeparator) then
+                  SelectedPath := Copy(SelectedPath, 1, Length(SelectedPath) - 1);
+                DirInput.Data := SelectedPath;
+                DirInput.DrawView;
+              end;
+              ClearEvent(Event);
+            end;
+          cmChangeDir:
+            begin
+              { Double-click on folder - select it and close dialog }
+              SelectedPath := DirList.GetSelectedPath;
+              if (SelectedPath <> '') and (SelectedPath <> DrivesStr) then
+              begin
+                if (Length(SelectedPath) > 3) and (SelectedPath[Length(SelectedPath)] = DirSeparator) then
+                  SelectedPath := Copy(SelectedPath, 1, Length(SelectedPath) - 1);
+                DirInput.Data := SelectedPath;
+                DirInput.DrawView;
+                { Close the dialog with OK result }
+                EndModal(cmOK);
+              end;
+              ClearEvent(Event);
+            end;
+        end;
+      end;
+  end;
+end;
+
+procedure TFolderSelectDialog.SetData(var Rec);
+var
+  InitDir: DirStr absolute Rec;
+begin
+  if DirList <> nil then
+  begin
+    DirList.NewDirectory(InitDir);
+    if DirInput <> nil then
+    begin
+      if (Length(InitDir) > 3) and (InitDir[Length(InitDir)] = DirSeparator) then
+        DirInput.Data := Copy(InitDir, 1, Length(InitDir) - 1)
+      else
+        DirInput.Data := InitDir;
+      DirInput.DrawView;
+    end;
+  end;
+end;
+
+procedure TFolderSelectDialog.SetUpDialog;
+var
+  CurDir: DirStr;
+begin
+  if DirList <> nil then
+  begin
+    CurDir := GetCurDir;
+    DirList.NewDirectory(CurDir);
+    if (Length(CurDir) > 3) and (CurDir[Length(CurDir)] = DirSeparator) then
+      CurDir := Copy(CurDir, 1, Length(CurDir) - 1);
+    if DirInput <> nil then
+    begin
+      DirInput.Data := CurDir;
+      DirInput.DrawView;
+    end;
+  end;
+end;
+
+function TFolderSelectDialog.Valid(Command: Word): Boolean;
+var
+  P: PathStr;
+begin
+  Result := True;
+  if Command = cmOK then
+  begin
+    P := FExpand(DirInput.Data);
+    if (Length(P) > 3) and (P[Length(P)] = DirSeparator) then
+      SetLength(P, Length(P) - 1);
+    if not DirectoryExists(P) then
+    begin
+      MessageBox(sInvalidDirectory, mfError + mfOkButton);
+      Result := False;
+    end;
+  end;
+end;
+
 { TModernFileDialog - Split-pane file dialog with directory tree and file list }
 
 constructor TModernFileDialog.Create(AWildCard: TWildStr; const ATitle: string;
@@ -2958,6 +3133,22 @@ begin
   {$I-}
   System.ChDir(Dir);
   {$I+}
+end;
+
+function SelectFolder(var ADir: DirStr; HistoryID: Byte): Boolean;
+var
+  Dlg: TFolderSelectDialog;
+  Rec: DirStr;
+begin
+  Rec := FExpand(ADir);
+  Dlg := TFolderSelectDialog.Create(0, HistoryID);
+  if Application.ExecuteDialog(Dlg, @Rec) = cmOk then
+  begin
+    Result := True;
+    ADir := Rec;
+  end
+  else
+    Result := False;
 end;
 
 function ShrinkPath(AFile: FNameStr; MaxLen: Byte): FNameStr;

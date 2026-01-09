@@ -64,6 +64,7 @@ const
   cmTestInputBox = 1006;
   cmTestFileOpen = 1007;
   cmTestChDir = 1008;
+  cmTestFolderSelect = 1040;
   cmTestColoredText = 1009;
   cmTestInputLong = 1010;
   cmTestAsciiChart = 1011;
@@ -125,6 +126,21 @@ begin
   Flush(ExceptionLog);
 end;
 
+procedure DebugLog(const Msg: string);
+const
+  LogPath = 'C:\projects\fv-delphi-modern\fvtest_debug.log';
+var
+  F: TextFile;
+begin
+  AssignFile(F, LogPath);
+  if FileExists(LogPath) then
+    Append(F)
+  else
+    Rewrite(F);
+  WriteLn(F, FormatDateTime('hh:nn:ss.zzz', Now), ' ', Msg);
+  CloseFile(F);
+end;
+
 
 type
   TMyStatusLine = class;
@@ -159,6 +175,7 @@ type
     procedure TestInputBox;
     procedure TestFileOpen;
     procedure TestChDir;
+    procedure TestFolderSelect;
     procedure TestColoredText;
     procedure TestInputLong;
     procedure TestAsciiChart;
@@ -1453,8 +1470,9 @@ begin
       NewItem('~N~ew', 'F4', kbF4, cmNewWindow, hcNoContext,
       NewItem('~O~pen...', 'F3', kbF3, cmTestFileOpen, hcNoContext,
       NewItem('Change ~D~ir...', '', kbNoKey, cmTestChDir, hcNoContext,
+      NewItem('Select ~F~older...', '', kbNoKey, cmTestFolderSelect, hcNoContext,
       NewLine(
-      NewItem('E~x~it', 'Alt-X', kbAltX, cmQuit, hcNoContext, nil)))))),
+      NewItem('E~x~it', 'Alt-X', kbAltX, cmQuit, hcNoContext, nil))))))),
     NewSubMenu('~T~est', hcNoContext, NewMenu(
       NewItem('Window ~1~ (Input+Radio)', '', kbNoKey, cmTestWindow1, hcNoContext,
       NewItem('Window ~2~ (Checkboxes)', '', kbNoKey, cmTestWindow2, hcNoContext,
@@ -1561,6 +1579,7 @@ begin
         cmTestInputBox: TestInputBox;
         cmTestFileOpen: TestFileOpen;
         cmTestChDir: TestChDir;
+        cmTestFolderSelect: TestFolderSelect;
         cmTestColoredText: TestColoredText;
         cmTestInputLong: TestInputLong;
         cmTestAsciiChart: TestAsciiChart;
@@ -1923,6 +1942,17 @@ begin
     if ExecuteDialog(Dlg, nil) = cmOK then
       MessageBox('Directory changed successfully.', mfInformation + mfOKButton);
   end;
+end;
+
+procedure TMyApp.TestFolderSelect;
+var
+  SelectedPath: DirStr;
+begin
+  SelectedPath := GetCurDir;
+  if ExecuteDialog(TFolderSelectDialog.Create(0, 3), @SelectedPath) = cmOK then
+    MessageBox('Selected folder: ' + SelectedPath, mfInformation + mfOKButton)
+  else
+    MessageBox('Folder selection cancelled.', mfInformation + mfOKButton);
 end;
 
 procedure TMyApp.TestModernFileDialog;
