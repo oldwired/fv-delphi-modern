@@ -62,6 +62,7 @@ uses
   EditorGutter in 'src\EditorGutter.pas',
   Notification in 'src\Notification.pas',
   FVClipboard in 'src\FVClipboard.pas',
+  SixelEncoder in 'src\SixelEncoder.pas',
   ImageView in 'src\ImageView.pas';
 
 const

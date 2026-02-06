@@ -16,6 +16,7 @@ interface
 uses
   Winapi.Windows,
   System.SysUtils,
+  System.Generics.Collections,
   FVCommon;
 
 const
@@ -59,6 +60,13 @@ type
     Color: Boolean;
   end;
 
+  { Sixel region descriptor }
+  TSixelRegion = record
+    ScreenX, ScreenY: Integer;  { Top-left cell (global screen coords) }
+    CellW, CellH: Integer;     { Region size in cells }
+    SixelData: string;          { Pre-encoded DCS string }
+  end;
+
   { Forward declaration }
   TScreenBuffer = class;
 
@@ -78,9 +86,19 @@ type
     FOriginalOutputMode: DWORD;
     FOriginalInputMode: DWORD;
     FOutputBuffer: TStringBuilder;              // Buffer VT sequences for batch output
+    FSixelRegions: TList<TSixelRegion>;        // Registered Sixel regions for current frame
+    FSixelPrevRegions: TList<TSixelRegion>;   // Sixel regions from previous frame (for cleanup)
+    FSixelSupported: Boolean;                  // True if terminal supports Sixel graphics
+    FCellPixelWidth: Integer;                  // Cell width in pixels
+    FCellPixelHeight: Integer;                 // Cell height in pixels
 
     procedure EnableVTMode;
     procedure DisableVTMode;
+    procedure DetectSixelSupport;
+    procedure DetectCellPixelSize;
+    function TryVTCellSizeQuery: Boolean;
+    procedure EmitSixelRegions;
+    procedure EraseStaleSixelRegions;
     function CellsDiffer(X, Y: Integer): Boolean;
     procedure WriteVT(const S: string);
     procedure FlushVT;
@@ -108,6 +126,10 @@ type
     procedure UpdateScreen(Force: Boolean = False);
     procedure ClearScreen;
 
+    { Sixel support }
+    procedure RegisterSixelRegion(ScreenX, ScreenY, CellW, CellH: Integer;
+      const SixelData: string);
+
     { Cursor }
     procedure SetCursor(X, Y: Integer);
     procedure GetCursor(var X, Y: Integer);
@@ -121,6 +143,9 @@ type
     property Initialized: Boolean read FInitialized;
     property CursorX: Integer read FCursorX;
     property CursorY: Integer read FCursorY;
+    property SixelSupported: Boolean read FSixelSupported;
+    property CellPixelWidth: Integer read FCellPixelWidth;
+    property CellPixelHeight: Integer read FCellPixelHeight;
   end;
 
 var
@@ -200,12 +225,19 @@ begin
   FCursorVisible := True;
   FInitialized := False;
   FOutputBuffer := TStringBuilder.Create(4096);
+  FSixelRegions := TList<TSixelRegion>.Create;
+  FSixelPrevRegions := TList<TSixelRegion>.Create;
+  FSixelSupported := False;
+  FCellPixelWidth := 8;
+  FCellPixelHeight := 16;
 end;
 
 destructor TScreenBuffer.Destroy;
 begin
   if FInitialized then
     Done;
+  FSixelPrevRegions.Free;
+  FSixelRegions.Free;
   FOutputBuffer.Free;
   inherited Destroy;
 end;
@@ -287,6 +319,10 @@ begin
   FCursorY := 0;
   FInitialized := True;
   ErrorCode := vioOk;
+
+  { Detect Sixel support and cell pixel size }
+  DetectSixelSupport;
+  DetectCellPixelSize;
 
   { Update legacy variables }
   ScreenWidth := FWidth;
@@ -508,12 +544,28 @@ var
 begin
   if not FInitialized then Exit;
 
+  { Phase 0: Erase any previous Sixel regions that moved or disappeared }
+  if FSixelPrevRegions.Count > 0 then
+    EraseStaleSixelRegions;
+
+  { Phase 1: Emit registered Sixel regions (pixel layer underneath text) }
+  if FSixelRegions.Count > 0 then
+    EmitSixelRegions;
+
+  { Phase 2: Normal cell rendering loop }
   LastSGR := '';
 
   for Y := 0 to FHeight - 1 do begin
     X := 0;
     while X < FWidth do begin
       if Force or CellsDiffer(X, Y) then begin
+        { Skip Sixel placeholder cells - they are covered by Sixel pixel data }
+        if FCells[Y, X].Ch = SixelPlaceholder then begin
+          FOldCells[Y, X] := FCells[Y, X];
+          Inc(X);
+          Continue;
+        end;
+
         { Position cursor for this cell }
         MoveCursorVT(X, Y);
 
@@ -547,6 +599,16 @@ begin
       Inc(X);
     end;
   end;
+
+  { Phase 3: Save current Sixel regions for stale detection, then clear.
+    Only update prev if new regions were registered this frame - otherwise
+    keep prev so stale detection works on idle frames when Draw isn't called. }
+  if FSixelRegions.Count > 0 then
+  begin
+    FSixelPrevRegions.Clear;
+    FSixelPrevRegions.AddRange(FSixelRegions);
+  end;
+  FSixelRegions.Clear;
 
   { Reset attributes and restore cursor }
   WriteVT(VT_CSI + '0m');
@@ -627,6 +689,286 @@ begin
     WriteVT(VT_CSI + '0 q');  // Default
   end;
   FlushVT;
+end;
+
+{ Sixel support }
+
+procedure TScreenBuffer.DetectSixelSupport;
+begin
+  FSixelSupported := GetEnvironmentVariable('WT_SESSION') <> '';
+end;
+
+procedure TScreenBuffer.DetectCellPixelSize;
+var
+  FontInfo: CONSOLE_FONT_INFOEX;
+  EnvW, EnvH: string;
+  ValW, ValH, Code: Integer;
+begin
+  FCellPixelWidth := 8;
+  FCellPixelHeight := 16;
+
+  { Priority 1: Environment variable override (FV_CELL_W, FV_CELL_H) }
+  EnvW := GetEnvironmentVariable('FV_CELL_W');
+  EnvH := GetEnvironmentVariable('FV_CELL_H');
+  if (EnvW <> '') and (EnvH <> '') then
+  begin
+    Val(EnvW, ValW, Code);
+    if Code = 0 then
+    begin
+      Val(EnvH, ValH, Code);
+      if (Code = 0) and (ValW >= 4) and (ValH >= 4) then
+      begin
+        FCellPixelWidth := ValW;
+        FCellPixelHeight := ValH;
+        Exit;
+      end;
+    end;
+  end;
+
+  { Priority 2: VT query CSI 16 t - reports actual cell pixel size.
+    Accurate under ConPTY/Windows Terminal even with custom font sizes. }
+  if TryVTCellSizeQuery then Exit;
+
+  { Priority 3: Console font API (fallback, inaccurate under ConPTY) }
+  if FConsoleOutput <> INVALID_HANDLE_VALUE then
+  begin
+    FillChar(FontInfo, SizeOf(FontInfo), 0);
+    FontInfo.cbSize := SizeOf(FontInfo);
+    if GetCurrentConsoleFontEx(FConsoleOutput, False, FontInfo) then
+    begin
+      if (FontInfo.dwFontSize.X > 0) and (FontInfo.dwFontSize.Y > 0) then
+      begin
+        FCellPixelWidth := FontInfo.dwFontSize.X;
+        FCellPixelHeight := FontInfo.dwFontSize.Y;
+      end;
+    end;
+  end;
+
+  if FCellPixelWidth < 4 then FCellPixelWidth := 8;
+  if FCellPixelHeight < 8 then FCellPixelHeight := 16;
+end;
+
+function TScreenBuffer.TryVTCellSizeQuery: Boolean;
+var
+  OldInputMode: DWORD;
+  InputRecs: array[0..255] of TInputRecord;
+  NumEvents: DWORD;
+  Response: string;
+  Ch: Char;
+  StartTime: Cardinal;
+  Idx, Start, I: Integer;
+  H, W: Integer;
+begin
+  Result := False;
+  if FConsoleInput = INVALID_HANDLE_VALUE then Exit;
+  if FConsoleOutput = INVALID_HANDLE_VALUE then Exit;
+
+  { Temporarily enable VT input so terminal responses come as raw characters }
+  if not GetConsoleMode(FConsoleInput, OldInputMode) then Exit;
+  if not SetConsoleMode(FConsoleInput, ENABLE_VIRTUAL_TERMINAL_INPUT) then Exit;
+
+  try
+    { Flush any pending input }
+    FlushConsoleInputBuffer(FConsoleInput);
+
+    { Send CSI 16 t query (xterm: report cell pixel size) }
+    WriteVT(VT_CSI + '16t');
+    FlushVT;
+
+    { Collect response characters with timeout.
+      Expected response: ESC [ 6 ; CellHeight ; CellWidth t }
+    Response := '';
+    StartTime := GetTickCount;
+    while (GetTickCount - StartTime) < 1000 do
+    begin
+      if WaitForSingleObject(FConsoleInput, 200) <> WAIT_OBJECT_0 then
+        Continue;
+
+      NumEvents := 0;
+      if not ReadConsoleInputW(FConsoleInput, InputRecs[0], 256, NumEvents) then
+        Break;
+
+      for I := 0 to Integer(NumEvents) - 1 do
+      begin
+        if (InputRecs[I].EventType = KEY_EVENT) and
+           InputRecs[I].Event.KeyEvent.bKeyDown then
+        begin
+          Ch := InputRecs[I].Event.KeyEvent.UnicodeChar;
+          if Ch <> #0 then
+            Response := Response + Ch;
+        end;
+      end;
+
+      { Check if we have a complete response (ends with 't') }
+      if (Length(Response) > 0) and (Response[Length(Response)] = 't') then
+        Break;
+    end;
+
+    { Parse ESC [ 6 ; H ; W t }
+    Idx := Pos(#27'[6;', Response);
+    if Idx = 0 then Exit;
+
+    Start := Idx + 4; { Skip past ESC [ 6 ; }
+
+    { Parse cell height }
+    H := 0;
+    while (Start <= Length(Response)) and
+          (Response[Start] >= '0') and (Response[Start] <= '9') do
+    begin
+      H := H * 10 + Ord(Response[Start]) - Ord('0');
+      Inc(Start);
+    end;
+    if (Start > Length(Response)) or (Response[Start] <> ';') then Exit;
+    Inc(Start); { Skip semicolon }
+
+    { Parse cell width }
+    W := 0;
+    while (Start <= Length(Response)) and
+          (Response[Start] >= '0') and (Response[Start] <= '9') do
+    begin
+      W := W * 10 + Ord(Response[Start]) - Ord('0');
+      Inc(Start);
+    end;
+
+    { Validate reasonable cell dimensions }
+    if (H >= 4) and (W >= 4) and (H <= 200) and (W <= 200) then
+    begin
+      FCellPixelHeight := H;
+      FCellPixelWidth := W;
+      Result := True;
+    end;
+  finally
+    { Restore original input mode and flush leftover VT response data }
+    SetConsoleMode(FConsoleInput, OldInputMode);
+    FlushConsoleInputBuffer(FConsoleInput);
+  end;
+end;
+
+procedure TScreenBuffer.RegisterSixelRegion(ScreenX, ScreenY, CellW, CellH: Integer;
+  const SixelData: string);
+var
+  Region: TSixelRegion;
+begin
+  if SixelData = '' then Exit;
+  Region.ScreenX := ScreenX;
+  Region.ScreenY := ScreenY;
+  Region.CellW := CellW;
+  Region.CellH := CellH;
+  Region.SixelData := SixelData;
+  FSixelRegions.Add(Region);
+end;
+
+procedure TScreenBuffer.EraseStaleSixelRegions;
+var
+  Prev: TSixelRegion;
+  X, Y: Integer;
+  StartX, ClampedW: Integer;
+  IsStale: Boolean;
+  StillActive: Boolean;
+  Cur: TSixelRegion;
+begin
+  { For each previous Sixel region, check if it's still covered by a current
+    region at the same position. If not, the cells at the old position need
+    to be force-redrawn so Phase 2 overwrites the stale Sixel pixels. }
+  for Prev in FSixelPrevRegions do
+  begin
+    IsStale := True;
+    for Cur in FSixelRegions do
+    begin
+      if (Cur.ScreenX = Prev.ScreenX) and (Cur.ScreenY = Prev.ScreenY) and
+         (Cur.CellW = Prev.CellW) and (Cur.CellH = Prev.CellH) then
+      begin
+        IsStale := False;
+        Break;
+      end;
+    end;
+
+    if IsStale then
+    begin
+      { On idle frames (no new regions registered), the old region may still
+        be active - Draw just wasn't called. Check if ANY cell in the region
+        still has a placeholder. Previously only checked the top-left cell,
+        which failed when a menu/window occluded that corner. }
+      if (FSixelRegions.Count = 0) then
+      begin
+        StillActive := False;
+        for Y := Prev.ScreenY to Prev.ScreenY + Prev.CellH - 1 do
+        begin
+          for X := Prev.ScreenX to Prev.ScreenX + Prev.CellW - 1 do
+            if (Y >= 0) and (Y < FHeight) and (X >= 0) and (X < FWidth) and
+               (FCells[Y, X].Ch = SixelPlaceholder) then
+            begin
+              StillActive := True;
+              Break;
+            end;
+          if StillActive then Break;
+        end;
+        if StillActive then Continue;
+      end;
+
+      { Erase the old Sixel region with ECH so terminal clears pixel data.
+        Clamp X coordinates to screen bounds - negative values produce
+        malformed VT sequences that corrupt the terminal. }
+      WriteVT(VT_CSI + '0m');
+      for Y := Prev.ScreenY to Prev.ScreenY + Prev.CellH - 1 do
+      begin
+        if (Y < 0) or (Y >= FHeight) then Continue;
+        StartX := Prev.ScreenX;
+        ClampedW := Prev.CellW;
+        { Clamp left edge to screen boundary }
+        if StartX < 0 then
+        begin
+          ClampedW := ClampedW + StartX;  { Reduce width by off-screen amount }
+          StartX := 0;
+        end;
+        { Clamp right edge to screen boundary }
+        if StartX + ClampedW > FWidth then
+          ClampedW := FWidth - StartX;
+        if (StartX >= FWidth) or (ClampedW <= 0) then Continue;
+        MoveCursorVT(StartX, Y);
+        WriteVT(VT_CSI + IntToStr(ClampedW) + 'X');
+      end;
+      { Force Phase 2 to redraw these cells with actual content }
+      for Y := Prev.ScreenY to Prev.ScreenY + Prev.CellH - 1 do
+        for X := Prev.ScreenX to Prev.ScreenX + Prev.CellW - 1 do
+          if (Y >= 0) and (Y < FHeight) and (X >= 0) and (X < FWidth) then
+            FOldCells[Y, X].Ch := #0;
+    end;
+  end;
+end;
+
+procedure TScreenBuffer.EmitSixelRegions;
+var
+  Region: TSixelRegion;
+  X, Y: Integer;
+begin
+  for Region in FSixelRegions do
+  begin
+    { Only emit Sixel DCS if the top-left cursor position is on-screen.
+      Negative coordinates produce malformed VT sequences that corrupt
+      the terminal. When the region extends beyond the right/bottom edge,
+      the terminal clips naturally so that case is safe. }
+    if (Region.ScreenX >= 0) and (Region.ScreenY >= 0) and
+       (Region.ScreenX < FWidth) and (Region.ScreenY < FHeight) then
+    begin
+      MoveCursorVT(Region.ScreenX, Region.ScreenY);
+      WriteVT(Region.SixelData);
+    end;
+
+    { Handle cell buffer sync for Phase 2 (always, even if emission skipped) }
+    for Y := Region.ScreenY to Region.ScreenY + Region.CellH - 1 do
+      for X := Region.ScreenX to Region.ScreenX + Region.CellW - 1 do
+        if (Y >= 0) and (Y < FHeight) and (X >= 0) and (X < FWidth) then
+        begin
+          if FCells[Y, X].Ch = SixelPlaceholder then
+            { Placeholder cells: mark as up-to-date so Phase 2 skips them }
+            FOldCells[Y, X] := FCells[Y, X]
+          else
+            { Non-placeholder cells (dialog/menu on top): force redraw
+              in Phase 2 so text renders on top of the Sixel pixels }
+            FOldCells[Y, X].Ch := #0;
+        end;
+  end;
 end;
 
 { Legacy API implementations }

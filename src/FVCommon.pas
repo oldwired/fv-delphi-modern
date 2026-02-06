@@ -84,6 +84,9 @@ type
   PtrUInt = NativeUInt;
 
 const
+  { Sixel placeholder character (Private Use Area) }
+  SixelPlaceholder = #$E000;
+
   { File constants }
   FileNameLen = 255;
 
