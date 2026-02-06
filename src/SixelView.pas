@@ -37,6 +37,38 @@ type
     property SixelData: string read FSixelData;
   end;
 
+  { Mutable pixel canvas that renders through SIXEL. Draw into the pixel
+    buffer with primitive methods, then call DrawView to present it. }
+  TSixelCanvasView = class(TView)
+  private
+    FPixels: TPixelGrid;
+    FPixelWidth: Integer;
+    FPixelHeight: Integer;
+    FBackgroundColor: Cardinal;
+    FSixelData: string;
+    FSixelDirty: Boolean;
+    FLastSrcX: Integer;
+    FLastSrcY: Integer;
+    FLastPixW: Integer;
+    FLastPixH: Integer;
+    procedure DrawEmpty;
+    function DetectCellPixelSize(out CellW, CellH: Integer): Boolean;
+    procedure MarkDirty;
+  public
+    constructor Create(var Bounds: TRect; APixelWidth, APixelHeight: Integer); reintroduce; virtual;
+    procedure Draw; override;
+    function GetPalette: PPalette; override;
+    procedure ResizePixels(APixelWidth, APixelHeight: Integer);
+    procedure Clear(AColor: Cardinal = $000000);
+    procedure SetPixel(X, Y: Integer; AColor: Cardinal);
+    procedure FillRect(X, Y, W, H: Integer; AColor: Cardinal);
+    procedure DrawLine(X1, Y1, X2, Y2: Integer; AColor: Cardinal);
+    procedure InvalidateSixel;
+    property PixelWidth: Integer read FPixelWidth;
+    property PixelHeight: Integer read FPixelHeight;
+    property BackgroundColor: Cardinal read FBackgroundColor write FBackgroundColor;
+  end;
+
 implementation
 
 uses
@@ -284,6 +316,281 @@ begin
   end;
 
   Screen.RegisterSixelRegion(ScreenX, ScreenY, CoveredW, CoveredH, FSixelData);
+end;
+
+constructor TSixelCanvasView.Create(var Bounds: TRect; APixelWidth,
+  APixelHeight: Integer);
+begin
+  inherited Create(Bounds);
+  GrowMode := gfGrowHiX or gfGrowHiY;
+  FBackgroundColor := $000000;
+  FSixelData := '';
+  FSixelDirty := True;
+  FLastSrcX := -1;
+  FLastSrcY := -1;
+  FLastPixW := -1;
+  FLastPixH := -1;
+  ResizePixels(APixelWidth, APixelHeight);
+end;
+
+procedure TSixelCanvasView.MarkDirty;
+begin
+  FSixelDirty := True;
+end;
+
+procedure TSixelCanvasView.ResizePixels(APixelWidth, APixelHeight: Integer);
+var
+  Y: Integer;
+begin
+  if APixelWidth < 1 then APixelWidth := 1;
+  if APixelHeight < 1 then APixelHeight := 1;
+  if (APixelWidth = FPixelWidth) and (APixelHeight = FPixelHeight) then Exit;
+
+  FPixelWidth := APixelWidth;
+  FPixelHeight := APixelHeight;
+  SetLength(FPixels, FPixelHeight);
+  for Y := 0 to FPixelHeight - 1 do
+    SetLength(FPixels[Y], FPixelWidth);
+
+  Clear(FBackgroundColor);
+  FSixelData := '';
+  FLastSrcX := -1;
+  FLastSrcY := -1;
+  FLastPixW := -1;
+  FLastPixH := -1;
+  FSixelDirty := True;
+end;
+
+procedure TSixelCanvasView.Clear(AColor: Cardinal);
+var
+  X, Y: Integer;
+begin
+  FBackgroundColor := AColor and $00FFFFFF;
+  if (FPixelWidth <= 0) or (FPixelHeight <= 0) then Exit;
+  for Y := 0 to FPixelHeight - 1 do
+    for X := 0 to FPixelWidth - 1 do
+      FPixels[Y][X] := FBackgroundColor;
+  MarkDirty;
+end;
+
+procedure TSixelCanvasView.SetPixel(X, Y: Integer; AColor: Cardinal);
+begin
+  if (X < 0) or (Y < 0) or (X >= FPixelWidth) or (Y >= FPixelHeight) then Exit;
+  FPixels[Y][X] := AColor and $00FFFFFF;
+  MarkDirty;
+end;
+
+procedure TSixelCanvasView.FillRect(X, Y, W, H: Integer; AColor: Cardinal);
+var
+  X1, Y1, X2, Y2: Integer;
+  I, J: Integer;
+  C: Cardinal;
+begin
+  if (W <= 0) or (H <= 0) then Exit;
+  X1 := X;
+  Y1 := Y;
+  X2 := X + W;
+  Y2 := Y + H;
+  if X1 < 0 then X1 := 0;
+  if Y1 < 0 then Y1 := 0;
+  if X2 > FPixelWidth then X2 := FPixelWidth;
+  if Y2 > FPixelHeight then Y2 := FPixelHeight;
+  if (X1 >= X2) or (Y1 >= Y2) then Exit;
+
+  C := AColor and $00FFFFFF;
+  for J := Y1 to Y2 - 1 do
+    for I := X1 to X2 - 1 do
+      FPixels[J][I] := C;
+  MarkDirty;
+end;
+
+procedure TSixelCanvasView.DrawLine(X1, Y1, X2, Y2: Integer; AColor: Cardinal);
+var
+  Dx, Dy, SX, SY: Integer;
+  Err, E2: Integer;
+  C: Cardinal;
+begin
+  C := AColor and $00FFFFFF;
+
+  if X1 < X2 then SX := 1 else SX := -1;
+  if Y1 < Y2 then SY := 1 else SY := -1;
+  Dx := Abs(X2 - X1);
+  Dy := -Abs(Y2 - Y1);
+  Err := Dx + Dy;
+
+  while True do
+  begin
+    if (X1 >= 0) and (Y1 >= 0) and (X1 < FPixelWidth) and (Y1 < FPixelHeight) then
+      FPixels[Y1][X1] := C;
+    if (X1 = X2) and (Y1 = Y2) then Break;
+    E2 := Err shl 1;
+    if E2 >= Dy then
+    begin
+      Err := Err + Dy;
+      Inc(X1, SX);
+    end;
+    if E2 <= Dx then
+    begin
+      Err := Err + Dx;
+      Inc(Y1, SY);
+    end;
+  end;
+
+  MarkDirty;
+end;
+
+procedure TSixelCanvasView.InvalidateSixel;
+begin
+  MarkDirty;
+end;
+
+procedure TSixelCanvasView.DrawEmpty;
+var
+  B: TDrawBuffer;
+  Y: Integer;
+begin
+  for Y := 0 to Size.Y - 1 do
+  begin
+    DrawChar(B, 0, ' ', $07, Size.X);
+    WriteLine(0, Y, Size.X, 1, B);
+  end;
+end;
+
+function TSixelCanvasView.DetectCellPixelSize(out CellW, CellH: Integer): Boolean;
+begin
+  Result := False;
+  CellW := 8;
+  CellH := 16;
+
+  if (Screen <> nil) and Screen.Initialized then
+  begin
+    CellW := Screen.CellPixelWidth;
+    CellH := Screen.CellPixelHeight;
+    Result := (CellW > 0) and (CellH > 0);
+  end;
+
+  if not Result then
+    Result := TSixelEncoder.GetCellPixelSize(CellW, CellH);
+
+  if CellW < 4 then CellW := 8;
+  if CellH < 8 then CellH := 16;
+end;
+
+function TSixelCanvasView.GetPalette: PPalette;
+begin
+  Result := nil;
+end;
+
+procedure TSixelCanvasView.Draw;
+var
+  B: TDrawBuffer;
+  Y: Integer;
+  GlobalPt: TPoint;
+  CellW, CellH: Integer;
+  VisiblePixW, VisiblePixH: Integer;
+  CoveredW, CoveredH: Integer;
+  EncCellW, EncCellH: Integer;
+  EncPixW, EncPixH: Integer;
+  EncSrcX, EncSrcY: Integer;
+  EncScreenX, EncScreenY: Integer;
+begin
+  if (FPixelWidth <= 0) or (FPixelHeight <= 0) or (Length(FPixels) = 0) then
+  begin
+    DrawEmpty;
+    Exit;
+  end;
+
+  if (Screen = nil) or not Screen.Initialized or not Screen.SixelSupported then
+  begin
+    DrawEmpty;
+    Exit;
+  end;
+
+  DetectCellPixelSize(CellW, CellH);
+
+  VisiblePixW := Size.X * CellW;
+  VisiblePixH := Size.Y * CellH;
+  if VisiblePixW > FPixelWidth then VisiblePixW := FPixelWidth;
+  if VisiblePixH > FPixelHeight then VisiblePixH := FPixelHeight;
+  if (VisiblePixW <= 0) or (VisiblePixH <= 0) then
+  begin
+    DrawEmpty;
+    Exit;
+  end;
+
+  CoveredW := (VisiblePixW + CellW - 1) div CellW;
+  CoveredH := (VisiblePixH + CellH - 1) div CellH;
+  if CoveredW > Size.X then CoveredW := Size.X;
+  if CoveredH > Size.Y then CoveredH := Size.Y;
+
+  for Y := 0 to Size.Y - 1 do
+  begin
+    if (Y < CoveredH) and (CoveredW > 0) then
+    begin
+      DrawChar(B, 0, SixelPlaceholder, $00, CoveredW);
+      if CoveredW < Size.X then
+        DrawChar(B, CoveredW, ' ', $07, Size.X - CoveredW);
+    end
+    else
+      DrawChar(B, 0, ' ', $07, Size.X);
+    WriteLine(0, Y, Size.X, 1, B);
+  end;
+
+  GlobalPt.X := 0;
+  GlobalPt.Y := 0;
+  MakeGlobal(GlobalPt, GlobalPt);
+
+  EncScreenX := GlobalPt.X;
+  EncScreenY := GlobalPt.Y;
+  EncCellW := CoveredW;
+  EncCellH := CoveredH;
+  EncSrcX := 0;
+  EncSrcY := 0;
+
+  if EncScreenX < 0 then
+  begin
+    EncCellW := EncCellW + EncScreenX;
+    EncSrcX := EncSrcX - EncScreenX * CellW;
+    EncScreenX := 0;
+  end;
+  if EncScreenY < 0 then
+  begin
+    EncCellH := EncCellH + EncScreenY;
+    EncSrcY := EncSrcY - EncScreenY * CellH;
+    EncScreenY := 0;
+  end;
+  if EncScreenX + EncCellW > Screen.Width then
+    EncCellW := Screen.Width - EncScreenX;
+  if EncScreenY + EncCellH >= Screen.Height then
+    EncCellH := Screen.Height - 1 - EncScreenY;
+  if (EncCellW <= 0) or (EncCellH <= 0) then Exit;
+
+  EncPixW := EncCellW * CellW;
+  EncPixH := EncCellH * CellH;
+  if EncSrcX + EncPixW > FPixelWidth then
+    EncPixW := FPixelWidth - EncSrcX;
+  if EncSrcY + EncPixH > FPixelHeight then
+    EncPixH := FPixelHeight - EncSrcY;
+  if (EncPixW <= 0) or (EncPixH <= 0) then Exit;
+
+  EncCellW := (EncPixW + CellW - 1) div CellW;
+  EncCellH := (EncPixH + CellH - 1) div CellH;
+  if (EncCellW <= 0) or (EncCellH <= 0) then Exit;
+
+  if FSixelDirty or
+     (EncSrcX <> FLastSrcX) or (EncSrcY <> FLastSrcY) or
+     (EncPixW <> FLastPixW) or (EncPixH <> FLastPixH) then
+  begin
+    FSixelData := TSixelEncoder.Encode(FPixels, EncSrcX, EncSrcY, EncPixW, EncPixH);
+    FSixelDirty := False;
+    FLastSrcX := EncSrcX;
+    FLastSrcY := EncSrcY;
+    FLastPixW := EncPixW;
+    FLastPixH := EncPixH;
+  end;
+
+  if FSixelData <> '' then
+    Screen.RegisterSixelRegion(EncScreenX, EncScreenY, EncCellW, EncCellH, FSixelData);
 end;
 
 end.

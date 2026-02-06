@@ -39,7 +39,7 @@ Free Vision Modern is a text-mode UI framework that provides a complete widget t
 |    Menus.pas: TMenuBar, TMenuBox, TStatusLine                    |
 |    Editors.pas, ColorSel.pas, Outline.pas, Tabs.pas              |
 |    ProgressBar, Breadcrumb, ToolBar, ComboBox, Splitter,         |
-|    Accordion, EditorGutter, Notification                          |
+|    Accordion, EditorGutter, Notification, SIXEL/ImageView         |
 +------------------------------------------------------------------+
 |                      View Layer                                   |
 |         Views.pas: TView, TGroup, TWindow, TFrame                |
@@ -51,6 +51,7 @@ Free Vision Modern is a text-mode UI framework that provides a complete widget t
 |                   Foundation Layer                                |
 |         Objects.pas: TFVStream, string helpers                   |
 |         FVCommon.pas: Platform types                             |
+|         FVClipboard.pas: Windows clipboard bridge                |
 |         FVInterfaces.pas: Interface definitions                  |
 +------------------------------------------------------------------+
 ```
@@ -133,6 +134,8 @@ classDiagram
     TView <|-- TEditorGutter
     TView <|-- TAccordionHeader
     TView <|-- TSplitter
+    TView <|-- TSixelView
+    TView <|-- TSixelCanvasView
 
     TGroup <|-- TWindow
     TGroup <|-- TDesktop
@@ -212,6 +215,10 @@ TObject
           +-- TAccordionHeader (collapsible section header)
           |
           +-- TSplitter (draggable panel divider)
+          |
+          +-- TSixelView (pre-encoded SIXEL surface)
+          |
+          +-- TSixelCanvasView (direct pixel-drawing SIXEL canvas)
 ```
 
 ### Dialog Controls Hierarchy
@@ -503,6 +510,57 @@ TNotification (TWindow)
     Class method: TNotification.Show(Message, Type, Timeout, Position)
 ```
 
+#### FVClipboard (`FVClipboard.pas`)
+
+Windows clipboard bridge used by editor and input workflows.
+
+```
+API
+    ClipboardSetText(Text): Boolean
+    ClipboardGetText: string
+    ClipboardHasText: Boolean
+
+Backend
+    WinAPI OpenClipboard / EmptyClipboard / SetClipboardData
+    UTF-16 text via CF_UNICODETEXT
+```
+
+#### TSixelEncoder / TSixelView / TSixelCanvasView (`SixelEncoder.pas`, `SixelView.pas`)
+
+SIXEL graphics pipeline for raster images and generated pixel content.
+
+```
+TSixelEncoder
+    +-- Input: TPixelGrid (array of $00RRGGBB pixels)
+    +-- Adaptive quantization to <= 256 palette registers
+    +-- Optional error-diffusion dithering (FV_SIXEL_DITHER)
+    +-- Output: SIXEL DCS string
+
+TSixelView (TView)
+    +-- Displays pre-encoded SIXEL payloads
+    +-- Supports loading .sixel/.six/.sxl files
+
+TSixelCanvasView (TView)
+    +-- Mutable pixel buffer
+    +-- Primitive drawing: Clear, SetPixel, FillRect, DrawLine
+    +-- Emits clipped SIXEL regions through Screen.RegisterSixelRegion
+```
+
+#### TImageView / TImageWindow (`ImageView.pas`)
+
+Scrollable image viewer with SIXEL-first rendering.
+
+```
+TBMPImage
+    +-- BMP loader
+    +-- SIXEL decoder (.sixel/.six/.sxl) to pixel grid
+
+TImageView (TScroller-like behavior in a TView)
+    +-- Viewport cropping prior to SIXEL encoding
+    +-- Safe clipping against terminal bounds
+    +-- Half-block text fallback when SIXEL is unavailable
+```
+
 ### Stream Hierarchy
 
 ```
@@ -688,6 +746,7 @@ end;
 ```
 src/
   FVCommon.pas        Platform types (Sw_Word, PString, etc.)
+  FVClipboard.pas     Windows clipboard integration helpers
   FVInterfaces.pas    Interface definitions (IFVDrawable, ISerializable, etc.)
   FVSerialization.pas JSON serialization helpers and registry
   Objects.pas         Stream classes, string utilities
@@ -699,6 +758,9 @@ src/
   Dialogs.pas         Dialog controls (TDialog, TButton, TInputLine, etc.)
   Grid.pas            TStringGrid component with CSV import/export
   HexEdit.pas         THexEditor binary viewer/editor
+  SixelEncoder.pas    Adaptive SIXEL encoder (palette + optional dithering)
+  SixelView.pas       TSixelView and TSixelCanvasView rendering surfaces
+  ImageView.pas       BMP/SIXEL viewer with scrollable viewport
   Validate.pas        Input validators
   MsgBox.pas          Message box helpers
   StdDlg.pas          File dialogs (TFileDialog, TChDirDialog)

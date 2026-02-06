@@ -16,10 +16,72 @@ Free Vision is a classic console-based GUI toolkit originally derived from Borla
 - **Advanced Controls**: Tab controls, outline/tree views, progress gauges, timed dialogs
 - **Layout Components**: Splitter panels with draggable divider, accordion with collapsible sections
 - **Extended Widgets**: Toolbar, breadcrumb navigation, combo box dropdown, progress bar, editor gutter with pluggable providers, toast notifications
+- **SIXEL Graphics**: Adaptive 256-color SIXEL encoder, direct SIXEL canvas drawing, and BMP/SIXEL image viewer
 - **Input Validation**: Built-in validators for ranges, patterns, and lookups
 - **JSON Serialization**: Views implement `ISerializable` for state persistence
 - **Windows Console**: Native Windows Console API for display and input
 - **Terminal Emulator**: Pseudo-terminal windows using Windows ConPTY
+
+## SIXEL Graphics
+
+SIXEL support is optimized for Windows Terminal sessions and integrates with the normal Free Vision view system.
+
+### What is supported
+
+- `TSixelEncoder` (`src/SixelEncoder.pas`): converts `TPixelGrid` data (`$00RRGGBB`) to SIXEL DCS strings using adaptive palette quantization (up to 256 registers)
+- `TSixelView` (`src/SixelView.pas`): renders pre-encoded SIXEL data from memory or `.sixel/.six/.sxl` files
+- `TSixelCanvasView` (`src/SixelView.pas`): direct pixel drawing API for generated/animated graphics (`SetPixel`, `FillRect`, `DrawLine`, `Clear`)
+- `TImageWindow`/`TImageView` (`src/ImageView.pas`): loads both BMP and SIXEL files, supports scrolling and safe viewport cropping before SIXEL encoding
+
+### True color vs SIXEL palette
+
+Windows Terminal supports true-color text attributes, but SIXEL itself remains palette-based.  
+Practical limit is still 256 color registers per emitted SIXEL image, so quality depends on quantization and dithering choices.
+
+### Dithering control
+
+`TSixelEncoder` supports error-diffusion dithering to reduce visible color banding:
+
+- Auto-enabled for coarser quantization steps
+- Force on: `FV_SIXEL_DITHER=1` (also accepts `on`, `true`)
+- Force off: `FV_SIXEL_DITHER=0` (also accepts `off`, `false`)
+
+### Cell-size override
+
+If terminal pixel cell detection is wrong, you can override with:
+
+- `FV_CELL_W=<pixels>`
+- `FV_CELL_H=<pixels>`
+
+### FVTest demos
+
+`Test -> New Components` contains:
+
+- `Image Viewer` (BMP + SIXEL files)
+- `SIXEL Spectrometer` (direct animated bar rendering on `TSixelCanvasView`)
+- `SIXEL Animated Sine` (direct animated waveform drawing on `TSixelCanvasView`)
+
+## Clipboard Integration
+
+System clipboard support is provided by `src/FVClipboard.pas` and is shared across editor-style controls.
+
+### API
+
+| Function | Description |
+|----------|-------------|
+| `ClipboardSetText(const Text: string): Boolean` | Writes Unicode text to Windows clipboard |
+| `ClipboardGetText: string` | Reads text from Windows clipboard |
+| `ClipboardHasText: Boolean` | Returns whether text data is available |
+
+### Common key usage in FVTest demos
+
+- `Ctrl+Ins`: copy selection
+- `Shift+Ins`: paste clipboard text
+
+The Test menu includes clipboard-focused examples:
+
+- `Test -> Editor -> Clipboard`
+- `Test -> New Components -> Clipboard`
 
 ## Terminal Emulator
 
@@ -221,6 +283,7 @@ src/
   FVCommon.pas      - Platform types (Sw_Word, PString, etc.)
   FVInterfaces.pas  - Interface definitions (IFVDrawable, ISerializable, etc.)
   FVSerialization.pas - JSON serialization helpers
+  FVClipboard.pas   - Windows clipboard integration helpers
   Objects.pas       - Stream classes, string utilities
   Video.pas         - Console output (Windows Console API)
   Drivers.pas       - Keyboard and mouse input handling
@@ -230,6 +293,9 @@ src/
   Dialogs.pas       - Dialog controls (TDialog, TButton, TInputLine, etc.)
   Grid.pas          - TStringGrid with CSV import/export
   HexEdit.pas       - THexEditor binary viewer/editor
+  SixelEncoder.pas  - Adaptive SIXEL encoder (palette + dithering)
+  SixelView.pas     - TSixelView + TSixelCanvasView for SIXEL rendering
+  ImageView.pas     - BMP/SIXEL viewer window and scrollable image view
   Validate.pas      - Input validation
   MsgBox.pas        - Message box helpers
   StdDlg.pas        - Standard file dialogs

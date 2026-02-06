@@ -124,6 +124,8 @@ const
   cmTestNotification = 1057;
   cmTestClipboard    = 1058;
   cmTestImageView    = 1059;
+  cmTestSixelSpectrometer = 1060;
+  cmTestSixelSine         = 1061;
 
 var
   ExceptionLog: TextFile;
@@ -173,6 +175,8 @@ type
   TTextScroller = class;
   TMyWindow = class;
   TTabTestDialog = class;
+  TSixelSpectrometerWindow = class;
+  TSixelSineWindow = class;
 
   TMyStatusLine = class(TStatusLine)
     function Hint(AHelpCtx: Word): string; override;
@@ -238,6 +242,8 @@ type
     procedure TestNotification;
     procedure TestClipboard;
     procedure TestImageView;
+    procedure TestSixelSpectrometer;
+    procedure TestSixelSine;
     property CalendarDateLabel: TStaticText read FCalendarDateLabel write FCalendarDateLabel;
   end;
 
@@ -369,13 +375,57 @@ type
     procedure UpdateWidgets;
   end;
 
+  TSixelSpectrometerWindow = class(TWindow)
+  private
+    FCanvas: TSixelCanvasView;
+    FLevels: array of Integer;
+    FPeaks: array of Integer;
+    FTick: Integer;
+    procedure EnsureCanvasSize;
+    class function SpectrumColor(BarY, BarH: Integer): Cardinal; static;
+  public
+    constructor Create(var Bounds: TRect); reintroduce; virtual;
+    procedure UpdateFrame;
+  end;
+
+  TSixelSineWindow = class(TWindow)
+  private
+    FCanvas: TSixelCanvasView;
+    FPhase: Double;
+    FTick: Integer;
+    procedure EnsureCanvasSize;
+  public
+    constructor Create(var Bounds: TRect); reintroduce; virtual;
+    procedure UpdateFrame;
+  end;
+
 procedure UpdateNotifications; forward;
+procedure UpdateSixelDemoWindows; forward;
 
 var
   MyApp: TMyApp;
   WindowCount: Integer;
   Phase2Dialog: TPhase2DemoDialog = nil;
   SystemInfoDialog: TSystemInfoDialog = nil;
+
+const
+  TwoPi = 6.2831853071795864769;
+
+procedure GetSixelCellPixelSize(out CellW, CellH: Integer);
+begin
+  CellW := 8;
+  CellH := 16;
+  if (Screen <> nil) and Screen.Initialized and
+     (Screen.CellPixelWidth > 0) and (Screen.CellPixelHeight > 0) then
+  begin
+    CellW := Screen.CellPixelWidth;
+    CellH := Screen.CellPixelHeight;
+    Exit;
+  end;
+  TSixelEncoder.GetCellPixelSize(CellW, CellH);
+  if CellW < 4 then CellW := 8;
+  if CellH < 8 then CellH := 16;
+end;
 
 function TMyStatusLine.Hint(AHelpCtx: Word): string;
 begin
@@ -1380,6 +1430,256 @@ begin
   FBatteryView.Update;
 end;
 
+constructor TSixelSpectrometerWindow.Create(var Bounds: TRect);
+var
+  R: TRect;
+  CellW, CellH: Integer;
+begin
+  inherited Create(Bounds, 'SIXEL Spectrometer', wnNoNumber);
+  Options := Options or ofTileable;
+
+  R.Assign(2, 1, Size.X - 2, 2);
+  Insert(TStaticText.Create(R,
+    'Direct SIXEL canvas: animated pixel bars with per-row color gradient'));
+
+  R.Assign(1, 2, Size.X - 1, Size.Y - 1);
+  GetSixelCellPixelSize(CellW, CellH);
+  FCanvas := TSixelCanvasView.Create(R,
+    (R.B.X - R.A.X) * CellW,
+    (R.B.Y - R.A.Y) * CellH);
+  FCanvas.GrowMode := gfGrowHiX or gfGrowHiY;
+  Insert(FCanvas);
+
+  FTick := 0;
+  SetLength(FLevels, 0);
+  SetLength(FPeaks, 0);
+end;
+
+procedure TSixelSpectrometerWindow.EnsureCanvasSize;
+var
+  CellW, CellH: Integer;
+  NeedW, NeedH: Integer;
+begin
+  if FCanvas = nil then Exit;
+  GetSixelCellPixelSize(CellW, CellH);
+  NeedW := FCanvas.Size.X * CellW;
+  NeedH := FCanvas.Size.Y * CellH;
+  if NeedW < 1 then NeedW := 1;
+  if NeedH < 1 then NeedH := 1;
+  if (NeedW <> FCanvas.PixelWidth) or (NeedH <> FCanvas.PixelHeight) then
+    FCanvas.ResizePixels(NeedW, NeedH);
+end;
+
+class function TSixelSpectrometerWindow.SpectrumColor(BarY, BarH: Integer): Cardinal;
+var
+  Pct: Integer;
+  R, G, B: Integer;
+begin
+  if BarH <= 1 then
+    Pct := 0
+  else
+    Pct := (BarY * 100) div (BarH - 1);
+
+  if Pct < 65 then
+  begin
+    R := (Pct * 96) div 65;
+    G := 72 + (Pct * 183) div 65;
+    B := 8;
+  end
+  else if Pct < 85 then
+  begin
+    R := 96 + ((Pct - 65) * 159) div 20;
+    G := 255;
+    B := 0;
+  end
+  else
+  begin
+    R := 255;
+    G := 255 - ((Pct - 85) * 220) div 15;
+    if G < 30 then G := 30;
+    B := 0;
+  end;
+
+  Result := (Cardinal(R) shl 16) or (Cardinal(G) shl 8) or Cardinal(B);
+end;
+
+procedure TSixelSpectrometerWindow.UpdateFrame;
+var
+  W, H: Integer;
+  BarW, Gap, Bars: Integer;
+  I, X, Y: Integer;
+  LevelPx, PeakPx, DrawY: Integer;
+  Envelope, Target: Integer;
+begin
+  if FCanvas = nil then Exit;
+  Inc(FTick);
+  if (FTick mod 3) <> 0 then Exit;
+
+  EnsureCanvasSize;
+  W := FCanvas.PixelWidth;
+  H := FCanvas.PixelHeight;
+  if (W < 8) or (H < 8) then Exit;
+
+  BarW := 3;
+  Gap := 1;
+  Bars := W div (BarW + Gap);
+  if Bars < 16 then
+  begin
+    BarW := 2;
+    Gap := 1;
+    Bars := W div (BarW + Gap);
+  end;
+  if Bars < 8 then Exit;
+
+  if Length(FLevels) <> Bars then
+  begin
+    SetLength(FLevels, Bars);
+    SetLength(FPeaks, Bars);
+    for I := 0 to Bars - 1 do
+    begin
+      FLevels[I] := 0;
+      FPeaks[I] := 0;
+    end;
+  end;
+
+  for I := 0 to Bars - 1 do
+  begin
+    Envelope := 20 + (35 * I) div Bars +
+      Round(45 * (0.5 + 0.5 * Sin((I * TwoPi / Bars) + (FTick * 0.08))));
+    Target := Random(Envelope + 1);
+    if Target > 100 then Target := 100;
+    FLevels[I] := (FLevels[I] * 7 + Target * 3) div 10;
+    if FLevels[I] > FPeaks[I] then
+      FPeaks[I] := FLevels[I]
+    else if FPeaks[I] > 0 then
+      Dec(FPeaks[I], 1);
+  end;
+
+  FCanvas.Clear($000000);
+  H := H - 2;
+  if H < 1 then Exit;
+  for I := 0 to Bars - 1 do
+  begin
+    X := I * (BarW + Gap);
+    if X >= FCanvas.PixelWidth then Break;
+    LevelPx := (FLevels[I] * H) div 100;
+    PeakPx := (FPeaks[I] * H) div 100;
+
+    for Y := 0 to LevelPx - 1 do
+    begin
+      DrawY := FCanvas.PixelHeight - 2 - Y;
+      if DrawY < 0 then Break;
+      FCanvas.FillRect(X, DrawY, BarW, 1, SpectrumColor(Y, H + 1));
+    end;
+
+    DrawY := FCanvas.PixelHeight - 2 - PeakPx;
+    if DrawY < 0 then DrawY := 0;
+    FCanvas.FillRect(X, DrawY, BarW, 1, $00FFFFFF);
+  end;
+
+  FCanvas.InvalidateSixel;
+  FCanvas.DrawView;
+end;
+
+constructor TSixelSineWindow.Create(var Bounds: TRect);
+var
+  R: TRect;
+  CellW, CellH: Integer;
+begin
+  inherited Create(Bounds, 'SIXEL Animated Sine', wnNoNumber);
+  Options := Options or ofTileable;
+
+  R.Assign(2, 1, Size.X - 2, 2);
+  Insert(TStaticText.Create(R,
+    'Direct SIXEL canvas: continuously redrawn sine wave with sub-cell detail'));
+
+  R.Assign(1, 2, Size.X - 1, Size.Y - 1);
+  GetSixelCellPixelSize(CellW, CellH);
+  FCanvas := TSixelCanvasView.Create(R,
+    (R.B.X - R.A.X) * CellW,
+    (R.B.Y - R.A.Y) * CellH);
+  FCanvas.GrowMode := gfGrowHiX or gfGrowHiY;
+  Insert(FCanvas);
+
+  FPhase := 0.0;
+  FTick := 0;
+end;
+
+procedure TSixelSineWindow.EnsureCanvasSize;
+var
+  CellW, CellH: Integer;
+  NeedW, NeedH: Integer;
+begin
+  if FCanvas = nil then Exit;
+  GetSixelCellPixelSize(CellW, CellH);
+  NeedW := FCanvas.Size.X * CellW;
+  NeedH := FCanvas.Size.Y * CellH;
+  if NeedW < 1 then NeedW := 1;
+  if NeedH < 1 then NeedH := 1;
+  if (NeedW <> FCanvas.PixelWidth) or (NeedH <> FCanvas.PixelHeight) then
+    FCanvas.ResizePixels(NeedW, NeedH);
+end;
+
+procedure TSixelSineWindow.UpdateFrame;
+var
+  W, H: Integer;
+  X, PrevX, PrevY, CurY: Integer;
+  MidY, Amp: Integer;
+  GridStepX, GridStepY: Integer;
+  T: Double;
+begin
+  if FCanvas = nil then Exit;
+  Inc(FTick);
+  if (FTick and 1) <> 0 then Exit;
+
+  EnsureCanvasSize;
+  W := FCanvas.PixelWidth;
+  H := FCanvas.PixelHeight;
+  if (W < 8) or (H < 8) then Exit;
+
+  FCanvas.Clear($00030A);
+
+  GridStepX := 32;
+  GridStepY := 18;
+  X := 0;
+  while X < W do
+  begin
+    FCanvas.DrawLine(X, 0, X, H - 1, $00101828);
+    Inc(X, GridStepX);
+  end;
+  X := 0;
+  while X < H do
+  begin
+    FCanvas.DrawLine(0, X, W - 1, X, $00101828);
+    Inc(X, GridStepY);
+  end;
+
+  MidY := H div 2;
+  FCanvas.DrawLine(0, MidY, W - 1, MidY, $00204060);
+
+  Amp := MidY - 4;
+  if Amp < 2 then Amp := 2;
+
+  PrevX := 0;
+  PrevY := MidY - Round(Sin(FPhase) * Amp);
+  for X := 1 to W - 1 do
+  begin
+    if W > 1 then
+      T := X / (W - 1)
+    else
+      T := 0.0;
+    CurY := MidY - Round(Sin(FPhase + (T * TwoPi * 2.0)) * Amp);
+    FCanvas.DrawLine(PrevX, PrevY, X, CurY, $0020D4FF);
+    FCanvas.DrawLine(PrevX, PrevY + 1, X, CurY + 1, $00007CC8);
+    PrevX := X;
+    PrevY := CurY;
+  end;
+
+  FCanvas.InvalidateSixel;
+  FCanvas.DrawView;
+  FPhase := FPhase + 0.13;
+end;
+
 { TTabTestDialog }
 constructor TTabTestDialog.Create(var Bounds: TRect; const ATitle: string);
 begin
@@ -1564,7 +1864,9 @@ begin
         NewItem('~N~otification', '', kbNoKey, cmTestNotification, hcNoContext,
         NewItem('Clip~b~oard', '', kbNoKey, cmTestClipboard, hcNoContext,
         NewItem('~I~mage Viewer', '', kbNoKey, cmTestImageView, hcNoContext,
-        nil))))))))))),
+        NewItem('SIXEL ~S~pectrometer', '', kbNoKey, cmTestSixelSpectrometer, hcNoContext,
+        NewItem('SIXEL ~A~nimated Sine', '', kbNoKey, cmTestSixelSine, hcNoContext,
+        nil))))))))))))),
       nil)))))))))))))))))))))))))))),
     NewSubMenu('~W~indow', hcNoContext, NewMenu(
       NewItem('~T~ile', '', kbNoKey, cmTile, hcNoContext,
@@ -1666,6 +1968,8 @@ begin
         cmTestNotification: TestNotification;
         cmTestClipboard: TestClipboard;
         cmTestImageView: TestImageView;
+        cmTestSixelSpectrometer: TestSixelSpectrometer;
+        cmTestSixelSine: TestSixelSine;
       else
         Exit;
       end;
@@ -1696,6 +2000,7 @@ begin
     if UptimeViewGadget <> nil then UptimeViewGadget.Update;
     if Phase2Dialog <> nil then Phase2Dialog.UpdateGadgets;
     if SystemInfoDialog <> nil then SystemInfoDialog.UpdateWidgets;
+    UpdateSixelDemoWindows;
 
     { Update notifications for auto-dismiss }
     if Desktop <> nil then begin
@@ -3329,6 +3634,24 @@ begin
   end;
 end;
 
+procedure UpdateSixelDemoWindows;
+var
+  P, Next: TView;
+begin
+  if Desktop = nil then Exit;
+  P := Desktop.First;
+  if P = nil then Exit;
+
+  repeat
+    Next := P.Next;
+    if P is TSixelSpectrometerWindow then
+      TSixelSpectrometerWindow(P).UpdateFrame
+    else if P is TSixelSineWindow then
+      TSixelSineWindow(P).UpdateFrame;
+    P := Next;
+  until P = Desktop.First;
+end;
+
 { ====================== Test Procedures ====================== }
 procedure TMyApp.TestProgressBar;
 var
@@ -3699,6 +4022,24 @@ begin
   finally
     Dlg.Free;
   end;
+end;
+
+procedure TMyApp.TestSixelSpectrometer;
+var
+  R: TRect;
+begin
+  Inc(WindowCount);
+  R.Assign(2, 1, 78, 23);
+  Desktop.Insert(TSixelSpectrometerWindow.Create(R));
+end;
+
+procedure TMyApp.TestSixelSine;
+var
+  R: TRect;
+begin
+  Inc(WindowCount);
+  R.Assign(5, 2, 75, 20);
+  Desktop.Insert(TSixelSineWindow.Create(R));
 end;
 
 begin
