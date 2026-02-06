@@ -605,7 +605,7 @@ end;
 
 constructor TImageWindow.Create(const AFileName: string);
 var
-  R, VR, HR: TRect;
+  R: TRect;
   Title: string;
   DW, DH: Integer;
 begin
@@ -621,29 +621,11 @@ begin
 
   Options := Options or ofTileable;
 
-  { Place scrollbars INSIDE the interior, not on the frame border.
-    StandardScrollBar places them on the frame where TFrame.Draw
-    overwrites them. Instead, create them as interior child views. }
+  FHScrollBar := StandardScrollBar(sbHorizontal or sbHandleKeyboard);
+  FVScrollBar := StandardScrollBar(sbVertical or sbHandleKeyboard);
+
   GetExtent(R);
   R.Grow(-1, -1);
-
-  { Vertical scrollbar: rightmost column of interior }
-  VR.Assign(R.B.X - 1, R.A.Y, R.B.X, R.B.Y - 1);
-  FVScrollBar := TScrollBar.Create(VR);
-  FVScrollBar.GrowMode := gfGrowLoX or gfGrowHiX or gfGrowHiY;
-  FVScrollBar.Options := FVScrollBar.Options or ofPostProcess;
-  Insert(FVScrollBar);
-
-  { Horizontal scrollbar: bottom row of interior, excluding corner }
-  HR.Assign(R.A.X, R.B.Y - 1, R.B.X - 1, R.B.Y);
-  FHScrollBar := TScrollBar.Create(HR);
-  FHScrollBar.GrowMode := gfGrowLoY or gfGrowHiX or gfGrowHiY;
-  FHScrollBar.Options := FHScrollBar.Options or ofPostProcess;
-  Insert(FHScrollBar);
-
-  { Image view: remaining interior (left of VScrollBar, above HScrollBar) }
-  R.B.X := R.B.X - 1;  { Leave column for vertical scrollbar }
-  R.B.Y := R.B.Y - 1;  { Leave row for horizontal scrollbar }
   FImageView := TImageView.Create(R);
   FImageView.GrowMode := gfGrowHiX or gfGrowHiY;
   Insert(FImageView);
