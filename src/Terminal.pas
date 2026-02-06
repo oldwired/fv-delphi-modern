@@ -124,9 +124,11 @@ type
     FCursorY: Integer;              { 0-based cursor Y }
     FCursorVisible: Boolean;
     FCurrentAttr: Byte;
+    FReverseVideo: Boolean;
     FSavedCursorX: Integer;
     FSavedCursorY: Integer;
     FSavedAttr: Byte;
+    FSavedReverseVideo: Boolean;
     FScrollTop: Integer;            { Scroll region top (0-based) }
     FScrollBottom: Integer;         { Scroll region bottom (0-based) }
     FDirtyTop: Integer;
@@ -141,6 +143,7 @@ type
     procedure EnsureLineExists(Index: Integer);
     procedure MarkDirty(X1, Y1, X2, Y2: Integer);
     procedure ReflowLines(OldWidth, NewWidth: Integer);
+    function GetEffectiveAttr: Byte;
 
   public
     constructor Create(AWidth, AHeight, AScrollback: Integer);
@@ -572,9 +575,11 @@ begin
   FCursorY := 0;
   FCursorVisible := True;
   FCurrentAttr := DefaultTerminalAttr;
+  FReverseVideo := False;
   FSavedCursorX := 0;
   FSavedCursorY := 0;
   FSavedAttr := DefaultTerminalAttr;
+  FSavedReverseVideo := False;
   FScrollTop := 0;
   FScrollBottom := AHeight - 1;
   FAutoWrap := True;
@@ -630,6 +635,21 @@ begin
   if Y2 > FDirtyBottom then FDirtyBottom := Y2;
 end;
 
+function TTerminalBuffer.GetEffectiveAttr: Byte;
+var
+  FG, BG: Byte;
+begin
+  if not FReverseVideo then
+  begin
+    Result := FCurrentAttr;
+    Exit;
+  end;
+
+  FG := FCurrentAttr and $0F;
+  BG := (FCurrentAttr shr 4) and $0F;
+  Result := (FG shl 4) or BG;
+end;
+
 procedure TTerminalBuffer.WriteGlyph(const Glyph: string);
 var
   I: Integer;
@@ -679,7 +699,7 @@ begin
   end;
 
   FLines[LineIdx][FCursorX].Ch := Ch;
-  FLines[LineIdx][FCursorX].Attr := FCurrentAttr;
+  FLines[LineIdx][FCursorX].Attr := GetEffectiveAttr;
 
   MarkDirty(FCursorX, FCursorY, FCursorX, FCursorY);
   Inc(FCursorX);
@@ -767,6 +787,7 @@ begin
   FSavedCursorX := FCursorX;
   FSavedCursorY := FCursorY;
   FSavedAttr := FCurrentAttr;
+  FSavedReverseVideo := FReverseVideo;
 end;
 
 procedure TTerminalBuffer.RestoreCursor;
@@ -774,6 +795,7 @@ begin
   FCursorX := FSavedCursorX;
   FCursorY := FSavedCursorY;
   FCurrentAttr := FSavedAttr;
+  FReverseVideo := FSavedReverseVideo;
 end;
 
 procedure TTerminalBuffer.InsertLine(Count: Integer);
@@ -802,7 +824,7 @@ begin
     for J := 0 to FWidth - 1 do
     begin
       NewLine[J].Ch := ' ';
-      NewLine[J].Attr := FCurrentAttr;
+      NewLine[J].Attr := GetEffectiveAttr;
     end;
     FLines[GetLineIndex(FCursorY)] := NewLine;
   end;
@@ -831,7 +853,7 @@ begin
     for J := 0 to FWidth - 1 do
     begin
       NewLine[J].Ch := ' ';
-      NewLine[J].Attr := FCurrentAttr;
+      NewLine[J].Attr := GetEffectiveAttr;
     end;
     FLines[GetLineIndex(FScrollBottom)] := NewLine;
   end;
@@ -854,7 +876,7 @@ begin
 
     { Insert blank at cursor }
     FLines[LineIdx][FCursorX].Ch := ' ';
-    FLines[LineIdx][FCursorX].Attr := FCurrentAttr;
+    FLines[LineIdx][FCursorX].Attr := GetEffectiveAttr;
   end;
 
   MarkDirty(FCursorX, FCursorY, FWidth - 1, FCursorY);
@@ -875,7 +897,7 @@ begin
 
     { Insert blank at end }
     FLines[LineIdx][FWidth - 1].Ch := ' ';
-    FLines[LineIdx][FWidth - 1].Attr := FCurrentAttr;
+    FLines[LineIdx][FWidth - 1].Attr := GetEffectiveAttr;
   end;
 
   MarkDirty(FCursorX, FCursorY, FWidth - 1, FCursorY);
@@ -891,7 +913,7 @@ begin
   for I := FCursorX to FWidth - 1 do
   begin
     FLines[LineIdx][I].Ch := ' ';
-    FLines[LineIdx][I].Attr := FCurrentAttr;
+    FLines[LineIdx][I].Attr := GetEffectiveAttr;
   end;
 
   MarkDirty(FCursorX, FCursorY, FWidth - 1, FCursorY);
@@ -907,7 +929,7 @@ begin
   for I := 0 to FCursorX do
   begin
     FLines[LineIdx][I].Ch := ' ';
-    FLines[LineIdx][I].Attr := FCurrentAttr;
+    FLines[LineIdx][I].Attr := GetEffectiveAttr;
   end;
 
   MarkDirty(0, FCursorY, FCursorX, FCursorY);
@@ -923,7 +945,7 @@ begin
   for I := 0 to FWidth - 1 do
   begin
     FLines[LineIdx][I].Ch := ' ';
-    FLines[LineIdx][I].Attr := FCurrentAttr;
+    FLines[LineIdx][I].Attr := GetEffectiveAttr;
   end;
 
   MarkDirty(0, FCursorY, FWidth - 1, FCursorY);
@@ -983,7 +1005,7 @@ begin
   for I := FCursorX to EndX do
   begin
     FLines[LineIdx][I].Ch := ' ';
-    FLines[LineIdx][I].Attr := FCurrentAttr;
+    FLines[LineIdx][I].Attr := GetEffectiveAttr;
   end;
 
   MarkDirty(FCursorX, FCursorY, EndX, FCursorY);
@@ -1004,7 +1026,7 @@ begin
       for J := 0 to FWidth - 1 do
       begin
         NewLine[J].Ch := ' ';
-        NewLine[J].Attr := FCurrentAttr;
+        NewLine[J].Attr := GetEffectiveAttr;
       end;
       FLines.Add(NewLine);
       FLineWrapped.Add(False);  { New line is not wrapped }
@@ -1038,7 +1060,7 @@ begin
       for J := 0 to FWidth - 1 do
       begin
         NewLine[J].Ch := ' ';
-        NewLine[J].Attr := FCurrentAttr;
+        NewLine[J].Attr := GetEffectiveAttr;
       end;
       FLines[GetLineIndex(FScrollBottom)] := NewLine;
       if GetLineIndex(FScrollBottom) < FLineWrapped.Count then
@@ -1069,7 +1091,7 @@ begin
     for J := 0 to FWidth - 1 do
     begin
       NewLine[J].Ch := ' ';
-      NewLine[J].Attr := FCurrentAttr;
+      NewLine[J].Attr := GetEffectiveAttr;
     end;
     FLines[GetLineIndex(FScrollTop)] := NewLine;
     if GetLineIndex(FScrollTop) < FLineWrapped.Count then
@@ -1122,20 +1144,14 @@ begin
 end;
 
 procedure TTerminalBuffer.SetReverse(Enable: Boolean);
-var
-  FG, BG: Byte;
 begin
-  if Enable then
-  begin
-    FG := (FCurrentAttr and $F0) shr 4;
-    BG := (FCurrentAttr and $0F);
-    FCurrentAttr := (BG shl 4) or FG;
-  end;
+  FReverseVideo := Enable;
 end;
 
 procedure TTerminalBuffer.ResetAttributes;
 begin
   FCurrentAttr := DefaultTerminalAttr;
+  FReverseVideo := False;
 end;
 
 procedure TTerminalBuffer.TabForward(Count: Integer);
@@ -1498,6 +1514,7 @@ begin
   FCursorY := 0;
   FCursorVisible := True;
   FCurrentAttr := DefaultTerminalAttr;
+  FReverseVideo := False;
   FScrollTop := 0;
   FScrollBottom := FHeight - 1;
   FAutoWrap := True;
@@ -1987,6 +2004,53 @@ procedure TTerminalParser.ExecuteSGR;
 var
   I, P: Integer;
   FG, BG: Byte;
+  function ClampByte(V: Integer): Integer; inline;
+  begin
+    if V < 0 then
+      Result := 0
+    else if V > 255 then
+      Result := 255
+    else
+      Result := V;
+  end;
+  function RGBToANSIIndex(R, G, B: Integer): Byte;
+  var
+    MaxC, MinC, N: Integer;
+  begin
+    R := ClampByte(R);
+    G := ClampByte(G);
+    B := ClampByte(B);
+
+    MaxC := Max(R, Max(G, B));
+    MinC := Min(R, Min(G, B));
+
+    if (MaxC - MinC) < 24 then
+    begin
+      if MaxC < 48 then
+        Exit(0)
+      else if MaxC < 170 then
+        Exit(8)
+      else
+        Exit(7);
+    end;
+
+    N := 0;
+    if R >= 96 then N := N or 1;
+    if G >= 96 then N := N or 2;
+    if B >= 96 then N := N or 4;
+    if N = 0 then
+    begin
+      if (R >= G) and (R >= B) then
+        N := 1
+      else if (G >= R) and (G >= B) then
+        N := 2
+      else
+        N := 4;
+    end;
+    if MaxC >= 192 then
+      N := N or 8;
+    Result := Byte(N and $0F);
+  end;
 begin
   if FParamCount = 0 then
   begin
@@ -2016,7 +2080,7 @@ begin
       25: { Blink off }
         ;
       27: { Reverse off }
-        ;
+        FBuffer.SetReverse(False);
       30..37:  { Foreground color }
         begin
           FG := FPalette.MapForeground(P - 30);
@@ -2030,6 +2094,13 @@ begin
             FG := FPalette.MapForeground(FParams[I + 2] and $0F);
             FBuffer.SetForeground(FG);
             Inc(I, 2);
+          end
+          else if (I + 4 < FParamCount) and (FParams[I + 1] = 2) then
+          begin
+            FG := FPalette.MapForeground(
+              RGBToANSIIndex(FParams[I + 2], FParams[I + 3], FParams[I + 4]));
+            FBuffer.SetForeground(FG);
+            Inc(I, 4);
           end;
         end;
       39: { Default foreground }
@@ -2046,6 +2117,13 @@ begin
             BG := FPalette.MapBackground(FParams[I + 2] and $0F);
             FBuffer.SetBackground(BG shr 4);
             Inc(I, 2);
+          end
+          else if (I + 4 < FParamCount) and (FParams[I + 1] = 2) then
+          begin
+            BG := FPalette.MapBackground(
+              RGBToANSIIndex(FParams[I + 2], FParams[I + 3], FParams[I + 4]));
+            FBuffer.SetBackground(BG shr 4);
+            Inc(I, 4);
           end;
         end;
       49: { Default background }
@@ -2340,6 +2418,8 @@ begin
     { TDrawCell.Ch is string, Cell.Ch is Char }
     Buf[X].Ch := Cell.Ch;
     Buf[X].Attr := Attr;
+    Buf[X].FG_RGB := 0;
+    Buf[X].BG_RGB := 0;
   end;
 end;
 
@@ -2539,9 +2619,17 @@ begin
           end
           else
           begin
-            { Single click: re-enter capture mode if child running, or start selection }
-            if (FMode = tmNormal) and (FConPTY <> nil) and FConPTY.IsRunning then
-              EnterCaptureMode
+            { Single click behavior:
+              - Running + normal mode: enter capture mode
+              - Running + capture mode: keep capture (Shift+Click starts selection)
+              - Not running: start selection }
+            if (FConPTY <> nil) and FConPTY.IsRunning then
+            begin
+              if FMode = tmNormal then
+                EnterCaptureMode
+              else if (GetShiftState and (kbLeftShift or kbRightShift)) <> 0 then
+                StartSelection(Local.X, Local.Y);
+            end
             else
               StartSelection(Local.X, Local.Y);
           end;
@@ -2741,6 +2829,8 @@ begin
       Attr := ((Cell.Attr and $0F) shl 4) or ((Cell.Attr and $F0) shr 4);
       Buf[X].Ch := Cell.Ch;
       Buf[X].Attr := Attr;
+      Buf[X].FG_RGB := 0;
+      Buf[X].BG_RGB := 0;
     end;
     WriteLine(0, Y, Size.X, 1, Buf);
   end;
@@ -2870,6 +2960,12 @@ end;
 
 procedure TTerminalView.EnterCaptureMode;
 begin
+  if FSelectionMode <> smNone then
+  begin
+    FSelectionMode := smNone;
+    FSelecting := False;
+    DrawView;
+  end;
   FMode := tmCapture;
   FWaitingEscapeCommand := False;
   ShowCursor;
