@@ -135,7 +135,7 @@ const
 
 implementation
 
-uses FVScreen;
+uses FVScreen, FVUTF8;
 
 const
   SubMenuChar: array[Boolean] of Char = ('>', SmallArrowRight);
@@ -395,9 +395,9 @@ begin CNormal := GetColor($0301); CSelect := GetColor($0604); CNormDisabled := G
     else begin if T = Selected then Color := CSelDisabled else Color := CNormDisabled; end;
     DrawCStr(B, I, ' ' + T.Text + ' ', Color); Inc(I, L); end; T := T.Next; end;
   HintBuf := Hint(HelpCtx);
-  if (HintBuf <> '') and (I + 2 + Length(HintBuf) < MaxViewWidth) then begin
+  if (HintBuf <> '') and (I + 2 + StringDisplayWidth(HintBuf) < MaxViewWidth) then begin
     DrawChar(B, I, BoxVert, Byte(CNormal), 1); Inc(I, 2);
-    DrawStr(B, I, HintBuf, Byte(CNormal)); I := I + Length(HintBuf);
+    DrawStr(B, I, HintBuf, Byte(CNormal)); I := I + StringDisplayWidth(HintBuf);
   end;
   WriteLine(0, 0, Size.X, 1, B); end;
 

@@ -391,7 +391,7 @@ var
 implementation
 
 uses
-  FVSerialization;
+  FVSerialization, FVUTF8;
 
 {***************************************************************************}
 {                            TGridCell                                      }
@@ -991,54 +991,55 @@ end;
 { Returns True if the character is a wide (East Asian Wide) character
   that takes 2 columns on the terminal }
 function IsWideChar(C: Char): Boolean;
-var
-  Code: Word;
 begin
-  Code := Ord(C);
-  { Common East Asian Wide character ranges }
-  Result :=
-    ((Code >= $1100) and (Code <= $115F)) or   { Hangul Jamo }
-    ((Code >= $2E80) and (Code <= $9FFF)) or   { CJK and related blocks }
-    ((Code >= $AC00) and (Code <= $D7AF)) or   { Hangul Syllables }
-    ((Code >= $F900) and (Code <= $FAFF)) or   { CJK Compatibility Ideographs }
-    ((Code >= $FE10) and (Code <= $FE1F)) or   { Vertical Forms }
-    ((Code >= $FE30) and (Code <= $FE6F)) or   { CJK Compatibility Forms }
-    ((Code >= $FF00) and (Code <= $FF60)) or   { Fullwidth Forms (not halfwidth) }
-    ((Code >= $FFE0) and (Code <= $FFE6));     { Fullwidth currency etc. }
+  Result := IsWideCodePoint(Ord(C));
 end;
 
 { Calculates the display width of a string in terminal columns.
-  Wide characters (CJK, etc.) count as 2 columns, others as 1. }
+  Wide characters (CJK, emoji) count as 2 columns, others as 1.
+  Handles surrogate pairs correctly. }
 function DisplayWidth(const S: string): Integer;
-var
-  I: Integer;
 begin
-  Result := 0;
-  for I := 1 to Length(S) do
-  begin
-    if IsWideChar(S[I]) then
-      Inc(Result, 2)
-    else
-      Inc(Result);
-  end;
+  Result := StringDisplayWidth(S);
 end;
 
-{ Returns the number of characters from S that fit in MaxWidth columns }
+{ Returns a substring of S that fits in MaxWidth display columns.
+  Handles surrogate pairs correctly. }
 function TruncateToWidth(const S: string; MaxWidth: Integer): string;
 var
-  I, Width: Integer;
+  I, Len, Width, W: Integer;
+  CP: Cardinal;
 begin
   Width := 0;
-  for I := 1 to Length(S) do
+  Len := Length(S);
+  I := 1;
+  while I <= Len do
   begin
-    if IsWideChar(S[I]) then
-      Inc(Width, 2)
-    else
-      Inc(Width);
-    if Width > MaxWidth then
+    { Check for surrogate pair }
+    if (I < Len) and
+       (Ord(S[I]) >= $D800) and (Ord(S[I]) <= $DBFF) and
+       (Ord(S[I+1]) >= $DC00) and (Ord(S[I+1]) <= $DFFF) then
     begin
-      Result := Copy(S, 1, I - 1);
-      Exit;
+      CP := $10000 + Cardinal((Ord(S[I]) - $D800) shl 10) + Cardinal(Ord(S[I+1]) - $DC00);
+      W := CodePointCharWidth(CP);
+      if Width + W > MaxWidth then
+      begin
+        Result := Copy(S, 1, I - 1);
+        Exit;
+      end;
+      Inc(Width, W);
+      Inc(I, 2);
+    end
+    else
+    begin
+      W := CodePointCharWidth(Ord(S[I]));
+      if Width + W > MaxWidth then
+      begin
+        Result := Copy(S, 1, I - 1);
+        Exit;
+      end;
+      Inc(Width, W);
+      Inc(I);
     end;
   end;
   Result := S;
@@ -1156,7 +1157,15 @@ begin
       B[OutPos].Attr := Color;
       { Wide characters take 2 columns in terminal }
       if IsWideChar(C) then
-        Inc(OutPos, 2)
+      begin
+        { Fill second column with space to prevent stale buffer data }
+        if OutPos + 1 < MaxViewWidth then
+        begin
+          B[OutPos + 1].Ch := ' ';
+          B[OutPos + 1].Attr := Color;
+        end;
+        Inc(OutPos, 2);
+      end
       else
         Inc(OutPos);
     end;

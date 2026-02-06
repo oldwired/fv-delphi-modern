@@ -211,6 +211,8 @@ type
     destructor Destroy; override;
     function   BufByte(P: Sw_Word): Byte;         { Raw byte at position }
     function   BufChar(P: Sw_Word): Char;         { Decoded UTF-8 character }
+    function   BufCharStr(P: Sw_Word): string;    { Decoded UTF-8 as string (supports emoji) }
+    function   BufCharWidth(P: Sw_Word): Integer; { Display width: 1 or 2 (wide/emoji) }
     function   BufCharLen(P: Sw_Word): Integer;   { Byte length of UTF-8 char at P }
     function   BufPtr(P: Sw_Word): Sw_Word;
     procedure  ChangeBounds(var Bounds: TRect); override;
@@ -228,6 +230,7 @@ type
     function   InsertFrom(Editor: TEditor): Boolean; virtual;
     function   InsertText(Text: Pointer; Length: Sw_Word; SelectText: Boolean): Boolean;
     procedure  InsertUnicodeChar(C: Char);  { Insert Unicode char as UTF-8 }
+    procedure  InsertUnicodeStr(const S: string);  { Insert Unicode string as UTF-8 (supports emoji) }
     procedure  ScrollTo(X, Y: Sw_Integer);
     function   Search(const FindStr: String; Opts: Word): Boolean;
     function   SetBufSize(NewSize: Sw_Word): Boolean; virtual;
@@ -1318,6 +1321,56 @@ begin
   Result := DecodeUTF8Char(@Buffer^[PhysP], Remaining, CharLen);
 end;
 
+function TEditor.BufCharStr(P: Sw_Word): string;
+var
+  PhysP: Sw_Word;
+  Remaining: Integer;
+  CharLen: Integer;
+begin
+  if P >= BufLen then
+  begin
+    Result := '';
+    Exit;
+  end;
+
+  PhysP := P;
+  if PhysP >= CurPtr then
+    Inc(PhysP, GapLen);
+
+  { Calculate remaining bytes in buffer }
+  Remaining := BufSize - PhysP;
+  if Remaining <= 0 then
+  begin
+    Result := '';
+    Exit;
+  end;
+
+  { Decode UTF-8 character to full string (supports surrogate pairs for emoji) }
+  Result := DecodeUTF8ToString(@Buffer^[PhysP], Remaining, CharLen);
+end;
+
+function TEditor.BufCharWidth(P: Sw_Word): Integer;
+var
+  PhysP: Sw_Word;
+  Remaining: Integer;
+  CharLen: Integer;
+  CP: Cardinal;
+begin
+  Result := 1;
+  if P >= BufLen then Exit;
+
+  PhysP := P;
+  if PhysP >= CurPtr then
+    Inc(PhysP, GapLen);
+
+  Remaining := BufSize - PhysP;
+  if Remaining <= 0 then Exit;
+
+  CP := DecodeUTF8CodePoint(@Buffer^[PhysP], Remaining, CharLen);
+  Result := CodePointCharWidth(CP);
+  if Result < 1 then Result := 1;  { Minimum 1 column for editor purposes }
+end;
+
 function TEditor.BufCharLen(P: Sw_Word): Integer;
 var
   PhysP: Sw_Word;
@@ -1406,7 +1459,7 @@ begin
   begin
     if BufChar(P) = #9 then
       Pos := Pos or (TabSize - 1);
-    Inc(Pos);
+    Inc(Pos, BufCharWidth(P));
     Inc(P, BufCharLen(P));
   end;
   Result := Pos;
@@ -1422,7 +1475,7 @@ begin
   begin
     if BufChar(P) = #9 then
       Pos := Pos or (TabSize - 1);
-    Inc(Pos);
+    Inc(Pos, BufCharWidth(P));
     CharLen := BufCharLen(P);
     Inc(P, CharLen);
   end;
@@ -1726,6 +1779,7 @@ var
   X: Sw_Integer;
   OutPos: Sw_Integer;  { Position in output buffer }
   C: Char;
+  CStr: string;
   CharLen: Integer;
   Color, SelColor: Byte;
   SelS, SelE: Sw_Integer;
@@ -1779,6 +1833,9 @@ begin
     end
     else
     begin
+      { Use full string decoding to support emoji (surrogate pairs) }
+      CStr := BufCharStr(LinePtr);
+      if CStr = '' then CStr := C;
       if X >= FDelta.X then
       begin
         if (X >= SelS) and (X < SelE) then
@@ -1787,12 +1844,22 @@ begin
           CurColor := Color;
         if OutPos < MaxViewWidth then
         begin
-          Buf^[OutPos].Ch := C;
+          Buf^[OutPos].Ch := CStr;
           Buf^[OutPos].Attr := CurColor;
         end;
         Inc(OutPos);
+        { Wide characters take 2 columns - fill second column with space }
+        if BufCharWidth(LinePtr) > 1 then
+        begin
+          if OutPos < MaxViewWidth then
+          begin
+            Buf^[OutPos].Ch := ' ';
+            Buf^[OutPos].Attr := CurColor;
+          end;
+          Inc(OutPos);
+        end;
       end;
-      Inc(X);
+      Inc(X, BufCharWidth(LinePtr));
     end;
     Inc(LinePtr, CharLen);  { Advance by UTF-8 character length }
   end;
@@ -1904,7 +1971,24 @@ begin
     evKeyDown:
       begin
         { Handle printable Unicode characters }
-        if Event.UnicodeChar >= ' ' then
+        { Check LastUnicodeStr first for surrogate pair support (emoji) }
+        if (LastUnicodeStr <> '') and (Length(LastUnicodeStr) > 1) and
+           (Ord(LastUnicodeStr[1]) >= $D800) and (Ord(LastUnicodeStr[1]) <= $DBFF) then
+        begin
+          { Surrogate pair (emoji) - insert the full string as UTF-8 }
+          Lock;
+          if Overwrite and not HasSelection then
+            if BufChar(CurPtr) <> #13 then
+              SetSelect(CurPtr, NextChar(CurPtr), True);
+          InsertUnicodeStr(LastUnicodeStr);
+          LastUnicodeStr := '';
+          if Word_Wrap then
+            Check_For_Word_Wrap(SelectMode, CenterCursor);
+          TrackCursor(CenterCursor);
+          Unlock;
+          ClearEvent(Event);
+        end
+        else if Event.UnicodeChar >= ' ' then
         begin
           Lock;
           if Overwrite and not HasSelection then
@@ -2188,6 +2272,15 @@ var
   UTF8Bytes: TBytes;
 begin
   UTF8Bytes := TEncoding.UTF8.GetBytes(C);
+  InsertText(@UTF8Bytes[0], System.Length(UTF8Bytes), False);
+end;
+
+procedure TEditor.InsertUnicodeStr(const S: string);
+var
+  UTF8Bytes: TBytes;
+begin
+  if S = '' then Exit;
+  UTF8Bytes := TEncoding.UTF8.GetBytes(S);
   InsertText(@UTF8Bytes[0], System.Length(UTF8Bytes), False);
 end;
 

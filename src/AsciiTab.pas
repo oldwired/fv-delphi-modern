@@ -118,7 +118,9 @@ const
   MiddleDot = #$00B7;  { · - Middle dot as placeholder for control chars }
 begin
   CharCode := CharCode and $FF;
-  if (CharCode < 32) or (CharCode = 127) then
+  { C0 control chars (0-31), DEL (127), and C1 control chars (128-159)
+    are not renderable in Unicode - replace with placeholder }
+  if (CharCode < 32) or ((CharCode >= 127) and (CharCode <= 159)) then
     Result := MiddleDot
   else
     Result := Char(CharCode);
@@ -131,7 +133,9 @@ const
   MiddleDot = #$00B7;  { · - Middle dot as placeholder for control chars }
 begin
   CharCode := CharCode and $FF;
-  if (CharCode < 32) or (CharCode = 127) then
+  { C0 control chars (0-31), DEL (127), and C1 control chars (128-159)
+    are not renderable in Unicode - replace with placeholder }
+  if (CharCode < 32) or ((CharCode >= 127) and (CharCode <= 159)) then
     Result := MiddleDot
   else
     Result := Char(CharCode);

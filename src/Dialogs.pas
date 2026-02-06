@@ -265,6 +265,9 @@ procedure RegisterDialogs;
 
 implementation
 
+uses
+  FVUTF8;
+
 const
   LeftArr: Char = SmallArrowLeft;
   RightArr: Char = SmallArrowRight;
@@ -956,8 +959,8 @@ begin
           DrawChar(B, Col + 2, UnicodeMarker, Byte(Color), 1);
 
         S := Strings[Cur];
-        DrawCStr(B, Col + Length(Icon), S, Color);
-        Inc(Col, Length(Icon) + CStrLen(S) + 2);
+        DrawCStr(B, Col + CStrLen(Icon), S, Color);
+        Inc(Col, CStrLen(Icon) + CStrLen(S) + 2);
       end;
     end;
     WriteLine(0, I, Size.X, 1, B);
@@ -1276,6 +1279,7 @@ var
   Color: Byte;
   Center: Boolean;
   I, J, L, P, Y: Integer;
+  LineWidth: Integer;
   B: TDrawBuffer;
   S: string;
 begin
@@ -1297,14 +1301,19 @@ begin
         J := P;
         while (P <= L) and (S[P] = ' ') do Inc(P);
         while (P <= L) and (S[P] <> ' ') and (S[P] <> #13) do Inc(P);
-      until (P > L) or (P >= I + Size.X) or (S[P] = #13);
-      if P > I + Size.X then
+      until (P > L) or (StringDisplayWidth(Copy(S, I, P - I)) >= Size.X) or (S[P] = #13);
+      if StringDisplayWidth(Copy(S, I, P - I)) > Size.X then
         if J > I then
           P := J
-        else
-          P := I + Size.X;
+        else begin
+          { Find exact cutoff point by display width }
+          P := I;
+          while (P <= L) and (StringDisplayWidth(Copy(S, I, P - I + 1)) <= Size.X) do
+            Inc(P);
+        end;
+      LineWidth := StringDisplayWidth(Copy(S, I, P - I));
       if Center then
-        J := (Size.X - P + I) div 2
+        J := (Size.X - LineWidth) div 2
       else
         J := 0;
       DrawStr(B, J, Copy(S, I, P - I), Color);
@@ -1591,7 +1600,7 @@ var
   L: TLabel;
   R: TRect;
 begin
-  R.Assign(X, Y, X + Length(AText) + 1, Y + 1);
+  R.Assign(X, Y, X + CStrDisplayWidth(AText) + 1, Y + 1);
   L := TLabel.Create(R, AText, ALink);
   if L <> nil then
     Insert(L);
@@ -1636,7 +1645,7 @@ begin
   Width := 0;
   ACount := HistoryCount(HistoryId);
   for I := 0 to ACount - 1 do begin
-    T := Length(HistoryStr(HistoryId, I));
+    T := StringDisplayWidth(HistoryStr(HistoryId, I));
     if T > Width then Width := T;
   end;
   Result := Width;

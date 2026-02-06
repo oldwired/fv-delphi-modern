@@ -312,8 +312,20 @@ begin
     end;
 
     evMouseDown: begin
+      { Handle mouse wheel scrolling }
+      if Event.Buttons and (mbScrollWheelUp or mbScrollWheelDown) <> 0 then begin
+        if Event.Buttons and mbScrollWheelUp <> 0 then begin
+          FAutoScroll := False;
+          ScrollTo(FTopLine - 3);
+        end else begin
+          ScrollTo(FTopLine + 3);
+          if FTopLine >= Max(0, GetVisibleCount - Size.Y) then
+            FAutoScroll := True;
+        end;
+        ClearEvent(Event);
+      end
       { Handle click to focus }
-      if Event.Buttons and mbLeftButton <> 0 then begin
+      else if Event.Buttons and mbLeftButton <> 0 then begin
         Select;
         ClearEvent(Event);
       end;

@@ -139,7 +139,8 @@ var
 
   { Unicode character buffer - parallel to VideoBuf for full Unicode support }
   { MoveChar stores Unicode chars here, sync reads from here }
-  UnicodeCharBuf: array of Char;
+  { Uses string to support surrogate pairs (emoji) and multi-codepoint graphemes }
+  UnicodeCharBuf: array of string;
 
 { Legacy API - calls through to Screen object }
 procedure InitVideo;
@@ -162,7 +163,8 @@ procedure SyncVideoBufToScreen;
 implementation
 
 uses
-  System.Math;
+  System.Math,
+  FVUTF8;
 
 const
   { VT Escape sequences }
@@ -468,19 +470,17 @@ var
   X, Y: Integer;
   LastSGR: string;
   CurrentSGR: string;
+  IsWide: Boolean;
 begin
   if not FInitialized then Exit;
 
   LastSGR := '';
 
   for Y := 0 to FHeight - 1 do begin
-    for X := 0 to FWidth - 1 do begin
+    X := 0;
+    while X < FWidth do begin
       if Force or CellsDiffer(X, Y) then begin
-        { Always explicitly position cursor for each cell to avoid
-          issues with wide characters, combining characters, or other
-          special characters that might move the cursor unexpectedly.
-          This fixes rendering glitches where content appears shifted
-          from its expected position. }
+        { Position cursor for this cell }
         MoveCursorVT(X, Y);
 
         { Set attributes if changed }
@@ -498,7 +498,19 @@ begin
 
         { Update old buffer }
         FOldCells[Y, X] := FCells[Y, X];
+
+        { Check if this cell contains a wide character (emoji, CJK, etc.)
+          If so, skip the next cell - the terminal already used 2 columns
+          for this character. Writing the continuation cell would overwrite
+          the second visual column of the wide character. }
+        IsWide := IsWideString(FCells[Y, X].Ch);
+        if IsWide and (X + 1 < FWidth) then begin
+          { Mark continuation cell as up-to-date so it won't be redrawn }
+          FOldCells[Y, X + 1] := FCells[Y, X + 1];
+          Inc(X);  { Skip the continuation cell }
+        end;
       end;
+      Inc(X);
     end;
   end;
 
@@ -606,6 +618,7 @@ begin
     LegacyBuf[I] := $0720;
     UnicodeCharBuf[I] := ' ';
   end;
+  { Note: UnicodeCharBuf is now array of string to support emoji/surrogate pairs }
 end;
 
 procedure DoneVideo;
@@ -618,7 +631,7 @@ procedure SyncVideoBufToScreen;
 var
   X, Y, I: Integer;
   Cell: Word;
-  Ch: Char;
+  ChStr: string;
   Attr: Byte;
 begin
   if (Screen = nil) or not Screen.Initialized then Exit;
@@ -628,13 +641,13 @@ begin
       I := Y * Screen.Width + X;
       if I < Length(LegacyBuf) then begin
         Cell := VideoBuf^[I];
-        { Use Unicode char from parallel buffer instead of Lo(Cell) }
-        if (I < Length(UnicodeCharBuf)) and (UnicodeCharBuf[I] <> #0) then
-          Ch := UnicodeCharBuf[I]
+        { Use Unicode string from parallel buffer instead of Lo(Cell) }
+        if (I < Length(UnicodeCharBuf)) and (UnicodeCharBuf[I] <> '') then
+          ChStr := UnicodeCharBuf[I]
         else
-          Ch := Char(Lo(Cell));
+          ChStr := Char(Lo(Cell));
         Attr := Hi(Cell);
-        Screen.SetCellAttr(X, Y, Ch, Attr);
+        Screen.SetCellAttr(X, Y, ChStr, Attr);
       end;
     end;
   end;

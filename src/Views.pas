@@ -402,6 +402,9 @@ var
 
 implementation
 
+uses
+  FVUTF8;
+
 var
   OwnerGroup: TGroup;
 
@@ -1212,9 +1215,13 @@ begin
                   LegacyWord := (Cell.Attr shl 8) or Ord(Ch);
                 Target^ := LegacyWord;
                 Inc(Target);
-                { Copy Unicode character to screen buffer }
-                if ScreenOffset + J < Length(UnicodeCharBuf) then
-                  UnicodeCharBuf[ScreenOffset + J] := Ch;
+                { Copy full Unicode string to screen buffer (supports emoji/surrogate pairs) }
+                if ScreenOffset + J < Length(UnicodeCharBuf) then begin
+                  if Cell.Ch <> '' then
+                    UnicodeCharBuf[ScreenOffset + J] := Cell.Ch
+                  else
+                    UnicodeCharBuf[ScreenOffset + J] := ' ';
+                end;
               end;
             end;
           end;
@@ -1262,7 +1269,7 @@ var
   B: TDrawBuffer;
   L: Integer;
 begin
-  L := Length(Str);
+  L := StringDisplayWidth(Str);
   if L > Size.X - X then L := Size.X - X;
   if L > 0 then begin
     DrawStr(B, 0, Str, Color);
@@ -2111,7 +2118,7 @@ begin
   if (Owner <> nil) and (Width > 10) then begin
     TitleStr := TWindow(Owner).GetTitle(Width - 10);
     if TitleStr <> '' then begin
-      L := Length(TitleStr);
+      L := StringDisplayWidth(TitleStr);
       if L > Width - 10 then L := Width - 10;
       if L > 0 then begin
         I := (Width - L) shr 1;

@@ -10,7 +10,7 @@ interface
 uses
   Winapi.Windows,
   System.SysUtils,
-  Objects, FVScreen, FVCommon, fvconsts;
+  Objects, FVScreen, FVCommon, fvconsts, FVUTF8;
 
 {***************************************************************************}
 {                              PUBLIC CONSTANTS                             }
@@ -280,6 +280,11 @@ var
   DriversScreenMode   : TDriversVideoMode;
   MouseWhere   : TPoint;
 
+  { Full Unicode string for the last key event.
+    Supports surrogate pairs (emoji) that can't fit in a single Char.
+    When this is non-empty, use it instead of Event.UnicodeChar for text insertion. }
+  LastUnicodeStr: string;
+
 implementation
 
 { TRect methods }
@@ -397,6 +402,9 @@ var
   KeyboardInitialized: Boolean;
   EventsInitialized: Boolean;
   StartupScreenMode: TDriversVideoMode;
+  { Surrogate pair buffering for emoji input }
+  PendingHighSurrogate: Char;
+
   { Resize detection }
   LastScreenWidth: Word;
   LastScreenHeight: Word;
@@ -439,49 +447,120 @@ end;
 
 procedure DrawStr(var Buf: TDrawBuffer; Pos: Integer; const S: string; Attr: Byte);
 var
-  I, Len: Integer;
+  I, Len, Col, W: Integer;
+  CP: Cardinal;
+  CellStr: string;
 begin
   Len := Length(S);
-  for I := 1 to Len do
+  I := 1;
+  Col := 0;
+  while I <= Len do
   begin
-    if Pos + I - 1 >= MaxViewWidth then Break;
-    if Pos + I - 1 >= 0 then
+    if Pos + Col >= MaxViewWidth then Break;
+    { Check for surrogate pair }
+    if (I < Len) and
+       (Ord(S[I]) >= $D800) and (Ord(S[I]) <= $DBFF) and
+       (Ord(S[I+1]) >= $DC00) and (Ord(S[I+1]) <= $DFFF) then
     begin
-      Buf[Pos + I - 1].Ch := S[I];
-      Buf[Pos + I - 1].Attr := Attr;
+      CP := $10000 + Cardinal((Ord(S[I]) - $D800) shl 10) + Cardinal(Ord(S[I+1]) - $DC00);
+      W := CodePointCharWidth(CP);
+      CellStr := S[I] + S[I+1]; { Full surrogate pair }
+      if Pos + Col >= 0 then
+      begin
+        Buf[Pos + Col].Ch := CellStr;
+        Buf[Pos + Col].Attr := Attr;
+      end;
+      { Fill continuation cell for wide chars }
+      if (W = 2) and (Pos + Col + 1 >= 0) and (Pos + Col + 1 < MaxViewWidth) then
+      begin
+        Buf[Pos + Col + 1].Ch := '';
+        Buf[Pos + Col + 1].Attr := Attr;
+      end;
+      Inc(Col, W);
+      Inc(I, 2);
+    end
+    else
+    begin
+      W := CodePointCharWidth(Ord(S[I]));
+      if Pos + Col >= 0 then
+      begin
+        Buf[Pos + Col].Ch := S[I];
+        Buf[Pos + Col].Attr := Attr;
+      end;
+      { Fill continuation cell for wide BMP chars (CJK) }
+      if (W = 2) and (Pos + Col + 1 >= 0) and (Pos + Col + 1 < MaxViewWidth) then
+      begin
+        Buf[Pos + Col + 1].Ch := '';
+        Buf[Pos + Col + 1].Attr := Attr;
+      end;
+      Inc(Col, W);
+      Inc(I);
     end;
   end;
 end;
 
 procedure DrawCStr(var Buf: TDrawBuffer; Pos: Integer; const S: string; Attrs: Word);
 var
-  I, J, Len: Integer;
+  I, Len, Col, W: Integer;
   B: Byte;
-  Ch: Char;
   Attr: Byte;
+  CP: Cardinal;
+  CellStr: string;
 begin
   Len := Length(S);
   Attr := Lo(Attrs);
-  J := 0;
-  for I := 1 to Len do
+  Col := 0;
+  I := 1;
+  while I <= Len do
   begin
-    Ch := S[I];
-    if Ch = '~' then
+    if S[I] = '~' then
     begin
       { Toggle between low and high attribute }
       B := Hi(Attrs);
       Attrs := (Lo(Attrs) shl 8) or B;
       Attr := Lo(Attrs);
+      Inc(I);
     end
     else
     begin
-      if Pos + J >= MaxViewWidth then Break;
-      if Pos + J >= 0 then
+      if Pos + Col >= MaxViewWidth then Break;
+      { Check for surrogate pair }
+      if (I < Len) and
+         (Ord(S[I]) >= $D800) and (Ord(S[I]) <= $DBFF) and
+         (Ord(S[I+1]) >= $DC00) and (Ord(S[I+1]) <= $DFFF) then
       begin
-        Buf[Pos + J].Ch := Ch;
-        Buf[Pos + J].Attr := Attr;
+        CP := $10000 + Cardinal((Ord(S[I]) - $D800) shl 10) + Cardinal(Ord(S[I+1]) - $DC00);
+        W := CodePointCharWidth(CP);
+        CellStr := S[I] + S[I+1];
+        if Pos + Col >= 0 then
+        begin
+          Buf[Pos + Col].Ch := CellStr;
+          Buf[Pos + Col].Attr := Attr;
+        end;
+        if (W = 2) and (Pos + Col + 1 >= 0) and (Pos + Col + 1 < MaxViewWidth) then
+        begin
+          Buf[Pos + Col + 1].Ch := '';
+          Buf[Pos + Col + 1].Attr := Attr;
+        end;
+        Inc(Col, W);
+        Inc(I, 2);
+      end
+      else
+      begin
+        W := CodePointCharWidth(Ord(S[I]));
+        if Pos + Col >= 0 then
+        begin
+          Buf[Pos + Col].Ch := S[I];
+          Buf[Pos + Col].Attr := Attr;
+        end;
+        if (W = 2) and (Pos + Col + 1 >= 0) and (Pos + Col + 1 < MaxViewWidth) then
+        begin
+          Buf[Pos + Col + 1].Ch := '';
+          Buf[Pos + Col + 1].Attr := Attr;
+        end;
+        Inc(Col, W);
+        Inc(I);
       end;
-      Inc(J);
     end;
   end;
 end;
@@ -501,17 +580,12 @@ end;
 
 function StrWidth(const S: string): Integer;
 begin
-  Result := Length(S);
+  Result := StringDisplayWidth(S);
 end;
 
 function CStrLen(const S: string): Integer;
-var
-  I, J: Integer;
 begin
-  J := 0;
-  for I := 1 to Length(S) do
-    if S[I] <> '~' then Inc(J);
-  Result := J;
+  Result := CStrDisplayWidth(S);
 end;
 
 function GetAltCode(Ch: Char): Word;
@@ -612,6 +686,22 @@ begin
 
       { Get the Unicode character }
       UChar := InputRec.Event.KeyEvent.UnicodeChar;
+
+      { Handle surrogate pairs (emoji input from paste or emoji picker) }
+      { Windows sends high surrogate ($D800-$DBFF) followed by low surrogate ($DC00-$DFFF) }
+      if (Ord(UChar) >= $D800) and (Ord(UChar) <= $DBFF) then begin
+        { High surrogate - buffer it and wait for the low surrogate }
+        PendingHighSurrogate := UChar;
+        Continue;
+      end;
+      if (Ord(UChar) >= $DC00) and (Ord(UChar) <= $DFFF) and (PendingHighSurrogate <> #0) then begin
+        { Low surrogate - combine with buffered high surrogate into full string }
+        LastUnicodeStr := PendingHighSurrogate + UChar;
+        PendingHighSurrogate := #0;
+      end else begin
+        PendingHighSurrogate := #0;
+        LastUnicodeStr := UChar;
+      end;
 
       { Build KeyCode - for ASCII chars, use the byte value; for Unicode, use 0 in low byte }
       if Ord(UChar) <= 255 then

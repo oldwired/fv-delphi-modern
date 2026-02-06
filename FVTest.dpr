@@ -101,6 +101,7 @@ const
   cmAddSparkValue = 1042;
   cmAddBarValue = 1043;
   cmTestSystemInfo = 1044;
+  cmTestEmojiWide = 1045;
 
 var
   ExceptionLog: TextFile;
@@ -204,6 +205,7 @@ type
     procedure TestNewGadgets;
     procedure TestGadgetsPhase2;
     procedure TestSystemInfo;
+    procedure TestEmojiWide;
     property CalendarDateLabel: TStaticText read FCalendarDateLabel write FCalendarDateLabel;
   end;
 
@@ -1516,7 +1518,8 @@ begin
       NewItem('New ~G~adgets Demo', '', kbNoKey, cmTestNewGadgets, hcNoContext,
       NewItem('Gadgets ~P~hase 2', '', kbNoKey, cmTestGadgetsPhase2, hcNoContext,
       NewItem('~S~ystem Info', '', kbNoKey, cmTestSystemInfo, hcNoContext,
-      nil)))))))))))))))))))))))))),
+      NewItem(#$D83E#$DD9A + ' Emoji/~W~ide Chars', '', kbNoKey, cmTestEmojiWide, hcNoContext,
+      nil))))))))))))))))))))))))))),
     NewSubMenu('~W~indow', hcNoContext, NewMenu(
       NewItem('~T~ile', '', kbNoKey, cmTile, hcNoContext,
       NewItem('Tile ~H~orizontal', '', kbNoKey, cmTileHorizontal, hcNoContext,
@@ -1606,6 +1609,7 @@ begin
         cmTestNewGadgets: TestNewGadgets;
         cmTestGadgetsPhase2: TestGadgetsPhase2;
         cmTestSystemInfo: TestSystemInfo;
+        cmTestEmojiWide: TestEmojiWide;
       else
         Exit;
       end;
@@ -2003,6 +2007,120 @@ begin
   Desktop.ExecView(Dlg);
   SystemInfoDialog := nil;
   Dlg.Free;
+end;
+
+procedure TMyApp.TestEmojiWide;
+{ Dialog testing emoji and wide character rendering across all widget types }
+var
+  R: TRect;
+  Dlg: TDialog;
+  ScrollBar: TScrollBar;
+  ListBox: TStringListBox;
+  List: TStringList;
+begin
+  R.Assign(3, 1, 75, 23);
+  Dlg := TDialog.Create(R, #$D83D#$DE80 + ' Emoji & Wide Char Test ' + #$D83C#$DF0D);
+  if Dlg <> nil then begin
+
+    { --- Column 1: Static text and labels --- }
+
+    { Section: Static text with emoji }
+    R.Assign(2, 1, 34, 2);
+    Dlg.Insert(TStaticText.Create(R,
+      #$D83D#$DE00 + ' Grinning Face'));
+    R.Assign(2, 2, 34, 3);
+    Dlg.Insert(TStaticText.Create(R,
+      #$2615 + ' Hot Beverage (BMP wide)'));
+    R.Assign(2, 3, 34, 4);
+    Dlg.Insert(TStaticText.Create(R,
+      #$D83C#$DF55 + ' Pizza ' + #$D83C#$DF54 + ' Burger'));
+
+    { Section: CJK wide characters }
+    R.Assign(2, 4, 34, 5);
+    Dlg.Insert(TStaticText.Create(R,
+      #$4F60#$597D + ' = Hello (CJK)'));
+    R.Assign(2, 5, 34, 6);
+    Dlg.Insert(TStaticText.Create(R,
+      #$D83C#$DDE9#$D83C#$DDEA + ' Flag: DE'));
+
+    { Section: Centered text with emoji }
+    R.Assign(2, 7, 34, 9);
+    Dlg.Insert(TStaticText.Create(R,
+      #3 + #$D83C#$DF1F + ' Centered Star ' + #$D83C#$DF1F));
+
+    { Section: Buttons with emoji labels }
+    R.Assign(2, 10, 16, 12);
+    Dlg.Insert(TButton.Create(R,
+      #$D83D#$DCC1 + ' ~S~ave', cmCancel, bfNormal));
+    R.Assign(17, 10, 34, 12);
+    Dlg.Insert(TButton.Create(R,
+      #$274C + ' ~C~ancel', cmCancel, bfNormal));
+
+    { Section: Radio buttons with emoji }
+    R.Assign(2, 13, 34, 14);
+    Dlg.Insert(TStaticText.Create(R, 'Mood:'));
+    R.Assign(2, 14, 34, 17);
+    Dlg.Insert(TRadioButtons.Create(R,
+      NewSItem(#$D83D#$DE00 + ' ~H~appy',
+      NewSItem(#$D83D#$DE22 + ' ~S~ad',
+      NewSItem(#$D83D#$DE0E + ' ~C~ool', nil)))));
+
+    { Section: Checkboxes with CJK/emoji }
+    R.Assign(2, 17, 34, 20);
+    Dlg.Insert(TCheckBoxes.Create(R,
+      NewSItem(#$D83C#$DF55 + ' Pi~z~za',
+      NewSItem(#$D83C#$DF54 + ' ~B~urger',
+      NewSItem(#$4E2D#$6587 + ' Chinese', nil)))));
+
+    { --- Column 2: ListBox, Input --- }
+
+    { Listbox with emoji entries }
+    R.Assign(63, 1, 64, 10);
+    ScrollBar := TScrollBar.Create(R);
+    Dlg.Insert(ScrollBar);
+
+    R.Assign(36, 1, 63, 10);
+    ListBox := TStringListBox.Create(R, 1, ScrollBar);
+    Dlg.Insert(ListBox);
+
+    List := TStringList.Create;
+    List.Add(#$D83D#$DE80 + ' Rocket Launch');
+    List.Add(#$D83C#$DF0D + ' Earth Globe');
+    List.Add(#$2B50 + ' Star (BMP wide)');
+    List.Add(#$D83C#$DF89 + ' Party Popper');
+    List.Add(#$D83D#$DC4D + ' Thumbs Up');
+    List.Add(#$4F60#$597D + ' CJK Hello');
+    List.Add(#$D83C#$DDF9#$D83C#$DDFC + ' Flag: TW');
+    List.Add(#$D83C#$DF1F + ' Glowing Star');
+    List.Add('ABC Normal text');
+    List.Add(#$D83D#$DE00 + ' Mixed ' + #$4E16#$754C);
+    ListBox.NewList(List);
+
+    { Input line with emoji label }
+    R.Assign(36, 11, 64, 12);
+    Dlg.Insert(TStaticText.Create(R, #$D83D#$DD0D + ' Search:'));
+    R.Assign(36, 12, 64, 13);
+    Dlg.Insert(TInputLine.Create(R, 128));
+
+    { Label using ~ hotkey with emoji }
+    Dlg.NewLabel(36, 14, #$D83D#$DCC4 + ' ~F~ilename:', nil);
+
+    { More static text showing alignment }
+    R.Assign(36, 16, 64, 17);
+    Dlg.Insert(TStaticText.Create(R,
+      'Width: ' + #$2588#$2588#$2588 + ' blocks'));
+    R.Assign(36, 17, 64, 18);
+    Dlg.Insert(TStaticText.Create(R,
+      #$FF21#$FF22#$FF23 + ' Fullwidth ABC'));
+
+    { OK button }
+    R.Assign(40, 19, 56, 21);
+    Dlg.Insert(TButton.Create(R, '~O~K', cmOK, bfDefault));
+
+    Dlg.SelectNext(False);
+    Desktop.ExecView(Dlg);
+    Dlg.Free;
+  end;
 end;
 
 procedure TMyApp.TestColoredText;
