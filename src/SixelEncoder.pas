@@ -168,7 +168,20 @@ var
   Hash: Integer;
   StepIdx: Integer;
   PaletteR, PaletteG, PaletteB: array of Integer;
+  PaletteR8, PaletteG8, PaletteB8: array of Byte;
   Pair: TPair<Integer, Integer>;
+  UseDither: Boolean;
+  DitherEnv: string;
+  ErrCurR, ErrCurG, ErrCurB: TArray<Integer>;
+  ErrNextR, ErrNextG, ErrNextB: TArray<Integer>;
+  ErrTmp: TArray<Integer>;
+  R0, G0, B0: Integer;
+  AdjR, AdjG, AdjB: Integer;
+  BestReg: Integer;
+  BestDist, Dist: Integer;
+  DR, DG, DB: Integer;
+  ErrR, ErrG, ErrB: Integer;
+  ErrIdx: Integer;
   { Band encoding }
   BandColors: array[0..MaxRegisters - 1] of Boolean;
   RegIdx: Integer;
@@ -266,30 +279,139 @@ begin
     SetLength(PaletteR, NumRegs);
     SetLength(PaletteG, NumRegs);
     SetLength(PaletteB, NumRegs);
+    SetLength(PaletteR8, NumRegs);
+    SetLength(PaletteG8, NumRegs);
+    SetLength(PaletteB8, NumRegs);
     for Pair in ColorMap do
     begin
       PaletteR[Pair.Value] := Pair.Key div 10201;
       PaletteG[Pair.Value] := (Pair.Key div 101) mod 101;
       PaletteB[Pair.Value] := Pair.Key mod 101;
     end;
-
-    { Build per-pixel register map for fast encoding }
-    SetLength(RegMap, PixelH, PixelW);
-    for Y := 0 to PixelH - 1 do
+    for I := 0 to NumRegs - 1 do
     begin
-      if SrcY + Y >= ImgH then
+      PaletteR8[I] := Byte((PaletteR[I] * 255 + 50) div 100);
+      PaletteG8[I] := Byte((PaletteG[I] * 255 + 50) div 100);
+      PaletteB8[I] := Byte((PaletteB[I] * 255 + 50) div 100);
+    end;
+
+    { Build per-pixel register map for fast encoding.
+      Use optional error-diffusion dithering when quantization is coarse
+      (or forced via FV_SIXEL_DITHER=1). }
+    SetLength(RegMap, PixelH, PixelW);
+    DitherEnv := LowerCase(Trim(GetEnvironmentVariable('FV_SIXEL_DITHER')));
+    UseDither := QuantStep >= 5;
+    if (DitherEnv = '1') or (DitherEnv = 'on') or (DitherEnv = 'true') then
+      UseDither := True
+    else if (DitherEnv = '0') or (DitherEnv = 'off') or (DitherEnv = 'false') then
+      UseDither := False;
+
+    if UseDither and (NumRegs > 0) then
+    begin
+      SetLength(ErrCurR, PixelW + 2);
+      SetLength(ErrCurG, PixelW + 2);
+      SetLength(ErrCurB, PixelW + 2);
+      SetLength(ErrNextR, PixelW + 2);
+      SetLength(ErrNextG, PixelW + 2);
+      SetLength(ErrNextB, PixelW + 2);
+      FillChar(ErrCurR[0], (PixelW + 2) * SizeOf(Integer), 0);
+      FillChar(ErrCurG[0], (PixelW + 2) * SizeOf(Integer), 0);
+      FillChar(ErrCurB[0], (PixelW + 2) * SizeOf(Integer), 0);
+
+      for Y := 0 to PixelH - 1 do
       begin
-        for X := 0 to PixelW - 1 do
-          RegMap[Y][X] := -1;
-        Continue;
-      end;
-      for X := 0 to PixelW - 1 do
-      begin
-        if SrcX + X >= ImgW then
-          RegMap[Y][X] := -1
+        FillChar(ErrNextR[0], (PixelW + 2) * SizeOf(Integer), 0);
+        FillChar(ErrNextG[0], (PixelW + 2) * SizeOf(Integer), 0);
+        FillChar(ErrNextB[0], (PixelW + 2) * SizeOf(Integer), 0);
+
+        if SrcY + Y >= ImgH then
+        begin
+          for X := 0 to PixelW - 1 do
+            RegMap[Y][X] := -1;
+        end
         else
-          RegMap[Y][X] := ColorMap[QuantPixelHash(
-            Pixels[SrcY + Y][SrcX + X], QuantStep)];
+        for X := 0 to PixelW - 1 do
+        begin
+          if SrcX + X >= ImgW then
+          begin
+            RegMap[Y][X] := -1;
+            Continue;
+          end;
+
+          Hash := Pixels[SrcY + Y][SrcX + X];
+          R0 := (Hash shr 16) and $FF;
+          G0 := (Hash shr 8) and $FF;
+          B0 := Hash and $FF;
+
+          ErrIdx := X + 1;
+          AdjR := R0 + ErrCurR[ErrIdx];
+          AdjG := G0 + ErrCurG[ErrIdx];
+          AdjB := B0 + ErrCurB[ErrIdx];
+          if AdjR < 0 then AdjR := 0 else if AdjR > 255 then AdjR := 255;
+          if AdjG < 0 then AdjG := 0 else if AdjG > 255 then AdjG := 255;
+          if AdjB < 0 then AdjB := 0 else if AdjB > 255 then AdjB := 255;
+
+          BestReg := 0;
+          BestDist := MaxInt;
+          for I := 0 to NumRegs - 1 do
+          begin
+            DR := AdjR - PaletteR8[I];
+            DG := AdjG - PaletteG8[I];
+            DB := AdjB - PaletteB8[I];
+            Dist := 30 * DR * DR + 59 * DG * DG + 11 * DB * DB;
+            if Dist < BestDist then
+            begin
+              BestDist := Dist;
+              BestReg := I;
+            end;
+          end;
+          RegMap[Y][X] := BestReg;
+
+          ErrR := AdjR - PaletteR8[BestReg];
+          ErrG := AdjG - PaletteG8[BestReg];
+          ErrB := AdjB - PaletteB8[BestReg];
+
+          { Floyd-Steinberg diffusion }
+          Inc(ErrCurR[ErrIdx + 1], (ErrR * 7) div 16);
+          Inc(ErrCurG[ErrIdx + 1], (ErrG * 7) div 16);
+          Inc(ErrCurB[ErrIdx + 1], (ErrB * 7) div 16);
+
+          Inc(ErrNextR[ErrIdx - 1], (ErrR * 3) div 16);
+          Inc(ErrNextG[ErrIdx - 1], (ErrG * 3) div 16);
+          Inc(ErrNextB[ErrIdx - 1], (ErrB * 3) div 16);
+
+          Inc(ErrNextR[ErrIdx], (ErrR * 5) div 16);
+          Inc(ErrNextG[ErrIdx], (ErrG * 5) div 16);
+          Inc(ErrNextB[ErrIdx], (ErrB * 5) div 16);
+
+          Inc(ErrNextR[ErrIdx + 1], ErrR div 16);
+          Inc(ErrNextG[ErrIdx + 1], ErrG div 16);
+          Inc(ErrNextB[ErrIdx + 1], ErrB div 16);
+        end;
+
+        ErrTmp := ErrCurR; ErrCurR := ErrNextR; ErrNextR := ErrTmp;
+        ErrTmp := ErrCurG; ErrCurG := ErrNextG; ErrNextG := ErrTmp;
+        ErrTmp := ErrCurB; ErrCurB := ErrNextB; ErrNextB := ErrTmp;
+      end;
+    end
+    else
+    begin
+      for Y := 0 to PixelH - 1 do
+      begin
+        if SrcY + Y >= ImgH then
+        begin
+          for X := 0 to PixelW - 1 do
+            RegMap[Y][X] := -1;
+          Continue;
+        end;
+        for X := 0 to PixelW - 1 do
+        begin
+          if SrcX + X >= ImgW then
+            RegMap[Y][X] := -1
+          else
+            RegMap[Y][X] := ColorMap[QuantPixelHash(
+              Pixels[SrcY + Y][SrcX + X], QuantStep)];
+        end;
       end;
     end;
 
