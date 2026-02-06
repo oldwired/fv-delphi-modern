@@ -200,6 +200,8 @@ procedure DrawChar(var Buf: TDrawBuffer; Pos: Integer; Ch: Char; Attr: Byte; Cou
 procedure DrawStr(var Buf: TDrawBuffer; Pos: Integer; const S: string; Attr: Byte);
 procedure DrawCStr(var Buf: TDrawBuffer; Pos: Integer; const S: string; Attrs: Word);
 procedure DrawBuf(var Dest: TDrawBuffer; DestPos: Integer; const Source: TDrawBuffer; SourcePos: Integer; Count: Integer);
+procedure DrawRGBCell(var Buf: TDrawBuffer; Pos: Integer;
+  const Ch: string; FG_RGB, BG_RGB: Cardinal);
 
 { String measurement }
 function StrWidth(const S: string): Integer;
@@ -429,6 +431,8 @@ begin
   begin
     Buf[Pos].Ch := Ch;
     Buf[Pos].Attr := Attr;
+    Buf[Pos].FG_RGB := 0;
+    Buf[Pos].BG_RGB := 0;
   end;
 end;
 
@@ -443,6 +447,8 @@ begin
     begin
       Buf[Pos + I].Ch := Ch;
       Buf[Pos + I].Attr := Attr;
+      Buf[Pos + I].FG_RGB := 0;
+      Buf[Pos + I].BG_RGB := 0;
     end;
   end;
 end;
@@ -471,12 +477,16 @@ begin
       begin
         Buf[Pos + Col].Ch := CellStr;
         Buf[Pos + Col].Attr := Attr;
+        Buf[Pos + Col].FG_RGB := 0;
+        Buf[Pos + Col].BG_RGB := 0;
       end;
       { Fill continuation cell for wide chars }
       if (W = 2) and (Pos + Col + 1 >= 0) and (Pos + Col + 1 < MaxViewWidth) then
       begin
         Buf[Pos + Col + 1].Ch := '';
         Buf[Pos + Col + 1].Attr := Attr;
+        Buf[Pos + Col + 1].FG_RGB := 0;
+        Buf[Pos + Col + 1].BG_RGB := 0;
       end;
       Inc(Col, W);
       Inc(I, 2);
@@ -488,12 +498,16 @@ begin
       begin
         Buf[Pos + Col].Ch := S[I];
         Buf[Pos + Col].Attr := Attr;
+        Buf[Pos + Col].FG_RGB := 0;
+        Buf[Pos + Col].BG_RGB := 0;
       end;
       { Fill continuation cell for wide BMP chars (CJK) }
       if (W = 2) and (Pos + Col + 1 >= 0) and (Pos + Col + 1 < MaxViewWidth) then
       begin
         Buf[Pos + Col + 1].Ch := '';
         Buf[Pos + Col + 1].Attr := Attr;
+        Buf[Pos + Col + 1].FG_RGB := 0;
+        Buf[Pos + Col + 1].BG_RGB := 0;
       end;
       Inc(Col, W);
       Inc(I);
@@ -538,11 +552,15 @@ begin
         begin
           Buf[Pos + Col].Ch := CellStr;
           Buf[Pos + Col].Attr := Attr;
+          Buf[Pos + Col].FG_RGB := 0;
+          Buf[Pos + Col].BG_RGB := 0;
         end;
         if (W = 2) and (Pos + Col + 1 >= 0) and (Pos + Col + 1 < MaxViewWidth) then
         begin
           Buf[Pos + Col + 1].Ch := '';
           Buf[Pos + Col + 1].Attr := Attr;
+          Buf[Pos + Col + 1].FG_RGB := 0;
+          Buf[Pos + Col + 1].BG_RGB := 0;
         end;
         Inc(Col, W);
         Inc(I, 2);
@@ -554,11 +572,15 @@ begin
         begin
           Buf[Pos + Col].Ch := S[I];
           Buf[Pos + Col].Attr := Attr;
+          Buf[Pos + Col].FG_RGB := 0;
+          Buf[Pos + Col].BG_RGB := 0;
         end;
         if (W = 2) and (Pos + Col + 1 >= 0) and (Pos + Col + 1 < MaxViewWidth) then
         begin
           Buf[Pos + Col + 1].Ch := '';
           Buf[Pos + Col + 1].Attr := Attr;
+          Buf[Pos + Col + 1].FG_RGB := 0;
+          Buf[Pos + Col + 1].BG_RGB := 0;
         end;
         Inc(Col, W);
         Inc(I);
@@ -577,6 +599,18 @@ begin
     if SourcePos + I >= MaxViewWidth then Break;
     if (DestPos + I >= 0) and (SourcePos + I >= 0) then
       Dest[DestPos + I] := Source[SourcePos + I];
+  end;
+end;
+
+procedure DrawRGBCell(var Buf: TDrawBuffer; Pos: Integer;
+  const Ch: string; FG_RGB, BG_RGB: Cardinal);
+begin
+  if (Pos >= 0) and (Pos < MaxViewWidth) then
+  begin
+    Buf[Pos].Ch := Ch;
+    Buf[Pos].Attr := 0;
+    Buf[Pos].FG_RGB := FG_RGB;
+    Buf[Pos].BG_RGB := BG_RGB;
   end;
 end;
 

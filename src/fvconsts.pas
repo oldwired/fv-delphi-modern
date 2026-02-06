@@ -179,6 +179,8 @@ const
   idEditorGutter     = 340;
   idGutterProvider   = 341;
   idNotification     = 342;
+  idImageView        = 343;
+  idImageWindow      = 344;
 
   { FVList Unit }
 

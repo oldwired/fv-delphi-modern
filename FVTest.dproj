@@ -129,6 +129,8 @@
         <DCCReference Include="src\Accordion.pas"/>
         <DCCReference Include="src\EditorGutter.pas"/>
         <DCCReference Include="src\Notification.pas"/>
+        <DCCReference Include="src\FVClipboard.pas"/>
+        <DCCReference Include="src\ImageView.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

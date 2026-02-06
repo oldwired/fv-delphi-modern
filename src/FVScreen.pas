@@ -101,6 +101,7 @@ type
                       Bold: Boolean = False; Underline: Boolean = False;
                       Inverse: Boolean = False);
     procedure SetCellAttr(X, Y: Integer; const Ch: string; Attr: Word);
+    procedure SetCellRGB(X, Y: Integer; FG_RGB, BG_RGB: Cardinal);
     function GetCell(X, Y: Integer): TScreenCell;
 
     { Rendering }
@@ -141,6 +142,11 @@ var
   { MoveChar stores Unicode chars here, sync reads from here }
   { Uses string to support surrogate pairs (emoji) and multi-codepoint graphemes }
   UnicodeCharBuf: array of string;
+
+  { RGB overlay buffers - parallel to VideoBuf for 24-bit color support }
+  { Non-zero values override palette colors in rendering }
+  FGRGBBuf: array of Cardinal;
+  BGRGBBuf: array of Cardinal;
 
 { Legacy API - calls through to Screen object }
 procedure InitVideo;
@@ -357,7 +363,9 @@ begin
             (FCells[Y, X].BG <> FOldCells[Y, X].BG) or
             (FCells[Y, X].Bold <> FOldCells[Y, X].Bold) or
             (FCells[Y, X].Underline <> FOldCells[Y, X].Underline) or
-            (FCells[Y, X].Inverse <> FOldCells[Y, X].Inverse);
+            (FCells[Y, X].Inverse <> FOldCells[Y, X].Inverse) or
+            (FCells[Y, X].FG_RGB <> FOldCells[Y, X].FG_RGB) or
+            (FCells[Y, X].BG_RGB <> FOldCells[Y, X].BG_RGB);
 end;
 
 function TScreenBuffer.BuildSGR(const Cell: TScreenCell): string;
@@ -385,9 +393,23 @@ begin
   if Cell.Inverse then
     Result := Result + ';7';
 
-  { 256-color mode }
-  Result := Result + ';38;5;' + IntToStr(FGIndex);
-  Result := Result + ';48;5;' + IntToStr(BGIndex);
+  { Foreground: 24-bit RGB if available, else 256-color palette }
+  if Cell.FG_RGB <> 0 then
+    Result := Result + ';38;2;' +
+      IntToStr((Cell.FG_RGB shr 16) and $FF) + ';' +
+      IntToStr((Cell.FG_RGB shr 8) and $FF) + ';' +
+      IntToStr(Cell.FG_RGB and $FF)
+  else
+    Result := Result + ';38;5;' + IntToStr(FGIndex);
+
+  { Background: 24-bit RGB if available, else 256-color palette }
+  if Cell.BG_RGB <> 0 then
+    Result := Result + ';48;2;' +
+      IntToStr((Cell.BG_RGB shr 16) and $FF) + ';' +
+      IntToStr((Cell.BG_RGB shr 8) and $FF) + ';' +
+      IntToStr(Cell.BG_RGB and $FF)
+  else
+    Result := Result + ';48;5;' + IntToStr(BGIndex);
 
   Result := Result + 'm';
 end;
@@ -435,6 +457,8 @@ begin
   FCells[Y, X].Bold := Bold;
   FCells[Y, X].Underline := Underline;
   FCells[Y, X].Inverse := Inverse;
+  FCells[Y, X].FG_RGB := 0;
+  FCells[Y, X].BG_RGB := 0;
 end;
 
 procedure TScreenBuffer.SetCellAttr(X, Y: Integer; const Ch: string; Attr: Word);
@@ -455,6 +479,16 @@ begin
   FCells[Y, X].Bold := False;
   FCells[Y, X].Underline := False;
   FCells[Y, X].Inverse := False;
+  FCells[Y, X].FG_RGB := 0;
+  FCells[Y, X].BG_RGB := 0;
+end;
+
+procedure TScreenBuffer.SetCellRGB(X, Y: Integer; FG_RGB, BG_RGB: Cardinal);
+begin
+  if not FInitialized then Exit;
+  if (X < 0) or (X >= FWidth) or (Y < 0) or (Y >= FHeight) then Exit;
+  FCells[Y, X].FG_RGB := FG_RGB;
+  FCells[Y, X].BG_RGB := BG_RGB;
 end;
 
 function TScreenBuffer.GetCell(X, Y: Integer): TScreenCell;
@@ -614,11 +648,14 @@ begin
   { Initialize Unicode character buffer }
   BufSize := ScreenWidth * ScreenHeight;
   SetLength(UnicodeCharBuf, BufSize);
+  SetLength(FGRGBBuf, BufSize);
+  SetLength(BGRGBBuf, BufSize);
   for var I := 0 to BufSize - 1 do begin
     LegacyBuf[I] := $0720;
     UnicodeCharBuf[I] := ' ';
+    FGRGBBuf[I] := 0;
+    BGRGBBuf[I] := 0;
   end;
-  { Note: UnicodeCharBuf is now array of string to support emoji/surrogate pairs }
 end;
 
 procedure DoneVideo;
@@ -648,6 +685,9 @@ begin
           ChStr := Char(Lo(Cell));
         Attr := Hi(Cell);
         Screen.SetCellAttr(X, Y, ChStr, Attr);
+        { Transfer RGB overlay from parallel buffers }
+        if I < Length(FGRGBBuf) then
+          Screen.SetCellRGB(X, Y, FGRGBBuf[I], BGRGBBuf[I]);
       end;
     end;
   end;

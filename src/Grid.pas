@@ -391,7 +391,7 @@ var
 implementation
 
 uses
-  FVSerialization, FVUTF8;
+  FVSerialization, FVUTF8, FVClipboard;
 
 {***************************************************************************}
 {                            TGridCell                                      }
@@ -2315,6 +2315,7 @@ begin
   end;
 
   GridClipboard := S;
+  FVClipboard.ClipboardSetText(S);
 end;
 
 procedure TStringGrid.PasteFromClipboard;
@@ -2322,14 +2323,21 @@ var
   Lines: TStringList;
   Cols: TStringList;
   R, C, DestRow, DestCol: Integer;
+  S: string;
 begin
-  if GridClipboard = '' then Exit;
+  { Try system clipboard first, fall back to internal }
+  S := '';
+  if FVClipboard.ClipboardHasText then
+    S := FVClipboard.ClipboardGetText;
+  if S = '' then
+    S := GridClipboard;
+  if S = '' then Exit;
   if FEditMode = emNone then Exit;
 
   Lines := TStringList.Create;
   Cols := TStringList.Create;
   try
-    Lines.Text := GridClipboard;
+    Lines.Text := S;
     DestRow := FFocusedCell.Row;
 
     for R := 0 to Lines.Count - 1 do

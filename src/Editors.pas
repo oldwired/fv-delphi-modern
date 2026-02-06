@@ -415,7 +415,7 @@ const
 implementation
 
 uses
-  SysUtils, System.Character, App, StdDlg, MsgBox;
+  SysUtils, System.Character, App, StdDlg, MsgBox, FVClipboard;
 
 { Unicode-aware word character detection }
 function IsWordChar(C: Char): Boolean;
@@ -1493,21 +1493,41 @@ begin
 end;
 
 function TEditor.ClipCopy: Boolean;
+var
+  UTF8Bytes: TBytes;
+  SelLen, PhysStart, PhysEnd, BeforeGap, AfterGap: Sw_Word;
 begin
   Result := False;
-  if not Assigned(Clipboard) then
-    Exit;
-  if Clipboard = Self then
-    Exit;
   if not HasSelection then
     Exit;
-  { Clear existing clipboard content first }
-  Clipboard.SetSelect(0, Clipboard.BufLen, True);
-  Clipboard.DeleteSelect;
-  { Copy selection to clipboard }
-  Result := Clipboard.InsertFrom(Self);
-  { Select all in clipboard so paste can use it }
-  Clipboard.SetSelect(0, Clipboard.BufLen, False);
+
+  { Extract selected UTF-8 bytes from gap buffer and set system clipboard }
+  SelLen := SelEnd - SelStart;
+  if SelLen > 0 then begin
+    SetLength(UTF8Bytes, SelLen);
+    PhysStart := BufPtr(SelStart);
+    PhysEnd := BufPtr(SelEnd);
+    if (SelStart < CurPtr) and (SelEnd > CurPtr) then begin
+      { Selection spans the gap }
+      BeforeGap := CurPtr - SelStart;
+      AfterGap := SelEnd - CurPtr;
+      Move(Buffer^[PhysStart], UTF8Bytes[0], BeforeGap);
+      Move(Buffer^[CurPtr + GapLen], UTF8Bytes[BeforeGap], AfterGap);
+    end else begin
+      { Selection is entirely on one side of the gap }
+      Move(Buffer^[PhysStart], UTF8Bytes[0], SelLen);
+    end;
+    FVClipboard.ClipboardSetText(TEncoding.UTF8.GetString(UTF8Bytes));
+  end;
+
+  { Internal clipboard copy }
+  if Assigned(Clipboard) and (Clipboard <> Self) then begin
+    Clipboard.SetSelect(0, Clipboard.BufLen, True);
+    Clipboard.DeleteSelect;
+    Result := Clipboard.InsertFrom(Self);
+    Clipboard.SetSelect(0, Clipboard.BufLen, False);
+  end else
+    Result := True;  { System clipboard succeeded even without internal clipboard }
   Selecting := False;
   Update(ufUpdate);
 end;
@@ -1522,18 +1542,29 @@ begin
 end;
 
 procedure TEditor.ClipPaste;
+var
+  SysText: string;
 begin
+  if Word_Wrap and (FCurPos.X > Right_Margin) then
+  begin
+    EditorDialog(edPasteNotPossible, nil);
+    Exit;
+  end;
+  { Try system clipboard first }
+  if FVClipboard.ClipboardHasText then begin
+    SysText := FVClipboard.ClipboardGetText;
+    if SysText <> '' then begin
+      InsertUnicodeStr(SysText);
+      Exit;
+    end;
+  end;
+  { Fall back to internal clipboard }
   if not Assigned(Clipboard) then
     Exit;
   if Clipboard = Self then
     Exit;
   if not Clipboard.HasSelection then
     Exit;
-  if Word_Wrap and (FCurPos.X > Right_Margin) then
-  begin
-    EditorDialog(edPasteNotPossible, nil);
-    Exit;
-  end;
   if CurPtr = SelStart then
     Update_FPlace_Markers(Clipboard.SelEnd - Clipboard.SelStart, 0,
                          Clipboard.SelStart, Clipboard.SelEnd);

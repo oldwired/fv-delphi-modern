@@ -60,7 +60,9 @@ uses
   Splitter in 'src\Splitter.pas',
   Accordion in 'src\Accordion.pas',
   EditorGutter in 'src\EditorGutter.pas',
-  Notification in 'src\Notification.pas';
+  Notification in 'src\Notification.pas',
+  FVClipboard in 'src\FVClipboard.pas',
+  ImageView in 'src\ImageView.pas';
 
 const
   cmNewWindow = 100;
@@ -118,6 +120,8 @@ const
   cmTestAccordion    = 1055;
   cmTestEditorGutter = 1056;
   cmTestNotification = 1057;
+  cmTestClipboard    = 1058;
+  cmTestImageView    = 1059;
 
 var
   ExceptionLog: TextFile;
@@ -230,6 +234,8 @@ type
     procedure TestAccordion;
     procedure TestEditorGutter;
     procedure TestNotification;
+    procedure TestClipboard;
+    procedure TestImageView;
     property CalendarDateLabel: TStaticText read FCalendarDateLabel write FCalendarDateLabel;
   end;
 
@@ -1554,7 +1560,9 @@ begin
         NewItem('~A~ccordion', '', kbNoKey, cmTestAccordion, hcNoContext,
         NewItem('Editor ~G~utter', '', kbNoKey, cmTestEditorGutter, hcNoContext,
         NewItem('~N~otification', '', kbNoKey, cmTestNotification, hcNoContext,
-        nil))))))))),
+        NewItem('Clip~b~oard', '', kbNoKey, cmTestClipboard, hcNoContext,
+        NewItem('~I~mage Viewer', '', kbNoKey, cmTestImageView, hcNoContext,
+        nil))))))))))),
       nil)))))))))))))))))))))))))))),
     NewSubMenu('~W~indow', hcNoContext, NewMenu(
       NewItem('~T~ile', '', kbNoKey, cmTile, hcNoContext,
@@ -1654,6 +1662,8 @@ begin
         cmTestAccordion: TestAccordion;
         cmTestEditorGutter: TestEditorGutter;
         cmTestNotification: TestNotification;
+        cmTestClipboard: TestClipboard;
+        cmTestImageView: TestImageView;
       else
         Exit;
       end;
@@ -3639,6 +3649,54 @@ begin
     ntInfo, 4000, npTopRight);
   TNotification.Show('Success! File saved.', ntSuccess, 3000, npBottomRight);
   TNotification.Show('Warning: Low disk space.', ntWarning, 5000, npTopLeft);
+end;
+
+procedure TMyApp.TestClipboard;
+var
+  R: TRect;
+  W: TEditWindow;
+begin
+  { Open an editor window - user can copy/paste with system clipboard }
+  R.Assign(5, 3, 75, 20);
+  W := TEditWindow.Create(R, '', wnNoNumber);
+  if W <> nil then begin
+    W.Title := 'Clipboard Test (Ctrl+Ins=Copy, Shift+Ins=Paste)';
+    W.Editor.InsertUnicodeStr(
+      'System clipboard integration test.' + #13#10 +
+      'Select text and press Ctrl+Ins to copy to Windows clipboard.' + #13#10 +
+      'Press Shift+Ins to paste from Windows clipboard.' + #13#10 +
+      'Try copying text from Notepad and pasting here!' + #13#10);
+    Desktop.Insert(W);
+  end;
+end;
+
+procedure TMyApp.TestImageView;
+var
+  Dlg: TFileDialog;
+  FileName: PathStr;
+  W: TImageWindow;
+begin
+  FileName := '*.bmp';
+  Dlg := TFileDialog.Create(FileName, 'Open BMP Image', '~N~ame', fdOpenButton, 1);
+  if Dlg = nil then Exit;
+  try
+    if Desktop.ExecView(Dlg) <> cmCancel then begin
+      Dlg.GetData(FileName);
+      FileName := Trim(FileName);
+      if FileName = '' then Exit;
+      W := TImageWindow.Create(FileName);
+      if W <> nil then begin
+        if not W.ImageView.Image.Loaded then begin
+          MsgBox.MessageBox('Failed to load BMP: unsupported format or file error.',
+            mfError or mfOKButton);
+          W.Free;
+        end else
+          Desktop.Insert(W);
+      end;
+    end;
+  finally
+    Dlg.Free;
+  end;
 end;
 
 begin

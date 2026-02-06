@@ -17,7 +17,8 @@ uses
   System.Math,
   System.Generics.Collections,
   System.JSON,
-  Objects, Drivers, Views, FVConsts, FVInterfaces, FVCommon, ConPTY, FVUTF8;
+  Objects, Drivers, Views, FVConsts, FVInterfaces, FVCommon, ConPTY, FVUTF8,
+  FVClipboard;
 
 {***************************************************************************}
 {                              PUBLIC CONSTANTS                             }
@@ -465,79 +466,6 @@ type
 function NewTerminalWindow(const Title, CommandLine: string): TTerminalWindow;
 
 implementation
-
-{***************************************************************************}
-{                       CLIPBOARD HELPER FUNCTIONS                          }
-{***************************************************************************}
-
-function ClipboardSetText(const Text: string): Boolean;
-var
-  hMem: HGLOBAL;
-  pMem: PChar;
-begin
-  Result := False;
-  if not OpenClipboard(0) then Exit;
-  try
-    EmptyClipboard;
-    hMem := GlobalAlloc(GMEM_MOVEABLE or GMEM_DDESHARE,
-      (Length(Text) + 1) * SizeOf(Char));
-    if hMem = 0 then Exit;
-    try
-      pMem := GlobalLock(hMem);
-      if pMem = nil then Exit;
-      try
-        Move(PChar(Text)^, pMem^, (Length(Text) + 1) * SizeOf(Char));
-      finally
-        GlobalUnlock(hMem);
-      end;
-      {$IFDEF UNICODE}
-      Result := SetClipboardData(CF_UNICODETEXT, hMem) <> 0;
-      {$ELSE}
-      Result := SetClipboardData(CF_TEXT, hMem) <> 0;
-      {$ENDIF}
-    except
-      GlobalFree(hMem);
-      raise;
-    end;
-  finally
-    CloseClipboard;
-  end;
-end;
-
-function ClipboardGetText: string;
-var
-  hMem: HGLOBAL;
-  pMem: PChar;
-begin
-  Result := '';
-  if not OpenClipboard(0) then Exit;
-  try
-    {$IFDEF UNICODE}
-    hMem := GetClipboardData(CF_UNICODETEXT);
-    {$ELSE}
-    hMem := GetClipboardData(CF_TEXT);
-    {$ENDIF}
-    if hMem = 0 then Exit;
-    pMem := GlobalLock(hMem);
-    if pMem = nil then Exit;
-    try
-      Result := pMem;
-    finally
-      GlobalUnlock(hMem);
-    end;
-  finally
-    CloseClipboard;
-  end;
-end;
-
-function ClipboardHasText: Boolean;
-begin
-  {$IFDEF UNICODE}
-  Result := IsClipboardFormatAvailable(CF_UNICODETEXT);
-  {$ELSE}
-  Result := IsClipboardFormatAvailable(CF_TEXT);
-  {$ENDIF}
-end;
 
 {***************************************************************************}
 {                     TTerminalPalette IMPLEMENTATION                       }

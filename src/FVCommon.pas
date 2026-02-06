@@ -57,6 +57,8 @@ type
     Bold: Boolean;
     Underline: Boolean;
     Inverse: Boolean;
+    FG_RGB: Cardinal;          // $00RRGGBB, 0 = use FG palette byte
+    BG_RGB: Cardinal;          // $00RRGGBB, 0 = use BG palette byte
     class function Empty: TScreenCell; static;
   end;
 
@@ -64,6 +66,8 @@ type
   TDrawCell = record
     Ch: string;                // Character/grapheme to display
     Attr: Word;                // Color attribute (legacy format: hi=BG, lo=FG)
+    FG_RGB: Cardinal;          // $00RRGGBB, 0 = use Attr palette
+    BG_RGB: Cardinal;          // $00RRGGBB, 0 = use Attr palette
     class operator Equal(const A, B: TDrawCell): Boolean;
   end;
   PDrawCell = ^TDrawCell;
@@ -138,13 +142,16 @@ begin
   Result.Bold := False;
   Result.Underline := False;
   Result.Inverse := False;
+  Result.FG_RGB := 0;
+  Result.BG_RGB := 0;
 end;
 
 { TDrawCell }
 
 class operator TDrawCell.Equal(const A, B: TDrawCell): Boolean;
 begin
-  Result := (A.Ch = B.Ch) and (A.Attr = B.Attr);
+  Result := (A.Ch = B.Ch) and (A.Attr = B.Attr) and
+            (A.FG_RGB = B.FG_RGB) and (A.BG_RGB = B.BG_RGB);
 end;
 
 function GetErrorCode: LongInt;

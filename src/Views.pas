@@ -1222,6 +1222,11 @@ begin
                   else
                     UnicodeCharBuf[ScreenOffset + J] := ' ';
                 end;
+                { Copy RGB overlay values to parallel buffers }
+                if ScreenOffset + J < Length(FVScreen.FGRGBBuf) then begin
+                  FVScreen.FGRGBBuf[ScreenOffset + J] := Cell.FG_RGB;
+                  FVScreen.BGRGBBuf[ScreenOffset + J] := Cell.BG_RGB;
+                end;
               end;
             end;
           end;
