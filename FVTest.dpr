@@ -52,7 +52,15 @@ uses
   CPUMeter in 'src\CPUMeter.pas',
   BatteryView in 'src\BatteryView.pas',
   NetworkView in 'src\NetworkView.pas',
-  CPUCoreView in 'src\CPUCoreView.pas';
+  CPUCoreView in 'src\CPUCoreView.pas',
+  ProgressBar in 'src\ProgressBar.pas',
+  Breadcrumb in 'src\Breadcrumb.pas',
+  ToolBar in 'src\ToolBar.pas',
+  ComboBox in 'src\ComboBox.pas',
+  Splitter in 'src\Splitter.pas',
+  Accordion in 'src\Accordion.pas',
+  EditorGutter in 'src\EditorGutter.pas',
+  Notification in 'src\Notification.pas';
 
 const
   cmNewWindow = 100;
@@ -102,6 +110,14 @@ const
   cmAddBarValue = 1043;
   cmTestSystemInfo = 1044;
   cmTestEmojiWide = 1045;
+  cmTestProgressBar  = 1050;
+  cmTestBreadcrumb   = 1051;
+  cmTestToolBar      = 1052;
+  cmTestComboBox     = 1053;
+  cmTestSplitter     = 1054;
+  cmTestAccordion    = 1055;
+  cmTestEditorGutter = 1056;
+  cmTestNotification = 1057;
 
 var
   ExceptionLog: TextFile;
@@ -206,6 +222,14 @@ type
     procedure TestGadgetsPhase2;
     procedure TestSystemInfo;
     procedure TestEmojiWide;
+    procedure TestProgressBar;
+    procedure TestBreadcrumb;
+    procedure TestToolBar;
+    procedure TestComboBox;
+    procedure TestSplitter;
+    procedure TestAccordion;
+    procedure TestEditorGutter;
+    procedure TestNotification;
     property CalendarDateLabel: TStaticText read FCalendarDateLabel write FCalendarDateLabel;
   end;
 
@@ -336,6 +360,8 @@ type
     constructor Create; reintroduce;
     procedure UpdateWidgets;
   end;
+
+procedure UpdateNotifications; forward;
 
 var
   MyApp: TMyApp;
@@ -1519,7 +1545,17 @@ begin
       NewItem('Gadgets ~P~hase 2', '', kbNoKey, cmTestGadgetsPhase2, hcNoContext,
       NewItem('~S~ystem Info', '', kbNoKey, cmTestSystemInfo, hcNoContext,
       NewItem(#$D83E#$DD9A + ' Emoji/~W~ide Chars', '', kbNoKey, cmTestEmojiWide, hcNoContext,
-      nil))))))))))))))))))))))))))),
+      NewSubMenu('New Co~m~ponents', hcNoContext, NewMenu(
+        NewItem('~P~rogress Bar', '', kbNoKey, cmTestProgressBar, hcNoContext,
+        NewItem('~B~readcrumb', '', kbNoKey, cmTestBreadcrumb, hcNoContext,
+        NewItem('~T~ool Bar', '', kbNoKey, cmTestToolBar, hcNoContext,
+        NewItem('~C~ombo Box', '', kbNoKey, cmTestComboBox, hcNoContext,
+        NewItem('~S~plitter', '', kbNoKey, cmTestSplitter, hcNoContext,
+        NewItem('~A~ccordion', '', kbNoKey, cmTestAccordion, hcNoContext,
+        NewItem('Editor ~G~utter', '', kbNoKey, cmTestEditorGutter, hcNoContext,
+        NewItem('~N~otification', '', kbNoKey, cmTestNotification, hcNoContext,
+        nil))))))))),
+      nil)))))))))))))))))))))))))))),
     NewSubMenu('~W~indow', hcNoContext, NewMenu(
       NewItem('~T~ile', '', kbNoKey, cmTile, hcNoContext,
       NewItem('Tile ~H~orizontal', '', kbNoKey, cmTileHorizontal, hcNoContext,
@@ -1610,6 +1646,14 @@ begin
         cmTestGadgetsPhase2: TestGadgetsPhase2;
         cmTestSystemInfo: TestSystemInfo;
         cmTestEmojiWide: TestEmojiWide;
+        cmTestProgressBar: TestProgressBar;
+        cmTestBreadcrumb: TestBreadcrumb;
+        cmTestToolBar: TestToolBar;
+        cmTestComboBox: TestComboBox;
+        cmTestSplitter: TestSplitter;
+        cmTestAccordion: TestAccordion;
+        cmTestEditorGutter: TestEditorGutter;
+        cmTestNotification: TestNotification;
       else
         Exit;
       end;
@@ -1640,6 +1684,15 @@ begin
     if UptimeViewGadget <> nil then UptimeViewGadget.Update;
     if Phase2Dialog <> nil then Phase2Dialog.UpdateGadgets;
     if SystemInfoDialog <> nil then SystemInfoDialog.UpdateWidgets;
+
+    { Update notifications for auto-dismiss }
+    if Desktop <> nil then begin
+      try
+        UpdateNotifications;
+      except
+        on E: Exception do LogException('Idle.UpdateNotifications', E);
+      end;
+    end;
 
     inherited Idle;
   except
@@ -3234,6 +3287,358 @@ begin
                'Use Load/Save buttons for files',
                mfInformation or mfOKButton);
   end;
+end;
+
+{ ====================== UpdateNotifications ====================== }
+procedure UpdateNotifications;
+var
+  P, Next: TView;
+  Notifs: TList;
+  I: Integer;
+begin
+  if Desktop = nil then Exit;
+  Notifs := TList.Create;
+  try
+    { Collect notification views first to avoid modifying list while iterating }
+    P := Desktop.First;
+    if P <> nil then begin
+      repeat
+        Next := P.Next;
+        if (P is TNotification) and not TNotification(P).Dismissed then
+          Notifs.Add(P);
+        P := Next;
+      until P = Desktop.First;
+    end;
+    { Update each notification }
+    for I := 0 to Notifs.Count - 1 do
+      TNotification(Notifs[I]).Update;
+  finally
+    Notifs.Free;
+  end;
+end;
+
+{ ====================== Test Procedures ====================== }
+procedure TMyApp.TestProgressBar;
+var
+  D: TDialog;
+  R: TRect;
+  PB1, PB2, PB3: TProgressBar;
+begin
+  R.Assign(10, 3, 60, 16);
+  D := TDialog.Create(R, 'Progress Bar Demo');
+
+  { Standard progress bar }
+  R.Assign(3, 2, 47, 3);
+  PB1 := TProgressBar.Create(R, 0, 100);
+  PB1.SetProgress(75);
+  D.Insert(PB1);
+
+  R.Assign(3, 1, 47, 2);
+  D.Insert(TStaticText.Create(R, '75% complete:'));
+
+  { Half-way progress bar }
+  R.Assign(3, 5, 47, 6);
+  PB2 := TProgressBar.Create(R, 0, 200);
+  PB2.SetProgress(100);
+  D.Insert(PB2);
+
+  R.Assign(3, 4, 47, 5);
+  D.Insert(TStaticText.Create(R, '50% complete:'));
+
+  { Empty progress bar }
+  R.Assign(3, 8, 47, 9);
+  PB3 := TProgressBar.Create(R, 0, 100);
+  PB3.ShowPercent := True;
+  D.Insert(PB3);
+
+  R.Assign(3, 7, 47, 8);
+  D.Insert(TStaticText.Create(R, '0% (empty):'));
+
+  { OK button }
+  R.Assign(18, 10, 32, 12);
+  D.Insert(TButton.Create(R, '~O~K', cmOK, bfDefault));
+
+  Desktop.ExecView(D);
+  FreeAndNil(D);
+end;
+
+procedure TMyApp.TestBreadcrumb;
+var
+  D: TDialog;
+  R: TRect;
+  BC: TBreadcrumb;
+begin
+  R.Assign(5, 3, 65, 12);
+  D := TDialog.Create(R, 'Breadcrumb Demo');
+
+  R.Assign(2, 1, 58, 2);
+  D.Insert(TStaticText.Create(R, 'File path breadcrumb:'));
+
+  R.Assign(2, 2, 58, 3);
+  BC := TBreadcrumb.Create(R);
+  BC.SetPath('C:\Projects\FV-Delphi\src\Views.pas', '\');
+  D.Insert(BC);
+
+  R.Assign(2, 4, 58, 5);
+  D.Insert(TStaticText.Create(R, 'Navigation breadcrumb:'));
+
+  R.Assign(2, 5, 58, 6);
+  BC := TBreadcrumb.Create(R);
+  BC.SetPath(['Home', 'Settings', 'Display', 'Colors']);
+  D.Insert(BC);
+
+  R.Assign(22, 7, 36, 9);
+  D.Insert(TButton.Create(R, '~O~K', cmOK, bfDefault));
+
+  Desktop.ExecView(D);
+  FreeAndNil(D);
+end;
+
+procedure TMyApp.TestToolBar;
+var
+  R: TRect;
+  Win: TWindow;
+  TB: ToolBar.TToolBar;
+begin
+  Inc(WindowCount);
+  R.Assign(2, 1, 70, 18);
+
+  Win := TWindow.Create(R, 'ToolBar Demo', WindowCount);
+  Win.Options := Win.Options or ofTileable;
+
+  { Create toolbar at top of window }
+  R.Assign(1, 1, Win.Size.X - 1, 2);
+  TB := ToolBar.TToolBar.Create(R,
+    NewToolBarItem('~N~ew', cmNewWindow, hcNoContext,
+    NewToolBarItem('~O~pen', cmTestFileOpen, hcNoContext,
+    NewToolBarSeparator(
+    NewToolBarItem('~C~ut', cmCut, hcNoContext,
+    NewToolBarItem('Co~p~y', cmCopy, hcNoContext,
+    NewToolBarItem('~P~aste', cmPaste, hcNoContext,
+    NewToolBarSeparator(
+    NewToolBarItem('~H~elp', cmHelp, hcNoContext,
+    nil)))))))));
+  Win.Insert(TB);
+
+  { Static text below toolbar }
+  R.Assign(2, 3, Win.Size.X - 2, 5);
+  Win.Insert(TStaticText.Create(R,
+    'The toolbar above shows clickable buttons with ' +
+    'hotkey highlighting. Disabled commands appear dimmed.'));
+
+  Desktop.Insert(Win);
+end;
+
+procedure TMyApp.TestComboBox;
+var
+  D: TDialog;
+  R: TRect;
+  IL: TInputLine;
+  CB: TComboBox;
+  Items: TStringList;
+begin
+  R.Assign(10, 3, 55, 14);
+  D := TDialog.Create(R, 'ComboBox Demo');
+
+  R.Assign(3, 2, 35, 3);
+  D.Insert(TLabel.Create(R, '~C~olor:', nil));
+
+  R.Assign(3, 3, 35, 4);
+  IL := TInputLine.Create(R, 30);
+  IL.Data := 'Red';
+  D.Insert(IL);
+
+  Items := TStringList.Create;
+  Items.Add('Red');
+  Items.Add('Green');
+  Items.Add('Blue');
+  Items.Add('Yellow');
+  Items.Add('Cyan');
+  Items.Add('Magenta');
+  Items.Add('White');
+  Items.Add('Black');
+
+  R.Assign(35, 3, 38, 4);
+  CB := TComboBox.Create(R, IL, Items, 6);
+  D.Insert(CB);
+
+  R.Assign(3, 5, 35, 6);
+  D.Insert(TLabel.Create(R, '~S~ize:', nil));
+
+  R.Assign(3, 6, 35, 7);
+  IL := TInputLine.Create(R, 30);
+  IL.Data := 'Medium';
+  D.Insert(IL);
+
+  Items := TStringList.Create;
+  Items.Add('Tiny');
+  Items.Add('Small');
+  Items.Add('Medium');
+  Items.Add('Large');
+  Items.Add('Extra Large');
+
+  R.Assign(35, 6, 38, 7);
+  CB := TComboBox.Create(R, IL, Items, 5);
+  D.Insert(CB);
+
+  R.Assign(14, 9, 28, 11);
+  D.Insert(TButton.Create(R, '~O~K', cmOK, bfDefault));
+
+  Desktop.ExecView(D);
+  FreeAndNil(D);
+end;
+
+procedure TMyApp.TestSplitter;
+var
+  R: TRect;
+  SG: TSplitGroup;
+  Win: TWindow;
+  LeftPanel, RightPanel: TGroup;
+begin
+  Inc(WindowCount);
+  R.Assign(2, 1, 72, 22);
+  Win := TWindow.Create(R, 'Splitter Demo', WindowCount);
+  Win.Options := Win.Options or ofTileable;
+
+  R.Assign(1, 1, Win.Size.X - 1, Win.Size.Y - 1);
+  SG := TSplitGroup.Create(R, soVertical, 25);
+
+  { Left panel with static text }
+  R.Assign(0, 0, 25, R.B.Y - R.A.Y);
+  LeftPanel := TGroup.Create(R);
+  R.Assign(1, 0, 24, 2);
+  LeftPanel.Insert(TStaticText.Create(R, 'Left Panel - drag the splitter bar to resize'));
+
+  { Right panel with static text }
+  R.Assign(26, 0, SG.Size.X, SG.Size.Y);
+  RightPanel := TGroup.Create(R);
+  R.Assign(1, 0, RightPanel.Size.X - 1, 2);
+  RightPanel.Insert(TStaticText.Create(R, 'Right Panel - use arrow keys when splitter is focused'));
+
+  SG.SetPanel1(LeftPanel);
+  SG.SetPanel2(RightPanel);
+
+  Win.Insert(SG);
+  Desktop.Insert(Win);
+end;
+
+procedure TMyApp.TestAccordion;
+var
+  D: TDialog;
+  R, CR: TRect;
+  Acc: TAccordion;
+  Content1, Content2, Content3: TGroup;
+begin
+  R.Assign(8, 2, 62, 22);
+  D := TDialog.Create(R, 'Accordion Demo');
+
+  R.Assign(2, 1, D.Size.X - 2, D.Size.Y - 3);
+  Acc := TAccordion.Create(R, amMultiple);
+
+  { Section 1 - General }
+  CR.Assign(0, 0, Acc.Size.X, 3);
+  Content1 := TGroup.Create(CR);
+  CR.Assign(1, 0, Acc.Size.X - 1, 1);
+  Content1.Insert(TStaticText.Create(CR, 'Application: FV Test'));
+  CR.Assign(1, 1, Acc.Size.X - 1, 2);
+  Content1.Insert(TStaticText.Create(CR, 'Version: 1.0'));
+  CR.Assign(1, 2, Acc.Size.X - 1, 3);
+  Content1.Insert(TStaticText.Create(CR, 'Author: FV Team'));
+  Acc.AddSection('~G~eneral Info', Content1, 3, True);
+
+  { Section 2 - Display }
+  CR.Assign(0, 0, Acc.Size.X, 2);
+  Content2 := TGroup.Create(CR);
+  CR.Assign(1, 0, Acc.Size.X - 1, 1);
+  Content2.Insert(TStaticText.Create(CR, 'Screen: 80x25'));
+  CR.Assign(1, 1, Acc.Size.X - 1, 2);
+  Content2.Insert(TStaticText.Create(CR, 'Colors: 16'));
+  Acc.AddSection('~D~isplay Settings', Content2, 2, False);
+
+  { Section 3 - About }
+  CR.Assign(0, 0, Acc.Size.X, 2);
+  Content3 := TGroup.Create(CR);
+  CR.Assign(1, 0, Acc.Size.X - 1, 1);
+  Content3.Insert(TStaticText.Create(CR, 'Free Vision for Delphi'));
+  CR.Assign(1, 1, Acc.Size.X - 1, 2);
+  Content3.Insert(TStaticText.Create(CR, 'Text-mode UI framework'));
+  Acc.AddSection('~A~bout', Content3, 2, False);
+
+  D.Insert(Acc);
+
+  R.Assign(20, D.Size.Y - 3, 34, D.Size.Y - 1);
+  D.Insert(TButton.Create(R, '~O~K', cmOK, bfDefault));
+
+  Desktop.ExecView(D);
+  FreeAndNil(D);
+end;
+
+procedure TMyApp.TestEditorGutter;
+var
+  R: TRect;
+  Win: TEditWindow;
+  Gutter: TEditorGutter;
+  GutterR: TRect;
+  EditorR: TRect;
+  BmProvider: TBookmarkProvider;
+  BpProvider: TBreakpointProvider;
+  DfProvider: TDiffProvider;
+begin
+  Inc(WindowCount);
+  R.Assign(2, 1, 78, 24);
+  Win := TEditWindow.Create(R, '', SmallInt(WindowCount));
+  if Win <> nil then begin
+    { Create gutter with all 4 provider columns }
+    GutterR.Assign(1, 1, 10, Win.Size.Y - 1);
+    Gutter := TEditorGutter.CreateDefault(GutterR, Win.Editor);
+
+    { Add bookmark column }
+    BmProvider := TBookmarkProvider.Create;
+    BmProvider.ToggleBookmark(2);   { Mark line 3 }
+    BmProvider.ToggleBookmark(7);   { Mark line 8 }
+    Gutter.AddProvider(BmProvider);
+
+    { Add breakpoint column }
+    BpProvider := TBreakpointProvider.Create;
+    BpProvider.ToggleBreakpoint(4);  { Mark line 5 }
+    Gutter.AddProvider(BpProvider);
+
+    { Add diff/change marker column }
+    DfProvider := TDiffProvider.Create;
+    DfProvider.MarkRange(1, 3, dsAdded);     { Lines 2-4: added (green) }
+    DfProvider.SetLineStatus(6, dsModified);  { Line 7: modified (yellow) }
+    Gutter.AddProvider(DfProvider);
+
+    Win.Insert(Gutter);
+    Win.Gutter := Gutter;
+
+    { Adjust editor bounds to make room for gutter }
+    Gutter.RecalcWidth;
+    Win.Editor.GetBounds(EditorR);
+    EditorR.A.X := Gutter.Size.X + 1;
+    Win.Editor.ChangeBounds(EditorR);
+
+    Desktop.Insert(Win);
+
+    MessageBox('Editor Gutter Demo:'#13#10 +
+               #13#10 +
+               'Columns (left to right):'#13#10 +
+               '  Line numbers - right-aligned'#13#10 +
+               '  Bookmarks - click to toggle (' + Diamond + ')'#13#10 +
+               '  Breakpoints - click to toggle (' + Circle + ')'#13#10 +
+               '  Diff markers - green=added, yellow=modified'#13#10 +
+               #13#10 +
+               'Type some text to see line numbers update.',
+               mfInformation or mfOKButton);
+  end;
+end;
+
+procedure TMyApp.TestNotification;
+begin
+  TNotification.Show('Information: Operation completed successfully.',
+    ntInfo, 4000, npTopRight);
+  TNotification.Show('Success! File saved.', ntSuccess, 3000, npBottomRight);
+  TNotification.Show('Warning: Low disk space.', ntWarning, 5000, npTopLeft);
 end;
 
 begin

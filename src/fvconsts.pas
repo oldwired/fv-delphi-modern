@@ -165,6 +165,21 @@ const
   idToggleSwitch = 321;
   idLogViewer = 322;
 
+  { New UI Components }
+  idProgressBar      = 330;
+  idBreadcrumb       = 331;
+  idToolBar          = 332;
+  idComboBox         = 333;
+  idComboViewer      = 334;
+  idComboWindow      = 335;
+  idSplitter         = 336;
+  idSplitGroup       = 337;
+  idAccordion        = 338;
+  idAccordionHeader  = 339;
+  idEditorGutter     = 340;
+  idGutterProvider   = 341;
+  idNotification     = 342;
+
   { FVList Unit }
 
   { ColorTxt Unit }
@@ -380,6 +395,14 @@ const
 
   cmCursorChanged = 700;
 
+  { New UI Component Commands }
+  cmBreadcrumbSelect    = 710;   { Broadcast when breadcrumb segment selected }
+  cmSplitterMoved       = 711;   { Broadcast when splitter position changes }
+  cmAccordionToggle     = 712;   { Broadcast when accordion section toggled }
+  cmNotificationDismiss = 713;   { Broadcast when notification dismissed }
+  cmGutterClick         = 714;   { Broadcast when gutter column clicked }
+  cmBookmarkToggle      = 715;   { Broadcast when bookmark toggled }
+  cmBreakpointToggle    = 716;   { Broadcast when breakpoint toggled }
 
 {
   The FVConsts unit declares standard help contexts used in FreeVision. By

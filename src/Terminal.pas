@@ -146,6 +146,7 @@ type
     destructor Destroy; override;
 
     { Writing }
+    procedure WriteGlyph(const Glyph: string);
     procedure WriteChar(Ch: Char);
     procedure WriteString(const S: string);
 
@@ -699,6 +700,22 @@ begin
   if Y1 < FDirtyTop then FDirtyTop := Y1;
   if X2 > FDirtyRight then FDirtyRight := X2;
   if Y2 > FDirtyBottom then FDirtyBottom := Y2;
+end;
+
+procedure TTerminalBuffer.WriteGlyph(const Glyph: string);
+var
+  I: Integer;
+begin
+  if Glyph = '' then Exit;
+  if Length(Glyph) = 1 then
+  begin
+    WriteChar(Glyph[1]);
+    Exit;
+  end;
+
+  { Emit multi-code-unit glyphs (e.g. surrogate pairs) as a sequence. }
+  for I := 1 to Length(Glyph) do
+    WriteChar(Glyph[I]);
 end;
 
 procedure TTerminalBuffer.WriteChar(Ch: Char);
@@ -1645,7 +1662,7 @@ var
   I: Integer;
   B: Byte;
   CharLen: Integer;
-  DecodedChar: Char;
+  DecodedStr: string;
 begin
   I := 0;
   while I < Length(Data) do
@@ -1684,11 +1701,14 @@ begin
     end
     else
     begin
-      { Multi-byte UTF-8 - use FVUTF8.DecodeUTF8Char }
-      DecodedChar := DecodeUTF8Char(@Data[I], Length(Data) - I, CharLen);
+      { Multi-byte UTF-8 - preserve non-BMP code points (emoji, etc.) }
+      DecodedStr := DecodeUTF8ToString(@Data[I], Length(Data) - I, CharLen);
       if CharLen > 0 then
       begin
-        ProcessChar(DecodedChar);
+        if DecodedStr <> '' then
+          FBuffer.WriteGlyph(DecodedStr)
+        else
+          ProcessChar(#$FFFD);
         Inc(I, CharLen);
       end
       else
@@ -2739,7 +2759,7 @@ begin
 
   for Y := StartPt.Y to EndPt.Y do
   begin
-    Line := FBuffer.GetLineText(Y);
+    Line := FBuffer.GetLineTextAbsolute(Y - FScrollbackPos);
 
     if Y = StartPt.Y then
     begin
@@ -2813,7 +2833,7 @@ begin
   if (Y < 0) or (Y >= Size.Y) then Exit;
   if (X < 0) or (X >= Size.X) then Exit;
 
-  Line := FBuffer.GetLineText(Y);
+  Line := FBuffer.GetLineTextAbsolute(Y - FScrollbackPos);
   if Length(Line) = 0 then Exit;
 
   { Find word boundaries }

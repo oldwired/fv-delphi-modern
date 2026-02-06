@@ -125,6 +125,16 @@ All views implement these interfaces (with reference counting disabled):
 - **TimedDlg.pas** - Auto-closing dialogs
 - **ColorTxt.pas, InpLong.pas, AsciiTab.pas** - Specialized widgets
 
+### New Components (8 additional widgets)
+- **ProgressBar.pas** - `TProgressBar` single-line visual indicator
+- **Breadcrumb.pas** - `TBreadcrumb` clickable path navigation
+- **ToolBar.pas** - `TToolBar` horizontal button bar (`TStatusLine` linked-list pattern)
+- **ComboBox.pas** - `TComboBox`, `TComboViewer`, `TComboWindow` dropdown select (`THistory` pattern)
+- **Splitter.pas** - `TSplitter` draggable divider + `TSplitGroup` convenience container
+- **Accordion.pas** - `TAccordion` collapsible sections with `TAccordionHeader`
+- **EditorGutter.pas** - `TEditorGutter` with pluggable providers (`TLineNumberProvider`, `TBookmarkProvider`, `TBreakpointProvider`, `TDiffProvider`)
+- **Notification.pas** - `TNotification` non-modal auto-dismissing toast popup
+
 ## Code Conventions
 
 ### Type System

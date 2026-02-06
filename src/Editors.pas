@@ -311,6 +311,7 @@ type
   TEditWindow = class(TWindow)
   private
     FEditor: TFileEditor;
+    FGutter: TView;  { TEditorGutter - stored as TView to avoid circular ref }
   public
     constructor Create(var Bounds: TRect; AFileName: FNameStr; ANumber: SmallInt); reintroduce; virtual;
     procedure   Close; override;
@@ -318,6 +319,7 @@ type
     procedure   HandleEvent(var Event: TEvent); override;
     procedure   SizeLimits(var Min, Max: TPoint); override;
     property Editor: TFileEditor read FEditor write FEditor;
+    property Gutter: TView read FGutter write FGutter;
   end;
 
 function DefEditorDialog(Dialog: SmallInt; Info: Pointer): Word;
@@ -1663,6 +1665,8 @@ begin
     if State and sfActive <> 0 then
       UpdateCommands;
     FUpdateFlags := 0;
+    { Notify gutter and other listeners of cursor/scroll changes }
+    Message(Owner, evBroadcast, cmCursorChanged, @Self);
   end;
 end;
 

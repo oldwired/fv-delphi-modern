@@ -8,11 +8,14 @@ Free Vision is a classic console-based GUI toolkit originally derived from Borla
 
 - **Complete TUI Framework**: Windows, dialogs, menus, status bars, buttons, input fields, and more
 - **Modern Architecture**: Interfaces (`IFVDrawable`, `ISerializable`), RTL generics (`TObjectList<T>`, `TStringList`)
+- **Full Unicode Support**: Double-width characters, emoji, and CJK glyphs rendered correctly throughout the framework via `TDrawCell`-based drawing system
 - **Text Editor**: Full-featured editor with find/replace, clipboard, undo, and file operations
 - **Hex Editor**: Binary file viewer/editor with hex and ASCII modes
 - **String Grid**: Spreadsheet-like grid with sorting, editing, selection, and CSV import/export
 - **Standard Dialogs**: Message boxes, file open/save dialogs, color selection, ASCII table
 - **Advanced Controls**: Tab controls, outline/tree views, progress gauges, timed dialogs
+- **Layout Components**: Splitter panels with draggable divider, accordion with collapsible sections
+- **Extended Widgets**: Toolbar, breadcrumb navigation, combo box dropdown, progress bar, editor gutter with pluggable providers, toast notifications
 - **Input Validation**: Built-in validators for ranges, patterns, and lookups
 - **JSON Serialization**: Views implement `ISerializable` for state persistence
 - **Windows Console**: Native Windows Console API for display and input
@@ -142,6 +145,17 @@ begin
 end;
 ```
 
+## Unicode and Emoji Support
+
+The framework uses a `TDrawCell`-based drawing system where each screen cell stores a full `string` instead of a single `Char`. This allows proper rendering of:
+
+- **Emoji**: Characters like `CheckMark`, `CrossMark`, `Diamond` rendered as true Unicode glyphs
+- **CJK characters**: Double-width East Asian characters occupy two screen cells
+- **Surrogate pairs**: Code points above U+FFFF (e.g. emoji) handled via Delphi's UTF-16 surrogate pair encoding
+- **Box-drawing characters**: Full set of Unicode box-drawing and block elements (`FVBoxChars.pas`)
+
+The rendering pipeline (`TDrawBuffer` -> `WriteBuf` -> `UnicodeCharBuf` -> VT escape sequences) preserves full Unicode fidelity from view drawing through to terminal output.
+
 ## Requirements
 
 - Delphi 12.x or later
@@ -225,7 +239,14 @@ src/
   Tabs.pas          - Tab control
   Statuses.pas      - Progress gauges
   Gadgets.pas       - Clock and heap views
-  ...
+  ProgressBar.pas   - Progress bar indicator
+  Breadcrumb.pas    - Clickable path navigation
+  ToolBar.pas       - Horizontal button bar
+  ComboBox.pas      - Dropdown select control
+  Splitter.pas      - Draggable panel divider + split group container
+  Accordion.pas     - Collapsible section stack
+  EditorGutter.pas  - Multi-column editor gutter (line numbers, bookmarks, breakpoints, diff)
+  Notification.pas  - Auto-dismissing toast popups
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed class hierarchies and diagrams.

@@ -652,6 +652,136 @@ begin
   end;
 end;
 
+procedure ParseCSV(const Data: string; Delimiter: Char;
+  var Rows: TArray<TArray<string>>);
+var
+  State: TCSVParserState;
+  Field: TStringBuilder;
+  Row: TList<string>;
+  RowList: TList<TArray<string>>;
+  I: Integer;
+  C: Char;
+begin
+  RowList := TList<TArray<string>>.Create;
+  Row := TList<string>.Create;
+  Field := TStringBuilder.Create;
+  try
+    State := psFieldStart;
+    I := 1;
+    while I <= Length(Data) do
+    begin
+      C := Data[I];
+
+      case State of
+        psFieldStart:
+          begin
+            if C = '"' then
+              State := psQuotedField
+            else if C = Delimiter then
+            begin
+              Row.Add(Field.ToString);
+              Field.Clear;
+            end
+            else if (C = #13) or (C = #10) then
+            begin
+              if (Row.Count > 0) or (Field.Length > 0) then
+              begin
+                Row.Add(Field.ToString);
+                Field.Clear;
+                RowList.Add(Row.ToArray);
+                Row.Clear;
+              end;
+              if (C = #13) and (I < Length(Data)) and (Data[I + 1] = #10) then
+                Inc(I);
+            end
+            else
+            begin
+              Field.Append(C);
+              State := psUnquotedField;
+            end;
+          end;
+
+        psUnquotedField:
+          begin
+            if C = Delimiter then
+            begin
+              Row.Add(Field.ToString);
+              Field.Clear;
+              State := psFieldStart;
+            end
+            else if (C = #13) or (C = #10) then
+            begin
+              Row.Add(Field.ToString);
+              Field.Clear;
+              RowList.Add(Row.ToArray);
+              Row.Clear;
+              State := psFieldStart;
+              if (C = #13) and (I < Length(Data)) and (Data[I + 1] = #10) then
+                Inc(I);
+            end
+            else
+              Field.Append(C);
+          end;
+
+        psQuotedField:
+          begin
+            if C = '"' then
+              State := psQuoteInQuoted
+            else
+              Field.Append(C);
+          end;
+
+        psQuoteInQuoted:
+          begin
+            if C = '"' then
+            begin
+              { Escaped quote }
+              Field.Append('"');
+              State := psQuotedField;
+            end
+            else if C = Delimiter then
+            begin
+              Row.Add(Field.ToString);
+              Field.Clear;
+              State := psFieldStart;
+            end
+            else if (C = #13) or (C = #10) then
+            begin
+              Row.Add(Field.ToString);
+              Field.Clear;
+              RowList.Add(Row.ToArray);
+              Row.Clear;
+              State := psFieldStart;
+              if (C = #13) and (I < Length(Data)) and (Data[I + 1] = #10) then
+                Inc(I);
+            end
+            else
+            begin
+              { Recovery for malformed CSV }
+              Field.Append(C);
+              State := psUnquotedField;
+            end;
+          end;
+      end;
+
+      Inc(I);
+    end;
+
+    { Emit trailing field/row at EOF }
+    if (State <> psFieldStart) or (Row.Count > 0) or (Field.Length > 0) then
+    begin
+      Row.Add(Field.ToString);
+      RowList.Add(Row.ToArray);
+    end;
+
+    Rows := RowList.ToArray;
+  finally
+    Field.Free;
+    Row.Free;
+    RowList.Free;
+  end;
+end;
+
 {***************************************************************************}
 {                            TGridColumn                                    }
 {***************************************************************************}
@@ -1098,9 +1228,8 @@ var
   Text, DisplayText: string;
   Color: Word;
   Alignment: TGridAlignment;
-  ShowLeftArrow, ShowRightArrow: Boolean;
-  I, OutPos, TextWidth: Integer;
-  C: Char;
+  ShowRightArrow: Boolean;
+  I, FillPos, TextWidth: Integer;
 begin
   { Get color }
   Color := GetCellColor(Col, Row, IsFocused, IsSelected);
@@ -1134,60 +1263,41 @@ begin
   end;
 
   { Check for overflow using display width }
-  ShowLeftArrow := False;
   TextWidth := DisplayWidth(Text);
   ShowRightArrow := TextWidth > CellWidth;
 
   { Format text to fit cell width }
-  if TextWidth > CellWidth then
+  if ShowRightArrow and (CellWidth > 0) then
     DisplayText := TruncateToWidth(Text, CellWidth - 1)
   else
     DisplayText := FormatCellText(Text, CellWidth, Alignment);
 
-  { Draw to buffer using new TDrawCell format, accounting for wide characters }
-  if ScreenX + CellWidth <= MaxViewWidth then
+  if CellWidth <= 0 then Exit;
+
+  { Fill cell area first so stale content never leaks into short strings }
+  for I := 0 to CellWidth - 1 do
   begin
-    OutPos := ScreenX;
-    for I := 1 to Length(DisplayText) do
+    FillPos := ScreenX + I;
+    if FillPos >= MaxViewWidth then Break;
+    if FillPos >= 0 then
     begin
-      if OutPos >= MaxViewWidth then Break;
-      if OutPos >= ScreenX + CellWidth then Break;  { Don't exceed cell width }
-      C := DisplayText[I];
-      B[OutPos].Ch := C;
-      B[OutPos].Attr := Color;
-      { Wide characters take 2 columns in terminal }
-      if IsWideChar(C) then
-      begin
-        { Fill second column with space to prevent stale buffer data }
-        if OutPos + 1 < MaxViewWidth then
-        begin
-          B[OutPos + 1].Ch := ' ';
-          B[OutPos + 1].Attr := Color;
-        end;
-        Inc(OutPos, 2);
-      end
-      else
-        Inc(OutPos);
+      B[FillPos].Ch := ' ';
+      B[FillPos].Attr := Color;
     end;
+  end;
 
-    { Fill remaining space with spaces if we ended early due to wide chars }
-    while OutPos < ScreenX + CellWidth do
-    begin
-      if OutPos >= MaxViewWidth then Break;
-      B[OutPos].Ch := ' ';
-      B[OutPos].Attr := Color;
-      Inc(OutPos);
-    end;
+  { Draw text with Unicode-aware routine (handles surrogate pairs/wide glyphs) }
+  if (ScreenX >= 0) and (ScreenX < MaxViewWidth) then
+    DrawStr(B, ScreenX, DisplayText, Color);
 
-    { Draw overflow arrows - use grid line color for visibility }
-    if ShowRightArrow then
+  { Draw overflow arrows - use grid line color for visibility }
+  if ShowRightArrow then
+  begin
+    FillPos := ScreenX + CellWidth - 1;
+    if (FillPos >= 0) and (FillPos < MaxViewWidth) then
     begin
-      OutPos := ScreenX + CellWidth - 1;
-      if OutPos < MaxViewWidth then
-      begin
-        B[OutPos].Ch := RightArrow;
-        B[OutPos].Attr := GetColor(5);
-      end;
+      B[FillPos].Ch := RightArrow;
+      B[FillPos].Attr := GetColor(5);
     end;
   end;
 end;
@@ -1195,7 +1305,7 @@ end;
 procedure TStringGrid.Draw;
 var
   B: TDrawBuffer;
-  I, J, K, Row, ScreenY, ScreenX, ColWidth: Integer;
+  I, J, K, Row, ScreenY, ScreenX, ColWidth, ScrollVisibleIndex: Integer;
   IsFocused, IsSelected: Boolean;
   NormalColor, GridLineColor: Word;
 begin
@@ -1241,11 +1351,17 @@ begin
     end;
 
     { Draw scrollable columns }
-    for J := FLeftCol + FFixedCols to FColumns.Count - 1 do
+    ScrollVisibleIndex := 0;
+    for J := FFixedCols to FColumns.Count - 1 do
     begin
       if ScreenX >= Size.X then Break;
       if FColumns[J].Visible then
       begin
+        if ScrollVisibleIndex < FLeftCol then
+        begin
+          Inc(ScrollVisibleIndex);
+          Continue;
+        end;
         ColWidth := FColumns[J].Width;
         if ScreenX + ColWidth > Size.X then
           ColWidth := Size.X - ScreenX;
@@ -1261,6 +1377,7 @@ begin
             Inc(ScreenX);
           end;
         end;
+        Inc(ScrollVisibleIndex);
       end;
     end;
 
@@ -1338,11 +1455,17 @@ begin
       end;
 
       { Draw scrollable columns }
-      for J := FLeftCol + FFixedCols to FColumns.Count - 1 do
+      ScrollVisibleIndex := 0;
+      for J := FFixedCols to FColumns.Count - 1 do
       begin
         if ScreenX >= Size.X then Break;
         if FColumns[J].Visible then
         begin
+          if ScrollVisibleIndex < FLeftCol then
+          begin
+            Inc(ScrollVisibleIndex);
+            Continue;
+          end;
           ColWidth := FColumns[J].Width;
           if ScreenX + ColWidth > Size.X then
             ColWidth := Size.X - ScreenX;
@@ -1361,6 +1484,7 @@ begin
               Inc(ScreenX);
             end;
           end;
+          Inc(ScrollVisibleIndex);
         end;
       end;
     end;
@@ -1404,36 +1528,140 @@ end;
 
 function TStringGrid.ColToScreen(Col: Integer): Integer;
 var
-  I, X: Integer;
+  I, X, ScrollVisibleIndex: Integer;
 begin
+  Result := -1;
+  if (Col < 0) or (Col >= FColumns.Count) then Exit;
+
   X := 0;
+  ScrollVisibleIndex := 0;
   for I := 0 to FColumns.Count - 1 do
   begin
+    if not FColumns[I].Visible then
+      Continue;
+
+    if I >= FFixedCols then
+    begin
+      if ScrollVisibleIndex < FLeftCol then
+      begin
+        Inc(ScrollVisibleIndex);
+        Continue;
+      end;
+    end;
+
     if I = Col then
     begin
       Result := X;
       Exit;
     end;
-    if FColumns[I].Visible then
-    begin
-      Inc(X, FColumns[I].Width);
-      if FShowGridLines then
-        Inc(X);
-    end;
+
+    Inc(X, FColumns[I].Width);
+    if FShowGridLines then
+      Inc(X);
+    if X >= Size.X then
+      Exit;
+
+    if I >= FFixedCols then
+      Inc(ScrollVisibleIndex);
   end;
-  Result := -1;
 end;
 
 function TStringGrid.ScreenToCol(X: Integer): Integer;
 var
-  ColStart: Integer;
+  I, CurrentX, ColWidth, ScrollVisibleIndex: Integer;
 begin
-  Result := FColumns.ColumnAtX(X, ColStart);
+  Result := -1;
+  if (X < 0) or (X >= Size.X) then Exit;
+
+  CurrentX := 0;
+  ScrollVisibleIndex := 0;
+  for I := 0 to FColumns.Count - 1 do
+  begin
+    if not FColumns[I].Visible then
+      Continue;
+
+    if I >= FFixedCols then
+    begin
+      if ScrollVisibleIndex < FLeftCol then
+      begin
+        Inc(ScrollVisibleIndex);
+        Continue;
+      end;
+    end;
+
+    ColWidth := FColumns[I].Width;
+    if CurrentX + ColWidth > Size.X then
+      ColWidth := Size.X - CurrentX;
+    if ColWidth <= 0 then Break;
+
+    if (X >= CurrentX) and (X < CurrentX + ColWidth) then
+    begin
+      Result := I;
+      Exit;
+    end;
+
+    Inc(CurrentX, ColWidth);
+    if FShowGridLines and (CurrentX < Size.X) then
+    begin
+      if X = CurrentX then
+        Exit;  { On grid line }
+      Inc(CurrentX);
+    end;
+
+    if I >= FFixedCols then
+      Inc(ScrollVisibleIndex);
+
+    if CurrentX >= Size.X then Break;
+  end;
 end;
 
 procedure TStringGrid.EnsureCellVisible(Col, Row: Integer);
 var
   VisibleRows: Integer;
+  ScrollableCols: TList<Integer>;
+  I, TargetIndex, StartIndex, FixedWidth: Integer;
+  function GetFixedAreaWidth: Integer;
+  var
+    C, W: Integer;
+  begin
+    Result := 0;
+    for C := 0 to FFixedCols - 1 do
+    begin
+      if (C >= FColumns.Count) or (not FColumns[C].Visible) then
+        Continue;
+      W := FColumns[C].Width;
+      if Result + W > Size.X then
+        W := Size.X - Result;
+      if W <= 0 then Break;
+      Inc(Result, W);
+      if FShowGridLines and (Result < Size.X) then
+        Inc(Result);
+    end;
+  end;
+  function IsTargetVisible(AStartIndex: Integer): Boolean;
+  var
+    K, ColIndex, X, W: Integer;
+  begin
+    Result := False;
+    X := FixedWidth;
+    for K := AStartIndex to ScrollableCols.Count - 1 do
+    begin
+      if X >= Size.X then Break;
+      ColIndex := ScrollableCols[K];
+      W := FColumns[ColIndex].Width;
+      if X + W > Size.X then
+        W := Size.X - X;
+      if W <= 0 then Break;
+      if ColIndex = Col then
+      begin
+        Result := True;
+        Exit;
+      end;
+      Inc(X, W);
+      if FShowGridLines and (X < Size.X) then
+        Inc(X);
+    end;
+  end;
 begin
   { Vertical scrolling }
   VisibleRows := Size.Y - FFixedRows;
@@ -1448,11 +1676,44 @@ begin
   { Horizontal scrolling - handle frozen columns }
   if Col >= FFixedCols then
   begin
-    if Col < FLeftCol + FFixedCols then
-      FLeftCol := Col - FFixedCols
-    else
-    begin
-      { TODO: Calculate visible column range and scroll if needed }
+    ScrollableCols := TList<Integer>.Create;
+    try
+      for I := FFixedCols to FColumns.Count - 1 do
+        if FColumns[I].Visible then
+          ScrollableCols.Add(I);
+
+      if ScrollableCols.Count = 0 then
+        FLeftCol := 0
+      else
+      begin
+        TargetIndex := ScrollableCols.IndexOf(Col);
+        if TargetIndex >= 0 then
+        begin
+          if FLeftCol < 0 then
+            FLeftCol := 0;
+          if FLeftCol > ScrollableCols.Count - 1 then
+            FLeftCol := ScrollableCols.Count - 1;
+
+          FixedWidth := GetFixedAreaWidth;
+          StartIndex := FLeftCol;
+          if not IsTargetVisible(StartIndex) then
+          begin
+            if TargetIndex < StartIndex then
+              StartIndex := TargetIndex
+            else
+              while (StartIndex < TargetIndex) and (not IsTargetVisible(StartIndex)) do
+                Inc(StartIndex);
+
+            { Keep the target visible while showing as much leading context as possible }
+            while (StartIndex > 0) and IsTargetVisible(StartIndex - 1) do
+              Dec(StartIndex);
+
+            FLeftCol := StartIndex;
+          end;
+        end;
+      end;
+    finally
+      ScrollableCols.Free;
     end;
   end;
 
@@ -2236,13 +2497,14 @@ end;
 
 procedure TStringGrid.LoadFromCSVString(const CSVData: string; Options: TCSVOptions);
 var
-  Lines: TStringList;
+  Rows: TArray<TArray<string>>;
   Fields: TArray<string>;
-  Row, Col, DataRow: Integer;
+  RowIdx, Col, DataRow: Integer;
   EffectiveDelim: TCSVDelimiter;
   DelimChar: Char;
   OwnOptions: Boolean;
   Value: string;
+  HeaderHandled: Boolean;
 begin
   OwnOptions := (Options = nil);
   if OwnOptions then
@@ -2262,72 +2524,46 @@ begin
     { Clear existing data }
     ClearRows;
 
-    Lines := TStringList.Create;
-    try
-      Lines.Text := CSVData;
-      DataRow := 0;
+    ParseCSV(CSVData, DelimChar, Rows);
+    DataRow := 0;
+    HeaderHandled := not Options.HasHeaders;
 
-      for Row := 0 to Lines.Count - 1 do
+    for RowIdx := 0 to High(Rows) do
+    begin
+      Fields := Rows[RowIdx];
+      if (Length(Fields) = 0) or
+         ((Length(Fields) = 1) and (Fields[0] = '')) then
+        Continue;  { Skip empty rows }
+
+      if not HeaderHandled then
       begin
-        if Lines[Row] = '' then Continue;  { Skip empty lines }
-
-        ParseCSVLine(Lines[Row], DelimChar, Fields);
-
-        if (Row = 0) and Options.HasHeaders then
+        { Process header row }
+        if Options.AutoCreateColumns then
         begin
-          { Process header row }
-          if Options.AutoCreateColumns then
+          FColumns.Clear;
+          for Col := 0 to High(Fields) do
           begin
-            FColumns.Clear;
-            for Col := 0 to High(Fields) do
-            begin
-              Value := Fields[Col];
-              if Options.TrimWhitespace then
-                Value := Trim(Value);
-              FColumns.Add(Value, 10);
-            end;
-          end
-          else
-          begin
-            { Update existing column titles }
-            for Col := 0 to Min(High(Fields), FColumns.Count - 1) do
-            begin
-              Value := Fields[Col];
-              if Options.TrimWhitespace then
-                Value := Trim(Value);
-              FColumns[Col].Title := Value;
-            end;
-          end;
-
-          { If UseFixedHeaderRow, also add headers as row 0 data }
-          if Options.UseFixedHeaderRow then
-          begin
-            AddRow;
-            for Col := 0 to High(Fields) do
-            begin
-              if Col < FColumns.Count then
-              begin
-                Value := Fields[Col];
-                if Options.TrimWhitespace then
-                  Value := Trim(Value);
-                SetCell(Col, 0, Value);
-              end;
-            end;
-            DataRow := 1;
-            FFixedRows := 1;
+            Value := Fields[Col];
+            if Options.TrimWhitespace then
+              Value := Trim(Value);
+            FColumns.Add(Value, 10);
           end;
         end
         else
         begin
-          { Process data row }
-          if Options.AutoCreateColumns and (FColumns.Count = 0) then
+          { Update existing column titles }
+          for Col := 0 to Min(High(Fields), FColumns.Count - 1) do
           begin
-            { No headers - create generic columns }
-            for Col := 0 to High(Fields) do
-              FColumns.Add('Column ' + IntToStr(Col + 1), 10);
+            Value := Fields[Col];
+            if Options.TrimWhitespace then
+              Value := Trim(Value);
+            FColumns[Col].Title := Value;
           end;
+        end;
 
-          { Add new row }
+        { If UseFixedHeaderRow, also add headers as row 0 data }
+        if Options.UseFixedHeaderRow then
+        begin
           AddRow;
           for Col := 0 to High(Fields) do
           begin
@@ -2336,22 +2572,46 @@ begin
               Value := Fields[Col];
               if Options.TrimWhitespace then
                 Value := Trim(Value);
-              SetCell(Col, DataRow, Value);
+              SetCell(Col, 0, Value);
             end;
           end;
-          Inc(DataRow);
+          DataRow := 1;
+          FFixedRows := 1;
         end;
+
+        HeaderHandled := True;
+        Continue;
       end;
 
-      { Auto-fit columns to content }
-      AutoFitAllColumns;
-    finally
-      Lines.Free;
+      { Process data row }
+      if Options.AutoCreateColumns and (FColumns.Count = 0) then
+      begin
+        { No headers - create generic columns }
+        for Col := 0 to High(Fields) do
+          FColumns.Add('Column ' + IntToStr(Col + 1), 10);
+      end;
+
+      { Add new row }
+      AddRow;
+      for Col := 0 to High(Fields) do
+      begin
+        if Col < FColumns.Count then
+        begin
+          Value := Fields[Col];
+          if Options.TrimWhitespace then
+            Value := Trim(Value);
+          SetCell(Col, DataRow, Value);
+        end;
+      end;
+      Inc(DataRow);
     end;
+
+    { Auto-fit columns to content }
+    AutoFitAllColumns;
 
     { Reset state }
     FModified := False;
-    if Options.UseFixedHeaderRow and (FRowCount > 0) then
+    if Options.UseFixedHeaderRow and (FRowCount > FFixedRows) then
       FFocusedCell := TGridCell.Create(0, FFixedRows)
     else
       FFocusedCell := TGridCell.Create(0, 0);
@@ -2370,24 +2630,52 @@ var
   Bytes: TBytes;
   Data: string;
   StartPos: Integer;
+  OwnOptions: Boolean;
+  Enc: TCSVEncoding;
 begin
-  { Read all bytes from stream }
-  SetLength(Bytes, Stream.Size - Stream.Position);
-  if Length(Bytes) > 0 then
-    Stream.ReadBuffer(Bytes[0], Length(Bytes));
+  OwnOptions := (Options = nil);
+  if OwnOptions then
+    Options := TCSVOptions.Create;
+  try
+    { Read all bytes from stream }
+    SetLength(Bytes, Stream.Size - Stream.Position);
+    if Length(Bytes) > 0 then
+      Stream.ReadBuffer(Bytes[0], Length(Bytes));
 
-  { Detect and skip UTF-8 BOM if present }
-  StartPos := 0;
-  if (Length(Bytes) >= 3) and (Bytes[0] = $EF) and (Bytes[1] = $BB) and (Bytes[2] = $BF) then
-    StartPos := 3;
+    { Detect and skip UTF-8 BOM if present }
+    StartPos := 0;
+    if (Length(Bytes) >= 3) and
+       (Bytes[0] = $EF) and (Bytes[1] = $BB) and (Bytes[2] = $BF) then
+    begin
+      StartPos := 3;
+      Enc := ceUTF8;  { BOM takes precedence over option }
+    end
+    else
+      Enc := Options.Encoding;
 
-  { Convert to string (UTF-8) }
-  if StartPos > 0 then
-    Data := TEncoding.UTF8.GetString(Bytes, StartPos, Length(Bytes) - StartPos)
-  else
-    Data := TEncoding.UTF8.GetString(Bytes);
+    { Convert to string using requested/detected encoding }
+    case Enc of
+      ceANSI:
+        begin
+          if StartPos > 0 then
+            Data := TEncoding.ANSI.GetString(Bytes, StartPos, Length(Bytes) - StartPos)
+          else
+            Data := TEncoding.ANSI.GetString(Bytes);
+        end;
+    else
+      begin
+        if StartPos > 0 then
+          Data := TEncoding.UTF8.GetString(Bytes, StartPos, Length(Bytes) - StartPos)
+        else
+          Data := TEncoding.UTF8.GetString(Bytes);
+      end;
+    end;
 
-  LoadFromCSVString(Data, Options);
+    LoadFromCSVString(Data, Options);
+  finally
+    if OwnOptions then
+      Options.Free;
+  end;
 end;
 
 procedure TStringGrid.LoadFromCSV(const FileName: string; Options: TCSVOptions);

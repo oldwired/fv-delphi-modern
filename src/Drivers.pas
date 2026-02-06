@@ -10,6 +10,7 @@ interface
 uses
   Winapi.Windows,
   System.SysUtils,
+  System.SyncObjs,
   Objects, FVScreen, FVCommon, fvconsts, FVUTF8;
 
 {***************************************************************************}
@@ -397,6 +398,7 @@ var
   DownWhere: TPoint;
   EventQueue: array[0..EventQSize - 1] of TEvent;
   Queue: array[0..QueueMax - 1] of TEvent;
+  QueueLock: TCriticalSection;
   ConsoleInput: THandle;
   VideoInitialized: Boolean;
   KeyboardInitialized: Boolean;
@@ -976,10 +978,9 @@ end;
 
 procedure GetEvent(var Event: TEvent);
 begin
-  if QueueCount > 0 then begin
-    NextQueuedEvent(Event);
+  NextQueuedEvent(Event);
+  if Event.What <> evNothing then
     Exit;
-  end;
   GetKeyEvent(Event);
   if Event.What <> evNothing then
     Exit;
@@ -1090,24 +1091,38 @@ end;
 function PutEventInQueue(var Event: TEvent): Boolean;
 begin
   Result := False;
-  if QueueCount < QueueMax then begin
-    Queue[QueueHead] := Event;
-    Inc(QueueHead);
-    if QueueHead = QueueMax then QueueHead := 0;
-    Inc(QueueCount);
-    Result := True;
+  if QueueLock <> nil then
+    QueueLock.Enter;
+  try
+    if QueueCount < QueueMax then begin
+      Queue[QueueHead] := Event;
+      Inc(QueueHead);
+      if QueueHead = QueueMax then QueueHead := 0;
+      Inc(QueueCount);
+      Result := True;
+    end;
+  finally
+    if QueueLock <> nil then
+      QueueLock.Leave;
   end;
 end;
 
 procedure NextQueuedEvent(var Event: TEvent);
 begin
-  if QueueCount > 0 then begin
-    Event := Queue[QueueTail];
-    Inc(QueueTail);
-    if QueueTail = QueueMax then QueueTail := 0;
-    Dec(QueueCount);
-  end else
-    Event.What := evNothing;
+  if QueueLock <> nil then
+    QueueLock.Enter;
+  try
+    if QueueCount > 0 then begin
+      Event := Queue[QueueTail];
+      Inc(QueueTail);
+      if QueueTail = QueueMax then QueueTail := 0;
+      Dec(QueueCount);
+    end else
+      Event.What := evNothing;
+  finally
+    if QueueLock <> nil then
+      QueueLock.Leave;
+  end;
 end;
 
 initialization
@@ -1121,9 +1136,13 @@ initialization
   SysErrorFunc := SystemError;
   LastScreenWidth := 0;
   LastScreenHeight := 0;
+  QueueLock := TCriticalSection.Create;
   DetectVideo;
   { Initialize resize tracking to current screen size }
   LastScreenWidth := DriversScreenWidth;
   LastScreenHeight := DriversScreenHeight;
+
+finalization
+  FreeAndNil(QueueLock);
 
 end.

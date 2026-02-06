@@ -12,11 +12,13 @@ Free Vision Modern is a text-mode UI framework that provides a complete widget t
 |  +------------------------------------------------------------+  |
 |  |  TMenuBar                                                   |  |
 |  +------------------------------------------------------------+  |
+|  |  TToolBar                                                   |  |
+|  +------------------------------------------------------------+  |
 |  |                        TDesktop                             |  |
-|  |  +------------------+  +------------------+                 |  |
-|  |  |    TWindow       |  |    TDialog       |                 |  |
-|  |  |  +-----------+   |  |  +-----------+   |                 |  |
-|  |  |  | TScroller |   |  |  | TButton   |   |                 |  |
+|  |  +------------------+  +------------------+  +-----------+  |  |
+|  |  |    TWindow       |  |    TDialog       |  |TNotificat.|  |  |
+|  |  |  +-----------+   |  |  +-----------+   |  | (toast)   |  |  |
+|  |  |  | TScroller |   |  |  | TButton   |   |  +-----------+  |  |
 |  |  |  +-----------+   |  |  +-----------+   |                 |  |
 |  |  +------------------+  +------------------+                 |  |
 |  +------------------------------------------------------------+  |
@@ -35,7 +37,9 @@ Free Vision Modern is a text-mode UI framework that provides a complete widget t
 |                     Widget Layer                                  |
 |    Dialogs.pas: TDialog, TButton, TInputLine, TListBox, etc.     |
 |    Menus.pas: TMenuBar, TMenuBox, TStatusLine                    |
-|    Editors.pas, ColorSel.pas, Outline.pas, Tabs.pas, etc.        |
+|    Editors.pas, ColorSel.pas, Outline.pas, Tabs.pas              |
+|    ProgressBar, Breadcrumb, ToolBar, ComboBox, Splitter,         |
+|    Accordion, EditorGutter, Notification                          |
 +------------------------------------------------------------------+
 |                      View Layer                                   |
 |         Views.pas: TView, TGroup, TWindow, TFrame                |
@@ -122,18 +126,31 @@ classDiagram
     TView <|-- TMenuView
     TView <|-- TStatusLine
     TView <|-- TBackground
+    TView <|-- TProgressBar
+    TView <|-- TBreadcrumb
+    TView <|-- TToolBar
+    TView <|-- TComboBox
+    TView <|-- TEditorGutter
+    TView <|-- TAccordionHeader
+    TView <|-- TSplitter
 
     TGroup <|-- TWindow
     TGroup <|-- TDesktop
     TGroup <|-- TProgram
+    TGroup <|-- TAccordion
+    TGroup <|-- TSplitGroup
 
     TWindow <|-- TDialog
+    TWindow <|-- TNotification
+    TWindow <|-- TComboWindow
 
     TProgram <|-- TApplication
 
     TMenuView <|-- TMenuBar
     TMenuView <|-- TMenuBox
     TMenuBox <|-- TMenuPopup
+
+    TListViewer <|-- TComboViewer
 ```
 
 ### ASCII Diagram: Core Views
@@ -148,8 +165,14 @@ TObject
           |     +-- TWindow (framed, moveable window)
           |     |     |
           |     |     +-- TDialog (modal dialog)
+          |     |     +-- TNotification (auto-dismissing toast)
+          |     |     +-- TComboWindow (combo dropdown popup)
           |     |
           |     +-- TDesktop (main application area)
+          |     |
+          |     +-- TAccordion (collapsible section stack)
+          |     |
+          |     +-- TSplitGroup (split panel container)
           |     |
           |     +-- TProgram (application base)
           |           |
@@ -162,6 +185,8 @@ TObject
           +-- TScroller (scrollable content area)
           |
           +-- TListViewer (abstract list display)
+          |     |
+          |     +-- TComboViewer (combo dropdown list)
           |
           +-- TMenuView (menu base)
           |     |
@@ -173,6 +198,20 @@ TObject
           +-- TStatusLine (bottom status bar)
           |
           +-- TBackground (desktop background)
+          |
+          +-- TProgressBar (visual progress indicator)
+          |
+          +-- TBreadcrumb (clickable path navigation)
+          |
+          +-- TToolBar (horizontal button bar)
+          |
+          +-- TComboBox (dropdown select trigger)
+          |
+          +-- TEditorGutter (multi-column editor gutter)
+          |
+          +-- TAccordionHeader (collapsible section header)
+          |
+          +-- TSplitter (draggable panel divider)
 ```
 
 ### Dialog Controls Hierarchy
@@ -184,11 +223,22 @@ classDiagram
     TView <|-- TCluster
     TView <|-- TStaticText
     TView <|-- THistory
+    TView <|-- TComboBox
+    TView <|-- TProgressBar
+    TView <|-- TBreadcrumb
+    TView <|-- TToolBar
+    TView <|-- TEditorGutter
+    TView <|-- TSplitter
     TListViewer <|-- TListBox
     TListViewer <|-- TStringListBox
     TListViewer <|-- THistoryViewer
+    TListViewer <|-- TComboViewer
     TWindow <|-- TDialog
     TWindow <|-- THistoryWindow
+    TWindow <|-- TComboWindow
+    TWindow <|-- TNotification
+    TGroup <|-- TAccordion
+    TGroup <|-- TSplitGroup
 
     TCluster <|-- TRadioButtons
     TCluster <|-- TCheckBoxes
@@ -230,6 +280,18 @@ TView
     |
     +-- THistory (input history dropdown)
     |
+    +-- TComboBox (dropdown select trigger)
+    |
+    +-- TProgressBar (visual progress indicator)
+    |
+    +-- TBreadcrumb (clickable path navigation)
+    |
+    +-- TToolBar (horizontal button bar)
+    |
+    +-- TEditorGutter (multi-column editor gutter)
+    |
+    +-- TSplitter (draggable panel divider)
+    |
     +-- TStringGrid (spreadsheet-like data grid)
     |
     +-- THexEditor (binary hex viewer/editor)
@@ -247,6 +309,13 @@ TListViewer
     +-- TStringListBox (string list display - uses TStringList)
     |
     +-- THistoryViewer (history popup list)
+    |
+    +-- TComboViewer (combo dropdown list)
+
+TGroup
+    |
+    +-- TAccordion (collapsible section stack)
+    +-- TSplitGroup (split panel container)
 
 TDialog
     |
@@ -254,6 +323,11 @@ TDialog
     +-- TChDirDialog (change directory)
           |
           +-- TEditChDirDialog (editable directory)
+
+TWindow
+    |
+    +-- TComboWindow (combo dropdown popup)
+    +-- TNotification (auto-dismissing toast)
 ```
 
 ### TStringGrid Architecture
@@ -298,6 +372,135 @@ LoadFromCSVString    SaveToCSVString
      |                    |
      +-- DetectDelimiter  +-- QuoteCSVField (RFC 4180)
      +-- ParseCSVLine     +-- GetDelimiterChar
+```
+
+### Extended Components
+
+These additional components extend the widget set beyond the original Free Vision framework.
+
+#### TProgressBar (`ProgressBar.pas`)
+
+Single-line visual progress indicator. Display-only `TView` descendant.
+
+```
+TProgressBar (TView)
+    +-- FMin, FMax, FPosition: LongInt
+    +-- FShowPercent: Boolean
+    +-- FFilledChar (BlockFull), FEmptyChar (BlockLight)
+    Draw: [████████░░░░░░ 53%]
+```
+
+#### TBreadcrumb (`Breadcrumb.pas`)
+
+Horizontal path navigation with clickable segments.
+
+```
+TBreadcrumb (TView)
+    +-- FSegments: TList<string>
+    +-- FFocused: Integer
+    +-- FCommand: Word (broadcasts cmBreadcrumbSelect)
+    Draw: Home > Documents > Projects > Current
+    Interaction: Click segment, Left/Right navigate, Enter selects
+```
+
+#### TToolBar (`ToolBar.pas`)
+
+Horizontal button bar following the `TStatusLine` linked-list pattern. Placed between menu bar and desktop.
+
+```
+TToolBar (TView)
+    +-- FItems: PToolBarItem (linked list)
+    Draw: [ New ] [ Open ] [ Save ] | [ Cut ] [ Copy ] [ Paste ]
+    Pattern: Same as TStatusLine (PToolBarItem records, DrawSelect, mouse tracking)
+    Helpers: NewToolBarItem(), NewToolBarSeparator()
+```
+
+#### TComboBox (`ComboBox.pas`)
+
+Dropdown select control following the `THistory`/`THistoryViewer`/`THistoryWindow` pattern.
+
+```
+TComboBox (TView)  ──triggers──>  TComboWindow (TWindow)
+    +-- FLink: TInputLine                +-- FViewer: TComboViewer (TListViewer)
+    +-- FStrings: TStringList            +-- Scrollbar
+    +-- FDropDownRows: Integer
+    Draw: [v]  (placed next to TInputLine)
+    Popup: Owner.ExecView(ComboWindow) → modal → copies selection to FLink
+```
+
+#### TSplitter + TSplitGroup (`Splitter.pas`)
+
+Draggable divider between two resizable panels.
+
+```
+TSplitGroup (TGroup)
+    +-- FPanel1: TView       (top/left panel)
+    +-- FSplitter: TSplitter  (drag bar)
+    +-- FPanel2: TView       (bottom/right panel)
+    +-- FOrientation: soHorizontal | soVertical
+    +-- FSplitPos: Integer
+
+TSplitter (TView)
+    Draw: ────────◆──────── (horizontal) or │◆│ (vertical)
+    Interaction: Mouse drag, arrow keys when focused
+    Broadcasts: cmSplitterMoved
+```
+
+#### TAccordion (`Accordion.pas`)
+
+Vertical stack of collapsible sections with headers.
+
+```
+TAccordion (TGroup)
+    +-- FSections: TList<TAccordionSection>
+    +-- FMode: amMultiple | amExclusive
+    Each section:
+        TAccordionHeader (TView) - clickable, shows ▶/▼ arrow
+        Content: TGroup - shown/hidden on toggle
+
+Layout (expanded):      Layout (collapsed):
+  ▼ Section 1            ▶ Section 1
+  [ content  ]           ▶ Section 2
+  ▼ Section 2            ▶ Section 3
+  [ content  ]
+  ▶ Section 3
+```
+
+#### TEditorGutter (`EditorGutter.pas`)
+
+Extensible multi-column gutter with a provider plugin system. Attaches to `TEditor`.
+
+```
+TEditorGutter (TView)
+    +-- FProviders: TObjectList<TGutterProvider>
+    +-- FEditor: TView (linked TEditor)
+    +-- Cached: FTopLine, FTotalLines, FCurLine
+
+TGutterProvider (abstract base)
+    |
+    +-- TLineNumberProvider  (right-aligned line numbers, auto-width)
+    +-- TBookmarkProvider    (toggle bookmarks with ◆ indicator)
+    +-- TBreakpointProvider  (toggle breakpoints with ● indicator)
+    +-- TDiffProvider        (change markers: green=added, yellow=modified, red=deleted)
+
+Draw example:  3 ◆ ● █│  (line 3, bookmarked, breakpoint, diff-added)
+Setup: TEditorGutter.CreateDefault(R, Editor) + AddProvider()
+```
+
+#### TNotification (`Notification.pas`)
+
+Non-modal auto-dismissing toast popup. Inserted into `Desktop` and removed after timeout.
+
+```
+TNotification (TWindow)
+    +-- FNotifType: ntInfo | ntSuccess | ntWarning | ntError
+    +-- FPosition: npTopRight | npBottomRight | npTopLeft | npBottomLeft
+    +-- FTimeoutMs: Cardinal (default 3000ms)
+    +-- FCreatedAt: UInt64 (GetTickCount64)
+    Lifecycle: Create → Insert into Desktop → Update (called from Idle) → Dismiss
+    Dismiss: on timeout or click anywhere on notification
+    Stacking: multiple notifications stack vertically at the chosen corner
+    Class method: TNotification.Show(Message, Type, Timeout, Position)
 ```
 
 ### Stream Hierarchy
@@ -506,7 +709,15 @@ src/
   Statuses.pas        Progress indicators
   Gadgets.pas         Clock, heap views
   HistList.pas        Input history management
-  fvconsts.pas        String constants
+  FVConsts.pas        String constants and command IDs
+  ProgressBar.pas     Progress bar indicator
+  Breadcrumb.pas      Path navigation with clickable segments
+  ToolBar.pas         Horizontal button bar (TStatusLine pattern)
+  ComboBox.pas        Dropdown select (THistory pattern)
+  Splitter.pas        Draggable panel divider + TSplitGroup container
+  Accordion.pas       Collapsible section stack
+  EditorGutter.pas    Multi-column editor gutter with provider plugins
+  Notification.pas    Auto-dismissing toast popups
 ```
 
 ## Memory Management
