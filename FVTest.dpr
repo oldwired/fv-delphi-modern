@@ -63,6 +63,7 @@ uses
   Notification in 'src\Notification.pas',
   FVClipboard in 'src\FVClipboard.pas',
   SixelEncoder in 'src\SixelEncoder.pas',
+  SixelView in 'src\SixelView.pas',
   ImageView in 'src\ImageView.pas';
 
 const
@@ -3677,8 +3678,8 @@ var
   FileName: PathStr;
   W: TImageWindow;
 begin
-  FileName := '*.bmp';
-  Dlg := TFileDialog.Create(FileName, 'Open BMP Image', '~N~ame', fdOpenButton, 1);
+  FileName := '*.bmp;*.sixel;*.six;*.sxl';
+  Dlg := TFileDialog.Create(FileName, 'Open Image/SIXEL', '~N~ame', fdOpenButton, 1);
   if Dlg = nil then Exit;
   try
     if Desktop.ExecView(Dlg) <> cmCancel then begin
@@ -3687,8 +3688,8 @@ begin
       if FileName = '' then Exit;
       W := TImageWindow.Create(FileName);
       if W <> nil then begin
-        if not W.ImageView.Image.Loaded then begin
-          MsgBox.MessageBox('Failed to load BMP: unsupported format or file error.',
+        if not W.Loaded then begin
+          MsgBox.MessageBox('Failed to load image/SIXEL: unsupported format or file error.',
             mfError or mfOKButton);
           W.Free;
         end else
