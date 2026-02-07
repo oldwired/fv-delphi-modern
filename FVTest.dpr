@@ -1879,7 +1879,9 @@ begin
       NewItem('~P~revious', 'Shift-F6', kbShiftF6, cmPrev, hcNoContext,
       NewLine(
       NewItem('~C~lose', 'Alt-F3', kbAltF3, cmClose, hcNoContext,
-      NewItem('Close ~A~ll', '', kbNoKey, cmCloseAll, hcNoContext, nil)))))))))))),
+      NewItem('Close ~A~ll', '', kbNoKey, cmCloseAll, hcNoContext,
+      NewLine(
+      NewItem('Window ~L~ist...', 'Alt-0', kbAlt0, cmWindowList, hcNoContext, nil)))))))))))))),
     nil)))));
 end;
 

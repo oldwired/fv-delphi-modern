@@ -110,6 +110,7 @@ type
     procedure TileVertical;
     procedure CascadeNoResize;
     procedure CloseAll;
+    procedure WindowList;
   end;
 
 const
@@ -127,7 +128,7 @@ procedure RegisterApp;
 
 implementation
 
-uses FVScreen;
+uses FVScreen, System.Classes;
 
 { TBackground }
 
@@ -654,6 +655,7 @@ var
   Handled: Boolean;
   R: TRect;
   NewWidth, NewHeight: Word;
+  I: Integer;
 begin
   Handled := False;
   if Event.What = evKeyDown then begin
@@ -665,10 +667,21 @@ begin
       kbCtrlF5: begin Event.Command := cmResize; Handled := True; end;
       kbF6: begin Event.Command := cmNext; Handled := True; end;
       kbShiftF6: begin Event.Command := cmPrev; Handled := True; end;
+      kbAlt0: begin Event.Command := cmWindowList; Handled := True; end;
     end;
     if Handled then begin
       Event.What := evCommand;
       Event.InfoPtr := nil;
+      PutEvent(Event);
+      ClearEvent(Event);
+    end;
+    { Alt+1..Alt+9: broadcast cmSelectWindowNum to activate numbered windows }
+    if (Event.What = evKeyDown) and
+       (Event.KeyCode >= kbAlt1) and (Event.KeyCode <= kbAlt9) then begin
+      I := (Event.KeyCode - kbAlt1) div $0100 + 1;  { 1..9 }
+      Event.What := evBroadcast;
+      Event.Command := cmSelectWindowNum;
+      Event.InfoInt := I;
       PutEvent(Event);
       ClearEvent(Event);
     end;
@@ -819,6 +832,7 @@ begin
       cmCascade: Cascade;
       cmCascadeNoResize: CascadeNoResize;
       cmCloseAll: CloseAll;
+      cmWindowList: WindowList;
       cmDosShell: DosShell;
     else
       Exit;
@@ -862,6 +876,120 @@ end;
 procedure TApplication.CloseAll;
 begin
   if Desktop <> nil then Desktop.CloseAll;
+end;
+
+procedure TApplication.WindowList;
+var
+  D: TDialog;
+  R: TRect;
+  SB: TScrollBar;
+  LB: TStringListBox;
+  SL: TStringList;
+  WL: TList;
+  V, L0: TView;
+  W: TWindow;
+  S: string;
+  Cmd: Word;
+  Idx, I: Integer;
+
+  procedure BuildLists;
+  begin
+    SL := TStringList.Create;
+    WL.Clear;
+    if (Desktop = nil) or (Desktop.Last = nil) then Exit;
+    V := Desktop.Last;
+    L0 := V;
+    repeat
+      V := V.Next;
+      if (V is TWindow) and (V <> D) and
+         (V.State and sfVisible <> 0) and
+         (V.Options and ofSelectable <> 0) then begin
+        W := TWindow(V);
+        if W.Number > 0 then
+          S := IntToStr(W.Number) + ' - ' + W.GetTitle(255)
+        else
+          S := '  - ' + W.GetTitle(255);
+        SL.Add(S);
+        WL.Add(W);
+      end;
+    until V = L0;
+  end;
+
+begin
+  if Desktop = nil then Exit;
+  if Desktop.Last = nil then Exit;
+
+  { Create dialog }
+  R.Assign(0, 0, 42, 16);
+  D := TDialog.Create(R, 'Window List');
+  D.Options := D.Options or ofCentered;
+
+  { Scrollbar }
+  R.Assign(38, 2, 39, 12);
+  SB := TScrollBar.Create(R);
+  D.Insert(SB);
+
+  { Listbox }
+  R.Assign(2, 2, 38, 12);
+  LB := TStringListBox.Create(R, 1, SB);
+  D.Insert(LB);
+
+  { Buttons }
+  R.Assign(2, 13, 14, 15);
+  D.Insert(TButton.Create(R, '~S~elect', cmOK, bfDefault));
+  R.Assign(15, 13, 27, 15);
+  D.Insert(TButton.Create(R, 'Close ~W~in', cmYes, bfNormal));
+  R.Assign(28, 13, 40, 15);
+  D.Insert(TButton.Create(R, 'Cancel', cmCancel, bfNormal));
+
+  { Build window list }
+  WL := TList.Create;
+  try
+    BuildLists;
+    if SL.Count = 0 then begin
+      FreeAndNil(SL);
+      FreeAndNil(WL);
+      FreeAndNil(D);
+      Exit;
+    end;
+
+    { Pre-select current window }
+    Idx := 0;
+    if Desktop.Current <> nil then begin
+      for I := 0 to WL.Count - 1 do
+        if TWindow(WL[I]) = Desktop.Current then begin
+          Idx := I;
+          Break;
+        end;
+    end;
+    LB.NewList(SL);  { LB takes ownership of SL }
+    LB.FocusItem(Idx);
+
+    { Execute dialog in a loop }
+    repeat
+      Cmd := Desktop.ExecView(D);
+      if (Cmd = cmOK) and (LB.Focused < WL.Count) then begin
+        W := TWindow(WL[LB.Focused]);
+        W.Select;
+        Break;
+      end else if (Cmd = cmYes) and (LB.Focused < WL.Count) then begin
+        W := TWindow(WL[LB.Focused]);
+        Message(W, evCommand, cmClose, nil);
+        { Rebuild list after closing }
+        SL := nil;  { Old SL was freed by NewList }
+        BuildLists;
+        if SL.Count = 0 then Break;
+        Idx := LB.Focused;
+        if Idx >= SL.Count then Idx := SL.Count - 1;
+        LB.NewList(SL);
+        LB.FocusItem(Idx);
+      end else
+        Break;  { cmCancel or Esc }
+    until False;
+  finally
+    FreeAndNil(WL);
+    FreeAndNil(D);
+  end;
 end;
 
 procedure RegisterApp;
