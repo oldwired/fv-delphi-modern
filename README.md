@@ -98,6 +98,7 @@ The terminal uses **Ctrl+A** as the escape prefix (like GNU screen):
 | **Ctrl+A, M** | Toggle terminal mouse mode (passthrough/select) |
 | **Ctrl+C / Ctrl+Ins** | Copy terminal selection to clipboard |
 | **Ctrl+V / Shift+Ins** | Paste clipboard text to terminal process |
+| **Right click** | Copy selection, or paste when no selection |
 | **Shift+PageUp/Down** | Scroll through scrollback buffer |
 | **Mouse wheel** | Scroll through scrollback buffer |
 
@@ -110,7 +111,9 @@ After exiting capture mode with Ctrl+A:
 The terminal window title shows the current mouse mode:
 - `Mouse:Pass` forwards mouse to child apps that enable VT mouse reporting
 - `Mouse:Select` keeps mouse local for text selection/scrolling
-- Switching to `Mouse:Select` exits capture mode so local copy/scroll shortcuts work immediately
+- `Mouse:Select` keeps keyboard capture, so typing continues while mouse stays local
+- New terminal windows start in `Mouse:Select`; use `Ctrl+A, M` to switch to passthrough
+- Entering alternate screen (`?1049`/`?1047`/`?47`) auto-switches to `Mouse:Pass`, then restores previous mode on exit
 
 ### Features
 

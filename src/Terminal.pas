@@ -260,6 +260,7 @@ type
 
   TBellEvent = procedure of object;
   TTitleChangeEvent = procedure(const Title: string) of object;
+  TAlternateScreenEvent = procedure(Active: Boolean) of object;
 
   TTerminalParser = class
   private
@@ -276,6 +277,7 @@ type
     { Callbacks }
     FOnBell: TBellEvent;
     FOnTitleChange: TTitleChangeEvent;
+    FOnAlternateScreen: TAlternateScreenEvent;
 
     { UTF-8 decoding state }
     FUTF8Buffer: array[0..3] of Byte;
@@ -286,6 +288,7 @@ type
     FMouseButtonTracking: Boolean;    { ?1002 }
     FMouseAnyTracking: Boolean;       { ?1003 }
     FMouseSGRMode: Boolean;           { ?1006 }
+    FAlternateScreenActive: Boolean;
 
     procedure AddParam(Value: Integer);
     function GetParam(Index: Integer; Default: Integer = 0): Integer;
@@ -305,6 +308,7 @@ type
     procedure ExecutePrivateMode(Enable: Boolean);
     procedure ExecuteOSC;
     function GetMouseTrackingEnabled: Boolean;
+    procedure SetAlternateScreenActive(Active: Boolean);
 
   public
     constructor Create(ABuffer: TTerminalBuffer; APalette: TTerminalPalette);
@@ -322,8 +326,11 @@ type
     property MouseButtonTracking: Boolean read FMouseButtonTracking;
     property MouseAnyTracking: Boolean read FMouseAnyTracking;
     property MouseSGRMode: Boolean read FMouseSGRMode;
+    property AlternateScreenActive: Boolean read FAlternateScreenActive;
     property OnBell: TBellEvent read FOnBell write FOnBell;
     property OnTitleChange: TTitleChangeEvent read FOnTitleChange write FOnTitleChange;
+    property OnAlternateScreen: TAlternateScreenEvent
+      read FOnAlternateScreen write FOnAlternateScreen;
   end;
 
 {***************************************************************************}
@@ -364,10 +371,14 @@ type
     FTitle: string;
     FMousePassthroughEnabled: Boolean;
     FLastMouseButtonCode: Integer;
+    FAutoMousePassthroughOnAltScreen: Boolean;
+    FAltScreenForcedMouseMode: Boolean;
+    FMousePassthroughBeforeAltScreen: Boolean;
 
     procedure HandleTerminalData;
     procedure HandleBell;
     procedure HandleTitleChange(const NewTitle: string);
+    procedure HandleAlternateScreenChange(Active: Boolean);
     procedure HandleTerminalExit;
     procedure PostFVEvent(What, Command: Word; InfoPtr: Pointer);
     function TranslateKey(const Event: TEvent): TBytes;
@@ -446,6 +457,8 @@ type
     property ScrollbackPos: Integer read FScrollbackPos;
     property VisualBell: Boolean read FVisualBell write FVisualBell;
     property MousePassthroughEnabled: Boolean read FMousePassthroughEnabled write SetMousePassthroughEnabled;
+    property AutoMousePassthroughOnAltScreen: Boolean
+      read FAutoMousePassthroughOnAltScreen write FAutoMousePassthroughOnAltScreen;
     property OnTitleChange: TNotifyEvent read FOnTitleChange write FOnTitleChange;
     property LogFileName: string read FLogFileName;
     property Title: string read FTitle;
@@ -1573,6 +1586,7 @@ begin
   FMouseButtonTracking := False;
   FMouseAnyTracking := False;
   FMouseSGRMode := False;
+  FAlternateScreenActive := False;
   { Reset UTF-8 decoding state }
   FUTF8BufferLen := 0;
   FUTF8ExpectedLen := 0;
@@ -2194,8 +2208,14 @@ begin
         FMouseAnyTracking := Enable;
       1006: { SGR mouse mode }
         FMouseSGRMode := Enable;
+      47, 1047: { Alternate screen buffer (legacy/xterm) }
+        begin
+          SetAlternateScreenActive(Enable);
+          FBuffer.EraseScreen;
+        end;
       1049: { Alternate screen buffer }
         begin
+          SetAlternateScreenActive(Enable);
           if Enable then
           begin
             FBuffer.SaveCursor;
@@ -2209,6 +2229,14 @@ begin
         end;
     end;
   end;
+end;
+
+procedure TTerminalParser.SetAlternateScreenActive(Active: Boolean);
+begin
+  if FAlternateScreenActive = Active then Exit;
+  FAlternateScreenActive := Active;
+  if Assigned(FOnAlternateScreen) then
+    FOnAlternateScreen(Active);
 end;
 
 {***************************************************************************}
@@ -2228,6 +2256,7 @@ begin
   FParser := TTerminalParser.Create(FBuffer, FPalette);
   FParser.OnBell := HandleBell;
   FParser.OnTitleChange := HandleTitleChange;
+  FParser.OnAlternateScreen := HandleAlternateScreenChange;
   FConPTY := nil;
 
   FMode := tmNormal;
@@ -2245,8 +2274,11 @@ begin
   FVisualBellActive := False;
   FLogStream := nil;
   FTitle := '';
-  FMousePassthroughEnabled := True;
+  FMousePassthroughEnabled := False;  { Start in Mouse:Select mode }
   FLastMouseButtonCode := 3;
+  FAutoMousePassthroughOnAltScreen := True;
+  FAltScreenForcedMouseMode := False;
+  FMousePassthroughBeforeAltScreen := FMousePassthroughEnabled;
 end;
 
 constructor TTerminalView.CreateWithShell(var Bounds: TRect;
@@ -2292,6 +2324,11 @@ begin
   end;
 
   { Reset buffer }
+  if FAltScreenForcedMouseMode then
+  begin
+    SetMousePassthroughEnabled(FMousePassthroughBeforeAltScreen);
+    FAltScreenForcedMouseMode := False;
+  end;
   FBuffer.Reset;
   FParser.Reset;
   FScrollbackPos := 0;
@@ -2355,6 +2392,11 @@ end;
 
 procedure TTerminalView.HandleTerminalExit;
 begin
+  if FAltScreenForcedMouseMode then
+  begin
+    SetMousePassthroughEnabled(FMousePassthroughBeforeAltScreen);
+    FAltScreenForcedMouseMode := False;
+  end;
   FMode := tmNormal;
   if FShowExitMessage then
   begin
@@ -2438,9 +2480,6 @@ procedure TTerminalView.SetMousePassthroughEnabled(Enable: Boolean);
 begin
   if FMousePassthroughEnabled = Enable then Exit;
   FMousePassthroughEnabled := Enable;
-  { Selection mode should use local key handling (copy/paste, PgUp/PgDn). }
-  if not FMousePassthroughEnabled then
-    ExitCaptureMode;
   if Assigned(FOnTitleChange) then
     FOnTitleChange(Self);
 end;
@@ -2642,6 +2681,30 @@ begin
   begin
     if Event.What = evKeyDown then
     begin
+      { In Mouse:Select mode, keep typing in capture mode but allow
+        local clipboard shortcuts. Ctrl+C still goes to child when no
+        selection exists (normal terminal behavior). }
+      if not FMousePassthroughEnabled then
+      begin
+        case Event.KeyCode of
+          kbCtrlC, kbCtrlIns:
+            begin
+              if FSelectionMode <> smNone then
+              begin
+                CopySelection;
+                ClearEvent(Event);
+                Exit;
+              end;
+            end;
+          kbCtrlV, kbShiftIns:
+            begin
+              Paste;
+              ClearEvent(Event);
+              Exit;
+            end;
+        end;
+      end;
+
       { Check for escape sequence }
       if Event.KeyCode = FEscapeKey then
       begin
@@ -2757,6 +2820,20 @@ begin
         else if (Event.Buttons and mbScrollWheelDown) <> 0 then
         begin
           ScrollViewDown(3);
+          ClearEvent(Event);
+        end
+        else if (Event.Buttons and mbRightButton) <> 0 then
+        begin
+          { Modern terminal behavior:
+            - right-click copies current selection
+            - right-click with no selection pastes clipboard }
+          if FSelectionMode <> smNone then
+          begin
+            CopySelection;
+            ClearSelection;
+          end
+          else
+            Paste;
           ClearEvent(Event);
         end
         else if Event.Buttons = mbLeftButton then
@@ -2993,6 +3070,26 @@ begin
   FTitle := NewTitle;
   if Assigned(FOnTitleChange) then
     FOnTitleChange(Self);
+end;
+
+procedure TTerminalView.HandleAlternateScreenChange(Active: Boolean);
+begin
+  if not FAutoMousePassthroughOnAltScreen then Exit;
+
+  if Active then
+  begin
+    if not FAltScreenForcedMouseMode then
+    begin
+      FMousePassthroughBeforeAltScreen := FMousePassthroughEnabled;
+      FAltScreenForcedMouseMode := True;
+    end;
+    SetMousePassthroughEnabled(True);
+  end
+  else if FAltScreenForcedMouseMode then
+  begin
+    SetMousePassthroughEnabled(FMousePassthroughBeforeAltScreen);
+    FAltScreenForcedMouseMode := False;
+  end;
 end;
 
 procedure TTerminalView.DoVisualBell;
