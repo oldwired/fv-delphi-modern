@@ -226,6 +226,7 @@ type
     InfoPane: TFileInfoPane;    { File info display }
     WildCard: TWildStr;         { File filter pattern }
     Directory: string;          { Current directory }
+    FOptions: Word;             { fdOkButton / fdOpenButton / fdReplaceButton }
     constructor Create(AWildCard: TWildStr; const ATitle: string;
       AOptions: Word; AHistoryId: Byte); reintroduce; virtual;
     destructor Destroy; override;
@@ -2458,6 +2459,7 @@ begin
   inherited Create(R, ATitle);
   Options := Options or ofCentered;
 
+  FOptions := AOptions;
   WildCard := AWildCard;
   Directory := GetCurDir;
   if (Directory <> '') and (Directory[Length(Directory)] <> DirSeparator) then
@@ -2475,9 +2477,14 @@ begin
   FileName.Data := WildCard;
   Insert(FileName);
 
-  { Open button }
+  { Action button - text and command depend on options }
   R.Assign(55, 2, 65, 4);
-  Insert(TButton.Create(R, '~O~pen', cmFileOpen, bfDefault));
+  if AOptions and fdReplaceButton <> 0 then
+    Insert(TButton.Create(R, slReplace, cmFileReplace, bfDefault))
+  else if AOptions and fdOkButton <> 0 then
+    Insert(TButton.Create(R, slOk, cmFileOpen, bfDefault))
+  else
+    Insert(TButton.Create(R, slOpen, cmFileOpen, bfDefault));
 
   { Cancel button }
   R.Assign(66, 2, 75, 4);
@@ -2666,7 +2673,7 @@ begin
 
           cmFileOpen:
             begin
-              { Open button clicked - check if directory selected }
+              { Open/OK button clicked - check if directory selected }
               if NavigateToDirectory then
                 ClearEvent(Event)
               else
@@ -2674,6 +2681,18 @@ begin
                 { It's a file - close dialog }
                 ClearEvent(Event);
                 EndModal(cmFileOpen);
+              end;
+            end;
+
+          cmFileReplace:
+            begin
+              { Replace/Save button clicked }
+              if NavigateToDirectory then
+                ClearEvent(Event)
+              else
+              begin
+                ClearEvent(Event);
+                EndModal(cmFileReplace);
               end;
             end;
         end;
@@ -2725,7 +2744,7 @@ begin
   Result := inherited Valid(Command);
   if not Result then Exit;
 
-  if Command = cmFileOpen then
+  if (Command = cmFileOpen) or (Command = cmFileReplace) then
   begin
     GetFileName(T);
     if T = '' then
@@ -2775,9 +2794,15 @@ begin
     end
     else if not FileExists(T) then
     begin
-      { File doesn't exist }
-      MessageBox(^C'File not found:'^M + T, mfError + mfOkButton);
-      Result := False;
+      { In save/replace mode (fdOkButton or fdReplaceButton), allow new files.
+        In open mode (fdOpenButton), reject non-existing files. }
+      if FOptions and (fdOkButton or fdReplaceButton) <> 0 then
+        Result := True   { Allow saving to a new file }
+      else
+      begin
+        MessageBox(^C'File not found:'^M + T, mfError + mfOkButton);
+        Result := False;
+      end;
     end;
   end;
 end;
