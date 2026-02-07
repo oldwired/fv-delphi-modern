@@ -281,6 +281,11 @@ type
     FUTF8Buffer: array[0..3] of Byte;
     FUTF8BufferLen: Integer;
     FUTF8ExpectedLen: Integer;
+    { Mouse tracking modes requested by child app (DECSET/DECRST) }
+    FMouseX10Tracking: Boolean;       { ?1000 }
+    FMouseButtonTracking: Boolean;    { ?1002 }
+    FMouseAnyTracking: Boolean;       { ?1003 }
+    FMouseSGRMode: Boolean;           { ?1006 }
 
     procedure AddParam(Value: Integer);
     function GetParam(Index: Integer; Default: Integer = 0): Integer;
@@ -299,6 +304,7 @@ type
     procedure ExecuteSGR;
     procedure ExecutePrivateMode(Enable: Boolean);
     procedure ExecuteOSC;
+    function GetMouseTrackingEnabled: Boolean;
 
   public
     constructor Create(ABuffer: TTerminalBuffer; APalette: TTerminalPalette);
@@ -312,6 +318,10 @@ type
     property State: TParserState read FState;
     property Buffer: TTerminalBuffer read FBuffer;
     property Title: string read FTitle;
+    property MouseTrackingEnabled: Boolean read GetMouseTrackingEnabled;
+    property MouseButtonTracking: Boolean read FMouseButtonTracking;
+    property MouseAnyTracking: Boolean read FMouseAnyTracking;
+    property MouseSGRMode: Boolean read FMouseSGRMode;
     property OnBell: TBellEvent read FOnBell write FOnBell;
     property OnTitleChange: TTitleChangeEvent read FOnTitleChange write FOnTitleChange;
   end;
@@ -352,6 +362,8 @@ type
     { Callbacks }
     FOnTitleChange: TNotifyEvent;
     FTitle: string;
+    FMousePassthroughEnabled: Boolean;
+    FLastMouseButtonCode: Integer;
 
     procedure HandleTerminalData;
     procedure HandleBell;
@@ -359,6 +371,11 @@ type
     procedure HandleTerminalExit;
     procedure PostFVEvent(What, Command: Word; InfoPtr: Pointer);
     function TranslateKey(const Event: TEvent): TBytes;
+    procedure SetMousePassthroughEnabled(Enable: Boolean);
+    function ShouldForwardMouseToChild: Boolean;
+    function MouseButtonCodeFromButtons(Buttons: Byte): Integer;
+    function MouseModifierMask: Integer;
+    procedure SendMouseSGR(LocalX, LocalY, Cb: Integer; Released: Boolean);
     procedure RenderToDrawBuffer(var Buf: TDrawBuffer; Y: Integer);
     function IsInSelection(X, Y: Integer): Boolean;
     procedure NormalizeSelection(out StartPt, EndPt: TSelectionPoint);
@@ -408,6 +425,7 @@ type
     { Mode control }
     procedure EnterCaptureMode;
     procedure ExitCaptureMode;
+    procedure ToggleMousePassthrough;
 
     { IFVDataAware }
     function DataSize: Word; override;
@@ -427,6 +445,7 @@ type
     property ShowExitMessage: Boolean read FShowExitMessage write FShowExitMessage;
     property ScrollbackPos: Integer read FScrollbackPos;
     property VisualBell: Boolean read FVisualBell write FVisualBell;
+    property MousePassthroughEnabled: Boolean read FMousePassthroughEnabled write SetMousePassthroughEnabled;
     property OnTitleChange: TNotifyEvent read FOnTitleChange write FOnTitleChange;
     property LogFileName: string read FLogFileName;
     property Title: string read FTitle;
@@ -441,8 +460,10 @@ type
     FTerminal: TTerminalView;
     FScrollBar: TScrollBar;
     FInterior: TRect;
+    FBaseTitle: string;
     procedure UpdateScrollBar;
     procedure HandleTerminalTitleChange(Sender: TObject);
+    procedure RefreshWindowTitle;
 
   protected
     procedure HandleEvent(var Event: TEvent); override;
@@ -1548,6 +1569,10 @@ begin
   FIntermediateChars := '';
   FPrivateMarker := #0;
   FOSCBuffer := '';
+  FMouseX10Tracking := False;
+  FMouseButtonTracking := False;
+  FMouseAnyTracking := False;
+  FMouseSGRMode := False;
   { Reset UTF-8 decoding state }
   FUTF8BufferLen := 0;
   FUTF8ExpectedLen := 0;
@@ -2162,7 +2187,13 @@ begin
       25:   { DECTCEM - Text Cursor Enable Mode }
         FBuffer.CursorVisible := Enable;
       1000: { X11 mouse reporting }
-        ;
+        FMouseX10Tracking := Enable;
+      1002: { Button-event mouse reporting (drag) }
+        FMouseButtonTracking := Enable;
+      1003: { Any-event mouse reporting }
+        FMouseAnyTracking := Enable;
+      1006: { SGR mouse mode }
+        FMouseSGRMode := Enable;
       1049: { Alternate screen buffer }
         begin
           if Enable then
@@ -2214,6 +2245,8 @@ begin
   FVisualBellActive := False;
   FLogStream := nil;
   FTitle := '';
+  FMousePassthroughEnabled := True;
+  FLastMouseButtonCode := 3;
 end;
 
 constructor TTerminalView.CreateWithShell(var Bounds: TRect;
@@ -2394,6 +2427,72 @@ begin
   end;
 end;
 
+function TTerminalView.ShouldForwardMouseToChild: Boolean;
+begin
+  Result := FMousePassthroughEnabled and
+    (FConPTY <> nil) and FConPTY.IsRunning and
+    (FParser <> nil) and FParser.MouseTrackingEnabled and FParser.MouseSGRMode;
+end;
+
+procedure TTerminalView.SetMousePassthroughEnabled(Enable: Boolean);
+begin
+  if FMousePassthroughEnabled = Enable then Exit;
+  FMousePassthroughEnabled := Enable;
+  { Selection mode should use local key handling (copy/paste, PgUp/PgDn). }
+  if not FMousePassthroughEnabled then
+    ExitCaptureMode;
+  if Assigned(FOnTitleChange) then
+    FOnTitleChange(Self);
+end;
+
+procedure TTerminalView.ToggleMousePassthrough;
+begin
+  SetMousePassthroughEnabled(not FMousePassthroughEnabled);
+end;
+
+function TTerminalView.MouseButtonCodeFromButtons(Buttons: Byte): Integer;
+begin
+  if (Buttons and mbLeftButton) <> 0 then
+    Result := 0
+  else if (Buttons and mbMiddleButton) <> 0 then
+    Result := 1
+  else if (Buttons and mbRightButton) <> 0 then
+    Result := 2
+  else
+    Result := 3;
+end;
+
+function TTerminalView.MouseModifierMask: Integer;
+var
+  ShiftState: Byte;
+begin
+  Result := 0;
+  ShiftState := GetShiftState;
+  if (ShiftState and (kbLeftShift or kbRightShift)) <> 0 then
+    Result := Result or 4;
+  if (ShiftState and kbAltShift) <> 0 then
+    Result := Result or 8;
+  if (ShiftState and kbCtrlShift) <> 0 then
+    Result := Result or 16;
+end;
+
+procedure TTerminalView.SendMouseSGR(LocalX, LocalY, Cb: Integer; Released: Boolean);
+var
+  Suffix: Char;
+begin
+  if (FConPTY = nil) or not FConPTY.IsRunning then Exit;
+  if LocalX < 0 then LocalX := 0;
+  if LocalY < 0 then LocalY := 0;
+  if LocalX >= Size.X then LocalX := Size.X - 1;
+  if LocalY >= Size.Y then LocalY := Size.Y - 1;
+  if Released then
+    Suffix := 'm'
+  else
+    Suffix := 'M';
+  FConPTY.WriteString(#27'[<' + IntToStr(Cb) + ';' +
+    IntToStr(LocalX + 1) + ';' + IntToStr(LocalY + 1) + Suffix);
+end;
+
 procedure TTerminalView.RenderToDrawBuffer(var Buf: TDrawBuffer; Y: Integer);
 var
   X: Integer;
@@ -2421,6 +2520,11 @@ begin
     Buf[X].FG_RGB := 0;
     Buf[X].BG_RGB := 0;
   end;
+end;
+
+function TTerminalParser.GetMouseTrackingEnabled: Boolean;
+begin
+  Result := FMouseX10Tracking or FMouseButtonTracking or FMouseAnyTracking;
 end;
 
 function TTerminalView.IsInSelection(X, Y: Integer): Boolean;
@@ -2510,6 +2614,12 @@ procedure TTerminalView.HandleEvent(var Event: TEvent);
 var
   Local: TPoint;
   KeyData: TBytes;
+  ShiftDown: Boolean;
+  BtnCode: Integer;
+  Dragging: Boolean;
+  Cb: Integer;
+  KeyCh: Char;
+  IsMouseToggleKey: Boolean;
 begin
   { Handle terminal events first }
   if Event.What = evTerminal then
@@ -2555,6 +2665,23 @@ begin
 
       if FWaitingEscapeCommand then
       begin
+        IsMouseToggleKey := False;
+        KeyCh := Event.UnicodeChar;
+        if KeyCh = #0 then
+          KeyCh := Char(Lo(Event.KeyCode));
+        if CharInSet(UpCase(KeyCh), ['M']) then
+          IsMouseToggleKey := True
+        else if Event.ScanCode = Hi(kbAltM) then
+          IsMouseToggleKey := True;
+
+        if IsMouseToggleKey then
+        begin
+          FWaitingEscapeCommand := False;
+          ToggleMousePassthrough;
+          ClearEvent(Event);
+          Exit;
+        end;
+
         { This key is an FV command }
         FWaitingEscapeCommand := False;
         ExitCaptureMode;
@@ -2598,6 +2725,28 @@ begin
     evMouseDown:
       begin
         MakeLocal(Event.Where, Local);
+        ShiftDown := (GetShiftState and (kbLeftShift or kbRightShift)) <> 0;
+
+        if ShouldForwardMouseToChild and not ShiftDown then
+        begin
+          if FMode = tmNormal then
+            EnterCaptureMode;
+          if (Event.Buttons and mbScrollWheelUp) <> 0 then
+            SendMouseSGR(Local.X, Local.Y, 64 or MouseModifierMask, False)
+          else if (Event.Buttons and mbScrollWheelDown) <> 0 then
+            SendMouseSGR(Local.X, Local.Y, 65 or MouseModifierMask, False)
+          else
+          begin
+            BtnCode := MouseButtonCodeFromButtons(Event.Buttons);
+            if BtnCode <> 3 then
+            begin
+              FLastMouseButtonCode := BtnCode;
+              SendMouseSGR(Local.X, Local.Y, BtnCode or MouseModifierMask, False);
+            end;
+          end;
+          ClearEvent(Event);
+          Exit;
+        end;
 
         { Mouse wheel scrolling }
         if (Event.Buttons and mbScrollWheelUp) <> 0 then
@@ -2620,14 +2769,17 @@ begin
           else
           begin
             { Single click behavior:
-              - Running + normal mode: enter capture mode
-              - Running + capture mode: keep capture (Shift+Click starts selection)
+              - Mouse:Select mode: always start local selection
+              - Running + normal mode (Mouse:Pass): enter capture mode
+              - Running + capture mode (Mouse:Pass): keep capture (Shift+Click starts selection)
               - Not running: start selection }
-            if (FConPTY <> nil) and FConPTY.IsRunning then
+            if not FMousePassthroughEnabled then
+              StartSelection(Local.X, Local.Y)
+            else if (FConPTY <> nil) and FConPTY.IsRunning then
             begin
               if FMode = tmNormal then
                 EnterCaptureMode
-              else if (GetShiftState and (kbLeftShift or kbRightShift)) <> 0 then
+              else if ShiftDown then
                 StartSelection(Local.X, Local.Y);
             end
             else
@@ -2639,6 +2791,25 @@ begin
 
     evMouseMove:
       begin
+        ShiftDown := (GetShiftState and (kbLeftShift or kbRightShift)) <> 0;
+        if ShouldForwardMouseToChild and not ShiftDown then
+        begin
+          MakeLocal(Event.Where, Local);
+          BtnCode := MouseButtonCodeFromButtons(Event.Buttons);
+          Dragging := BtnCode <> 3;
+          if FParser.MouseAnyTracking or (FParser.MouseButtonTracking and Dragging) then
+          begin
+            if Dragging then
+              FLastMouseButtonCode := BtnCode
+            else
+              BtnCode := 3;
+            Cb := BtnCode or 32 or MouseModifierMask;
+            SendMouseSGR(Local.X, Local.Y, Cb, False);
+            ClearEvent(Event);
+            Exit;
+          end;
+        end;
+
         if FSelecting then
         begin
           MakeLocal(Event.Where, Local);
@@ -2650,6 +2821,19 @@ begin
 
     evMouseUp:
       begin
+        ShiftDown := (GetShiftState and (kbLeftShift or kbRightShift)) <> 0;
+        if ShouldForwardMouseToChild and not ShiftDown then
+        begin
+          MakeLocal(Event.Where, Local);
+          BtnCode := FLastMouseButtonCode;
+          if (BtnCode < 0) or (BtnCode > 3) then
+            BtnCode := 3;
+          SendMouseSGR(Local.X, Local.Y, BtnCode or MouseModifierMask, True);
+          FLastMouseButtonCode := 3;
+          ClearEvent(Event);
+          Exit;
+        end;
+
         if FSelecting then
         begin
           FSelecting := False;
@@ -2671,7 +2855,7 @@ begin
               ScrollViewDown(Size.Y - 1);
               ClearEvent(Event);
             end;
-          kbCtrlC:
+          kbCtrlC, kbCtrlIns:
             begin
               if FSelectionMode <> smNone then
               begin
@@ -2679,7 +2863,7 @@ begin
                 ClearEvent(Event);
               end;
             end;
-          kbCtrlV:
+          kbCtrlV, kbShiftIns:
             begin
               Paste;
               ClearEvent(Event);
@@ -3009,6 +3193,7 @@ begin
   inherited Create(Bounds, ATitle, wnNoNumber);
   Flags := wfMove or wfGrow or wfClose or wfZoom;
   GrowMode := gfGrowAll;
+  FBaseTitle := ATitle;
 
   { Create interior rect for terminal view (leave room for scrollbar) }
   GetExtent(FInterior);
@@ -3029,6 +3214,7 @@ begin
 
   { Ensure terminal has focus }
   FTerminal.Select;
+  RefreshWindowTitle;
 end;
 
 constructor TTerminalWindow.CreateWithShell(var Bounds: TRect;
@@ -3119,15 +3305,36 @@ begin
   FScrollBar.DrawView;  { Force redraw }
 end;
 
+procedure TTerminalWindow.RefreshWindowTitle;
+var
+  ModeText: string;
+  BaseText: string;
+begin
+  if (FTerminal <> nil) and FTerminal.MousePassthroughEnabled then
+    ModeText := 'Mouse:Pass'
+  else
+    ModeText := 'Mouse:Select';
+
+  BaseText := Trim(FBaseTitle);
+  if BaseText = '' then
+    BaseText := 'Terminal';
+
+  Title := BaseText + ' [' + ModeText + ' C-A,M]';
+  { Redraw frame/title and then child views to avoid blanking the terminal body. }
+  if Frame <> nil then
+    Frame.DrawView;
+  if FTerminal <> nil then
+    FTerminal.DrawView;
+  if FScrollBar <> nil then
+    FScrollBar.DrawView;
+end;
+
 procedure TTerminalWindow.HandleTerminalTitleChange(Sender: TObject);
 begin
-  { Update window title when terminal receives OSC title change }
+  { Update window title when child title OR local mode changes }
   if (FTerminal <> nil) and (FTerminal.Title <> '') then
-  begin
-    Title := FTerminal.Title;
-    if Frame <> nil then
-      Frame.DrawView;  { Redraw frame to show new title }
-  end;
+    FBaseTitle := FTerminal.Title;
+  RefreshWindowTitle;
 end;
 
 procedure TTerminalWindow.SizeLimits(var Min, Max: TPoint);

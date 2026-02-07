@@ -95,6 +95,9 @@ The terminal uses **Ctrl+A** as the escape prefix (like GNU screen):
 |--------------|--------|
 | **Ctrl+A, then any key** | Exit capture mode, send key to outer app |
 | **Ctrl+A, Ctrl+A** | Send literal Ctrl+A to child process |
+| **Ctrl+A, M** | Toggle terminal mouse mode (passthrough/select) |
+| **Ctrl+C / Ctrl+Ins** | Copy terminal selection to clipboard |
+| **Ctrl+V / Shift+Ins** | Paste clipboard text to terminal process |
 | **Shift+PageUp/Down** | Scroll through scrollback buffer |
 | **Mouse wheel** | Scroll through scrollback buffer |
 
@@ -104,12 +107,17 @@ After exiting capture mode with Ctrl+A:
 - **Click** on the terminal to re-enter capture mode
 - Press **Enter** or **Esc** to re-enter capture mode
 
+The terminal window title shows the current mouse mode:
+- `Mouse:Pass` forwards mouse to child apps that enable VT mouse reporting
+- `Mouse:Select` keeps mouse local for text selection/scrolling
+- Switching to `Mouse:Select` exits capture mode so local copy/scroll shortcuts work immediately
+
 ### Features
 
 - VT100/ANSI escape sequence support
 - Scrollback buffer with configurable size
 - Text selection with mouse (double-click for word selection)
-- Copy/paste support (Ctrl+C/Ctrl+V when text selected)
+- Copy/paste support (Ctrl+C/Ctrl+Ins copy selection, Ctrl+V/Shift+Ins paste)
 - Visual bell
 - Window title from OSC sequences
 - Session logging

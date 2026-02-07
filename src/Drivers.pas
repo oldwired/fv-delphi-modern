@@ -412,6 +412,12 @@ var
   { Resize detection }
   LastScreenWidth: Word;
   LastScreenHeight: Word;
+  { Pending VT input sequence (used for SGR mouse parsing from key stream) }
+  VTPendingSeq: string;
+  VTPendingTick: Cardinal;
+
+const
+  VTMouseSeqTimeoutMs = 40;
 
 function GetDosTicks: LongInt;
 begin
@@ -693,6 +699,217 @@ begin
   if GetKeyState(VK_INSERT) and 1 <> 0 then Result := Result or kbInsState;
 end;
 
+procedure SetVTMouseTracking(Enable: Boolean);
+const
+  CSI = #27'[';
+var
+  Seq: string;
+  Written: DWORD;
+begin
+  if Enable then
+    Seq := CSI + '?1000h' + CSI + '?1002h' + CSI + '?1006h'
+  else
+    Seq := CSI + '?1006l' + CSI + '?1003l' + CSI + '?1002l' + CSI + '?1000l';
+
+  WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), PChar(Seq), Length(Seq), Written, nil);
+end;
+
+function MakeKeyEventFromChar(Ch: Char; out Event: TEvent): Boolean;
+begin
+  FillChar(Event, SizeOf(Event), 0);
+  Event.What := evKeyDown;
+  if Ch = #27 then
+    Event.KeyCode := kbEsc
+  else if Ord(Ch) <= 255 then
+    Event.KeyCode := Ord(Ch)
+  else
+    Event.KeyCode := 0;
+  Event.CharCode := AnsiChar(Lo(Event.KeyCode));
+  Event.ScanCode := Hi(Event.KeyCode);
+  Event.UnicodeChar := Ch;
+  Result := True;
+end;
+
+procedure QueueCharsAsKeyEvents(const S: string);
+var
+  I: Integer;
+  Ev: TEvent;
+begin
+  for I := 1 to Length(S) do
+  begin
+    MakeKeyEventFromChar(S[I], Ev);
+    PutEventInQueue(Ev);
+  end;
+end;
+
+procedure ApplyVtMouseState(const Event: TEvent);
+begin
+  MouseWhere := Event.Where;
+  LastWhere := Event.Where;
+  case Event.What of
+    evMouseDown:
+      begin
+        if (Event.Buttons and (mbScrollWheelUp or mbScrollWheelDown)) = 0 then
+        begin
+          LastButtons := Event.Buttons and $07;
+          DownButtons := LastButtons;
+          DownWhere := Event.Where;
+          DownTicks := GetDosTicks;
+          AutoTicks := GetDosTicks;
+          if AutoTicks = 0 then AutoTicks := 1;
+          AutoDelay := RepeatDelay;
+        end;
+      end;
+    evMouseUp:
+      begin
+        LastButtons := Event.Buttons and $07;
+        AutoTicks := 0;
+      end;
+    evMouseMove:
+      LastButtons := Event.Buttons and $07;
+  end;
+end;
+
+procedure PullVTCharsFromConsole(var Seq: string);
+var
+  InputRec: TInputRecord;
+  NumRead: DWORD;
+  Ch: Char;
+begin
+  while Length(Seq) < 64 do
+  begin
+    if not PeekConsoleInputW(ConsoleInput, InputRec, 1, NumRead) or (NumRead = 0) then
+      Break;
+    if InputRec.EventType <> KEY_EVENT then
+      Break;
+
+    if not InputRec.Event.KeyEvent.bKeyDown then
+    begin
+      ReadConsoleInputW(ConsoleInput, InputRec, 1, NumRead);
+      Continue;
+    end;
+
+    Ch := InputRec.Event.KeyEvent.UnicodeChar;
+    if Ch = #0 then
+      Break;
+
+    ReadConsoleInputW(ConsoleInput, InputRec, 1, NumRead);
+    Seq := Seq + Ch;
+    if (Ch = 'M') or (Ch = 'm') then
+      Break;
+  end;
+end;
+
+type
+  TVTParseResult = (vprNoMatch, vprNeedMore, vprMatched);
+
+function TryParseVTSGRMouse(const Seq: string; out Consumed: Integer;
+  out Event: TEvent): TVTParseResult;
+var
+  P, L: Integer;
+  Cb, Cx, Cy: Integer;
+  FinalCh: Char;
+  function ParseUInt(out V: Integer): Boolean;
+  begin
+    V := 0;
+    Result := False;
+    while (P <= L) and CharInSet(Seq[P], ['0'..'9']) do
+    begin
+      V := (V * 10) + (Ord(Seq[P]) - Ord('0'));
+      Inc(P);
+      Result := True;
+    end;
+  end;
+  function BaseButtonsFromCb(Value: Integer): Byte;
+  begin
+    case (Value and 3) of
+      0: Result := mbLeftButton;
+      1: Result := mbMiddleButton;
+      2: Result := mbRightButton;
+    else
+      Result := 0;
+    end;
+  end;
+begin
+  FillChar(Event, SizeOf(Event), 0);
+  Consumed := 0;
+  L := Length(Seq);
+  if L = 0 then
+    Exit(vprNoMatch);
+
+  if (L < 3) and (Copy(Seq, 1, L) = Copy(#27'[<', 1, L)) then
+    Exit(vprNeedMore);
+
+  if (L < 3) or (Seq[1] <> #27) or (Seq[2] <> '[') or (Seq[3] <> '<') then
+    Exit(vprNoMatch);
+
+  P := 4;
+  if P > L then Exit(vprNeedMore);
+  if not ParseUInt(Cb) then
+  begin
+    if P > L then Exit(vprNeedMore);
+    Exit(vprNoMatch);
+  end;
+  if P > L then Exit(vprNeedMore);
+  if Seq[P] <> ';' then Exit(vprNoMatch);
+  Inc(P);
+
+  if P > L then Exit(vprNeedMore);
+  if not ParseUInt(Cx) then
+  begin
+    if P > L then Exit(vprNeedMore);
+    Exit(vprNoMatch);
+  end;
+  if P > L then Exit(vprNeedMore);
+  if Seq[P] <> ';' then Exit(vprNoMatch);
+  Inc(P);
+
+  if P > L then Exit(vprNeedMore);
+  if not ParseUInt(Cy) then
+  begin
+    if P > L then Exit(vprNeedMore);
+    Exit(vprNoMatch);
+  end;
+  if P > L then Exit(vprNeedMore);
+  FinalCh := Seq[P];
+  if not CharInSet(FinalCh, ['M', 'm']) then
+    Exit(vprNoMatch);
+
+  Event.What := evMouseDown;
+  Event.Double := False;
+  Event.Where.X := Cx - 1;
+  Event.Where.Y := Cy - 1;
+  if Event.Where.X < 0 then Event.Where.X := 0;
+  if Event.Where.Y < 0 then Event.Where.Y := 0;
+
+  if (Cb and 64) <> 0 then
+  begin
+    if (Cb and 1) = 0 then
+      Event.Buttons := mbScrollWheelUp
+    else
+      Event.Buttons := mbScrollWheelDown;
+    Event.What := evMouseDown;
+  end
+  else if FinalCh = 'm' then
+  begin
+    Event.Buttons := 0;
+    Event.What := evMouseUp;
+  end
+  else if (Cb and 32) <> 0 then
+  begin
+    Event.Buttons := BaseButtonsFromCb(Cb);
+    Event.What := evMouseMove;
+  end
+  else
+  begin
+    Event.Buttons := BaseButtonsFromCb(Cb);
+    Event.What := evMouseDown;
+  end;
+
+  Consumed := P;
+  Result := vprMatched;
+end;
+
 procedure GetKeyEvent(var Event: TEvent);
 var
   InputRec: TInputRecord;
@@ -702,9 +919,39 @@ var
   VKey: Word;
   Ctrl, Alt, Shift: Boolean;
   UChar: Char;
+  Seq: string;
+  ParsedEvent: TEvent;
+  ParseResult: TVTParseResult;
+  Consumed: Integer;
 begin
   Event.What := evNothing;
   if (ConsoleInput = 0) or (ConsoleInput = INVALID_HANDLE_VALUE) then begin
+    Exit;
+  end;
+
+  if VTPendingSeq <> '' then
+  begin
+    PullVTCharsFromConsole(VTPendingSeq);
+    ParseResult := TryParseVTSGRMouse(VTPendingSeq, Consumed, ParsedEvent);
+    case ParseResult of
+      vprMatched:
+        begin
+          if Consumed < Length(VTPendingSeq) then
+            QueueCharsAsKeyEvents(Copy(VTPendingSeq, Consumed + 1, MaxInt));
+          VTPendingSeq := '';
+          ApplyVtMouseState(ParsedEvent);
+          Event := ParsedEvent;
+          Exit;
+        end;
+      vprNeedMore:
+        if Cardinal(GetTickCount - VTPendingTick) <= VTMouseSeqTimeoutMs then
+          Exit;
+    end;
+
+    MakeKeyEventFromChar(VTPendingSeq[1], Event);
+    if Length(VTPendingSeq) > 1 then
+      QueueCharsAsKeyEvents(Copy(VTPendingSeq, 2, MaxInt));
+    VTPendingSeq := '';
     Exit;
   end;
 
@@ -722,6 +969,36 @@ begin
 
       { Get the Unicode character }
       UChar := InputRec.Event.KeyEvent.UnicodeChar;
+
+      { Parse SGR mouse sequences arriving as VT input chars:
+        ESC [ < Cb ; Cx ; Cy (M|m) }
+      if UChar = #27 then
+      begin
+        Seq := #27;
+        PullVTCharsFromConsole(Seq);
+        ParseResult := TryParseVTSGRMouse(Seq, Consumed, ParsedEvent);
+        case ParseResult of
+          vprMatched:
+            begin
+              if Consumed < Length(Seq) then
+                QueueCharsAsKeyEvents(Copy(Seq, Consumed + 1, MaxInt));
+              ApplyVtMouseState(ParsedEvent);
+              Event := ParsedEvent;
+              Exit;
+            end;
+          vprNeedMore:
+            begin
+              VTPendingSeq := Seq;
+              VTPendingTick := GetTickCount;
+              Exit;
+            end;
+        end;
+
+        if Length(Seq) > 1 then
+          QueueCharsAsKeyEvents(Copy(Seq, 2, MaxInt));
+        MakeKeyEventFromChar(#27, Event);
+        Exit;
+      end;
 
       { Handle surrogate pairs (emoji input from paste or emoji picker) }
       { Windows sends high surrogate ($D800-$DBFF) followed by low surrogate ($DC00-$DFFF) }
@@ -1000,12 +1277,16 @@ begin
     MouseWhere.Y := 0;
     LastWhere := MouseWhere;
   end;
+  VTPendingSeq := '';
+  VTPendingTick := 0;
+  SetVTMouseTracking(True);
   EventsInitialized := True;
 end;
 
 procedure DoneEvents;
 begin
   if not EventsInitialized then Exit;
+  SetVTMouseTracking(False);
   MouseEvents := False;
   EventsInitialized := False;
 end;
