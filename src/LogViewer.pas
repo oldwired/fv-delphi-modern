@@ -37,6 +37,9 @@ type
     function GetVisibleCount: Integer;
     function GetFilteredEntry(Index: Integer): TLogEntry;
     procedure UpdateScrollBar;
+  protected
+    property TopLine: Integer read FTopLine;
+    property FilteredEntry[Index: Integer]: TLogEntry read GetFilteredEntry;
   public
     constructor Create(var Bounds: TRect; AMaxLines: Integer;
       AVScrollBar: TScrollBar); reintroduce; virtual;
