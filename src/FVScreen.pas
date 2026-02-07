@@ -861,79 +861,94 @@ end;
 procedure TScreenBuffer.EraseStaleSixelRegions;
 var
   Prev: TSixelRegion;
-  X, Y: Integer;
+  X, Y, I, J: Integer;
   StartX, ClampedW: Integer;
   IsStale: Boolean;
   StillActive: Boolean;
   Cur: TSixelRegion;
+  ErasedIndices: TList<Integer>;
 begin
   { For each previous Sixel region, check if it's still covered by a current
     region at the same position. If not, the cells at the old position need
-    to be force-redrawn so Phase 2 overwrites the stale Sixel pixels. }
-  for Prev in FSixelPrevRegions do
-  begin
-    IsStale := True;
-    for Cur in FSixelRegions do
+    to be force-redrawn so Phase 2 overwrites the stale Sixel pixels.
+    Erased regions are removed from FSixelPrevRegions so they are not
+    re-erased on subsequent frames (which causes visible flicker). }
+  ErasedIndices := TList<Integer>.Create;
+  try
+    for I := 0 to FSixelPrevRegions.Count - 1 do
     begin
-      if (Cur.ScreenX = Prev.ScreenX) and (Cur.ScreenY = Prev.ScreenY) and
-         (Cur.CellW = Prev.CellW) and (Cur.CellH = Prev.CellH) then
+      Prev := FSixelPrevRegions[I];
+      IsStale := True;
+      for Cur in FSixelRegions do
       begin
-        IsStale := False;
-        Break;
+        if (Cur.ScreenX = Prev.ScreenX) and (Cur.ScreenY = Prev.ScreenY) and
+           (Cur.CellW = Prev.CellW) and (Cur.CellH = Prev.CellH) then
+        begin
+          IsStale := False;
+          Break;
+        end;
       end;
-    end;
 
-    if IsStale then
-    begin
-      { On idle frames (no new regions registered), the old region may still
-        be active - Draw just wasn't called. Check if ANY cell in the region
-        still has a placeholder. Previously only checked the top-left cell,
-        which failed when a menu/window occluded that corner. }
-      if (FSixelRegions.Count = 0) then
+      if IsStale then
       begin
-        StillActive := False;
+        { On idle frames (no new regions registered), the old region may still
+          be active - Draw just wasn't called. Check if ANY cell in the region
+          still has a placeholder. Previously only checked the top-left cell,
+          which failed when a menu/window occluded that corner. }
+        if (FSixelRegions.Count = 0) then
+        begin
+          StillActive := False;
+          for Y := Prev.ScreenY to Prev.ScreenY + Prev.CellH - 1 do
+          begin
+            for X := Prev.ScreenX to Prev.ScreenX + Prev.CellW - 1 do
+              if (Y >= 0) and (Y < FHeight) and (X >= 0) and (X < FWidth) and
+                 (FCells[Y, X].Ch = SixelPlaceholder) then
+              begin
+                StillActive := True;
+                Break;
+              end;
+            if StillActive then Break;
+          end;
+          if StillActive then Continue;
+        end;
+
+        { Erase the old Sixel region with ECH so terminal clears pixel data.
+          Clamp X coordinates to screen bounds - negative values produce
+          malformed VT sequences that corrupt the terminal. }
+        WriteVT(VT_CSI + '0m');
         for Y := Prev.ScreenY to Prev.ScreenY + Prev.CellH - 1 do
         begin
+          if (Y < 0) or (Y >= FHeight) then Continue;
+          StartX := Prev.ScreenX;
+          ClampedW := Prev.CellW;
+          { Clamp left edge to screen boundary }
+          if StartX < 0 then
+          begin
+            ClampedW := ClampedW + StartX;  { Reduce width by off-screen amount }
+            StartX := 0;
+          end;
+          { Clamp right edge to screen boundary }
+          if StartX + ClampedW > FWidth then
+            ClampedW := FWidth - StartX;
+          if (StartX >= FWidth) or (ClampedW <= 0) then Continue;
+          MoveCursorVT(StartX, Y);
+          WriteVT(VT_CSI + IntToStr(ClampedW) + 'X');
+        end;
+        { Force Phase 2 to redraw these cells with actual content }
+        for Y := Prev.ScreenY to Prev.ScreenY + Prev.CellH - 1 do
           for X := Prev.ScreenX to Prev.ScreenX + Prev.CellW - 1 do
-            if (Y >= 0) and (Y < FHeight) and (X >= 0) and (X < FWidth) and
-               (FCells[Y, X].Ch = SixelPlaceholder) then
-            begin
-              StillActive := True;
-              Break;
-            end;
-          if StillActive then Break;
-        end;
-        if StillActive then Continue;
-      end;
+            if (Y >= 0) and (Y < FHeight) and (X >= 0) and (X < FWidth) then
+              FOldCells[Y, X].Ch := #0;
 
-      { Erase the old Sixel region with ECH so terminal clears pixel data.
-        Clamp X coordinates to screen bounds - negative values produce
-        malformed VT sequences that corrupt the terminal. }
-      WriteVT(VT_CSI + '0m');
-      for Y := Prev.ScreenY to Prev.ScreenY + Prev.CellH - 1 do
-      begin
-        if (Y < 0) or (Y >= FHeight) then Continue;
-        StartX := Prev.ScreenX;
-        ClampedW := Prev.CellW;
-        { Clamp left edge to screen boundary }
-        if StartX < 0 then
-        begin
-          ClampedW := ClampedW + StartX;  { Reduce width by off-screen amount }
-          StartX := 0;
-        end;
-        { Clamp right edge to screen boundary }
-        if StartX + ClampedW > FWidth then
-          ClampedW := FWidth - StartX;
-        if (StartX >= FWidth) or (ClampedW <= 0) then Continue;
-        MoveCursorVT(StartX, Y);
-        WriteVT(VT_CSI + IntToStr(ClampedW) + 'X');
+        ErasedIndices.Add(I);
       end;
-      { Force Phase 2 to redraw these cells with actual content }
-      for Y := Prev.ScreenY to Prev.ScreenY + Prev.CellH - 1 do
-        for X := Prev.ScreenX to Prev.ScreenX + Prev.CellW - 1 do
-          if (Y >= 0) and (Y < FHeight) and (X >= 0) and (X < FWidth) then
-            FOldCells[Y, X].Ch := #0;
     end;
+
+    { Remove erased regions from prev list (reverse order for stable indices) }
+    for J := ErasedIndices.Count - 1 downto 0 do
+      FSixelPrevRegions.Delete(ErasedIndices[J]);
+  finally
+    ErasedIndices.Free;
   end;
 end;
 
