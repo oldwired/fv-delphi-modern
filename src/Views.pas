@@ -214,6 +214,10 @@ type
     procedure CalcBounds(var Bounds: TRect; Delta: TPoint); virtual;
     procedure WriteBuf(X, Y, W, H: Integer; var Buf);
     procedure WriteLine(X, Y, W, H: Integer; var Buf);
+    procedure do_WriteView(x1, x2, y: Integer; BufPtr: PDrawBuffer; RowStart: Integer);
+    procedure do_writeViewRec1(x1, x2: Integer; P: TView; ShadowCounter: Integer);
+    procedure do_writeViewRec2(x1, x2: Integer; P: TView; ShadowCounter: Integer);
+    procedure WriteSpanToVideoBuf(x1, x2: Integer; ShadowCounter: Integer);
     procedure MakeLocal(Source: TPoint; var Dest: TPoint);
     procedure MakeGlobal(Source: TPoint; var Dest: TPoint);
     procedure WriteStr(X, Y: Integer; const Str: string; Color: Byte);
@@ -407,6 +411,12 @@ uses
 
 var
   OwnerGroup: TGroup;
+
+  { Static variables for Z-order aware WriteBuf }
+  WVBuf: PDrawBuffer;       { Source draw buffer (pointer to current row) }
+  WVBufOffset: Integer;     { X offset into source buffer for current span }
+  WVY: Integer;             { Current Y coordinate (transformed to parent space) }
+  WVTarget: TView;          { The view whose data is being written }
 
 { Helper functions }
 
@@ -1116,113 +1126,260 @@ begin
   if (G and gfGrowHiY) <> 0 then Grow(Bounds.B.Y);
 end;
 
-procedure TView.WriteBuf(X, Y, W, H: Integer; var Buf);
+{ WriteSpanToVideoBuf - writes a horizontal span from the source draw buffer
+  to the screen buffers (VideoBuf, UnicodeCharBuf, FGRGBBuf, BGRGBBuf).
+  x1, x2 are in absolute screen coordinates. ShadowCounter > 0 means the
+  span is under a shadow and should use ShadowAttr. }
+procedure TView.WriteSpanToVideoBuf(x1, x2: Integer; ShadowCounter: Integer);
 var
-  I, J: Integer;
-  Target: PWord;
-  GX, GY: Integer;
-  LocalY: Integer;
-  V: TView;
-  CopyWidth: Integer;
-  BufOffset: Integer;
-  Clipped: Boolean;
-  ClipRight: Integer;
-  ClipLeft, ClipTop, ClipBottom: Integer;
-  XOffset: Integer;
+  J: Integer;
+  SrcIdx: Integer;
   ScreenOffset: Integer;
-  DrawBuf: PDrawBuffer;
   Cell: TDrawCell;
   LegacyWord: Word;
   Ch: Char;
+  Target: PWord;
+  Attr: Byte;
 begin
-  if (State and sfExposed) <> 0 then begin
-    if (W <= 0) or (H <= 0) then Exit;
-    DrawBuf := @Buf;
-    for I := 0 to H - 1 do begin
-      if (Y + I >= 0) and (Y + I < Size.Y) then begin
-        { Start with local coordinates relative to parent }
-        LocalY := Y + I;
-        GY := Origin.Y + LocalY;
-        GX := Origin.X + X;
-        CopyWidth := W;
-        XOffset := 0;
-        Clipped := False;
+  { Clip to screen bounds }
+  if x1 < 0 then x1 := 0;
+  if x2 > FVScreen.ScreenWidth then x2 := FVScreen.ScreenWidth;
+  if (x1 >= x2) then Exit;
+  if (WVY < 0) or (WVY >= FVScreen.ScreenHeight) then Exit;
 
-        { Walk up the owner chain, checking clip at each level }
-        V := Owner;
-        while V <> nil do begin
-          ClipTop := TGroup(V).Clip.A.Y;
-          ClipBottom := TGroup(V).Clip.B.Y;
-          ClipLeft := TGroup(V).Clip.A.X;
-          ClipRight := TGroup(V).Clip.B.X;
+  ScreenOffset := WVY * FVScreen.ScreenWidth + x1;
+  Target := @VideoBuf^[ScreenOffset];
 
-          { Check vertical clipping }
-          if (GY < ClipTop) or (GY >= ClipBottom) then begin
-            Clipped := True;
-            Break;
-          end;
-          { Horizontal clipping - left edge }
-          if GX < ClipLeft then begin
-            XOffset := XOffset + (ClipLeft - GX);
-            CopyWidth := CopyWidth - (ClipLeft - GX);
-            GX := ClipLeft;
-          end;
-          { Horizontal clipping - right edge }
-          if GX + CopyWidth > ClipRight then
-            CopyWidth := ClipRight - GX;
-          { Check if completely clipped }
-          if CopyWidth <= 0 then begin
-            Clipped := True;
-            Break;
-          end;
-          Inc(GY, V.Origin.Y);
-          Inc(GX, V.Origin.X);
-          V := V.Owner;
-        end;
+  for J := x1 to x2 - 1 do begin
+    SrcIdx := J - WVBufOffset;
+    if (SrcIdx < 0) or (SrcIdx >= MaxViewWidth) then begin
+      Inc(Target);
+      Continue;
+    end;
+    Cell := WVBuf^[SrcIdx];
 
-        if not Clipped then begin
-          if (GY >= 0) and (GY < FVScreen.ScreenHeight) and
-             (GX >= 0) and (GX < FVScreen.ScreenWidth) then begin
-            BufOffset := I * W + XOffset;
-            if BufOffset >= MaxViewWidth then Continue; { Prevent buffer overrun }
-            Target := @VideoBuf^[GY * FVScreen.ScreenWidth + GX];
-            ScreenOffset := GY * FVScreen.ScreenWidth + GX;
-            CopyWidth := Min(CopyWidth, FVScreen.ScreenWidth - GX);
-            if CopyWidth > 0 then begin
-              { Copy from TDrawBuffer to legacy VideoBuf and UnicodeCharBuf }
-              for J := 0 to CopyWidth - 1 do begin
-                if BufOffset + J >= MaxViewWidth then Break;
-                Cell := DrawBuf^[BufOffset + J];
-                { Get first character from cell (or space if empty) }
-                if Length(Cell.Ch) > 0 then
-                  Ch := Cell.Ch[1]
-                else
-                  Ch := ' ';
-                { Build legacy word: high byte = attr, low byte = char (capped to 255) }
-                if Ord(Ch) > 255 then
-                  LegacyWord := (Cell.Attr shl 8) or Ord(' ')
-                else
-                  LegacyWord := (Cell.Attr shl 8) or Ord(Ch);
-                Target^ := LegacyWord;
-                Inc(Target);
-                { Copy full Unicode string to screen buffer (supports emoji/surrogate pairs) }
-                if ScreenOffset + J < Length(UnicodeCharBuf) then begin
-                  if Cell.Ch <> '' then
-                    UnicodeCharBuf[ScreenOffset + J] := Cell.Ch
-                  else
-                    UnicodeCharBuf[ScreenOffset + J] := ' ';
-                end;
-                { Copy RGB overlay values to parallel buffers }
-                if ScreenOffset + J < Length(FVScreen.FGRGBBuf) then begin
-                  FVScreen.FGRGBBuf[ScreenOffset + J] := Cell.FG_RGB;
-                  FVScreen.BGRGBBuf[ScreenOffset + J] := Cell.BG_RGB;
-                end;
-              end;
-            end;
-          end;
-        end;
+    if ShadowCounter > 0 then
+      Attr := ShadowAttr
+    else
+      Attr := Cell.Attr;
+
+    { Get first character from cell (or space if empty) }
+    if Length(Cell.Ch) > 0 then
+      Ch := Cell.Ch[1]
+    else
+      Ch := ' ';
+    { Build legacy word: high byte = attr, low byte = char (capped to 255) }
+    if Ord(Ch) > 255 then
+      LegacyWord := (Attr shl 8) or Ord(' ')
+    else
+      LegacyWord := (Attr shl 8) or Ord(Ch);
+    Target^ := LegacyWord;
+    Inc(Target);
+    { Copy full Unicode string to screen buffer }
+    if ScreenOffset + (J - x1) < Length(UnicodeCharBuf) then begin
+      if Cell.Ch <> '' then
+        UnicodeCharBuf[ScreenOffset + (J - x1)] := Cell.Ch
+      else
+        UnicodeCharBuf[ScreenOffset + (J - x1)] := ' ';
+    end;
+    { Copy RGB overlay values to parallel buffers }
+    if ScreenOffset + (J - x1) < Length(FVScreen.FGRGBBuf) then begin
+      if ShadowCounter > 0 then begin
+        FVScreen.FGRGBBuf[ScreenOffset + (J - x1)] := 0;
+        FVScreen.BGRGBBuf[ScreenOffset + (J - x1)] := 0;
+      end else begin
+        FVScreen.FGRGBBuf[ScreenOffset + (J - x1)] := Cell.FG_RGB;
+        FVScreen.BGRGBBuf[ScreenOffset + (J - x1)] := Cell.BG_RGB;
       end;
     end;
+  end;
+end;
+
+{ do_writeViewRec2 - transforms coordinates from child space to parent space,
+  clips against parent's Clip rect, then calls do_writeViewRec1 to clip
+  against siblings above this view. When Owner is nil (top level), writes
+  directly to the screen buffer. }
+procedure TView.do_writeViewRec2(x1, x2: Integer; P: TView; ShadowCounter: Integer);
+var
+  SavedBufOffset: Integer;
+  SavedY: Integer;
+  SavedTarget: TView;
+  dx: Integer;
+  G: TGroup;
+begin
+  G := P.Owner;
+  if ((P.State and sfVisible) = 0) or (G = nil) then begin
+    { Top level reached (no owner) or view not visible }
+    if ((P.State and sfVisible) <> 0) and (G = nil) then
+      WriteSpanToVideoBuf(x1, x2, ShadowCounter);
+    Exit;
+  end;
+
+  { Save statics for recursive re-entrance }
+  SavedBufOffset := WVBufOffset;
+  SavedY := WVY;
+  SavedTarget := WVTarget;
+
+  { Transform to parent coordinate space }
+  Inc(WVY, P.Origin.Y);
+  dx := P.Origin.X;
+  Inc(x1, dx);
+  Inc(x2, dx);
+  Inc(WVBufOffset, dx);
+  WVTarget := P;
+
+  { Clip against parent's clip rectangle }
+  if (WVY >= G.Clip.A.Y) and (WVY < G.Clip.B.Y) then begin
+    if x1 < G.Clip.A.X then
+      x1 := G.Clip.A.X;
+    if x2 > G.Clip.B.X then
+      x2 := G.Clip.B.X;
+    if x1 < x2 then begin
+      { Clip against siblings above this view, then ascend }
+      { In Delphi convention: Last = top. Starting from WVTarget, walking
+        Next visits views above it (until wrapping past Last to First).
+        Sentinel = G.First: when reached, all above-siblings processed. }
+      do_writeViewRec1(x1, x2, WVTarget, ShadowCounter);
+    end;
+  end;
+
+  { Restore statics }
+  WVBufOffset := SavedBufOffset;
+  WVY := SavedY;
+  WVTarget := SavedTarget;
+end;
+
+{ do_writeViewRec1 - walks siblings above WVTarget within the parent group,
+  clipping the span [x1..x2) against each visible sibling that overlaps.
+  Uses interval subtraction: splits the span when partially occluded,
+  recursing for the uncovered fragment.
+
+  Delphi Z-order: Last = top (front), First = bottom (back).
+  Walk starts from WVTarget (passed as P), advancing via P.Next.
+  Views from WVTarget.Next through G.Last are above WVTarget.
+  When P reaches G.First (= G.Last.Next), we've passed all above-siblings. }
+procedure TView.do_writeViewRec1(x1, x2: Integer; P: TView; ShadowCounter: Integer);
+var
+  G: TGroup;
+  dx: Integer;
+  Sentinel: TView;
+begin
+  G := WVTarget.Owner;
+  if (G = nil) or (G.Last = nil) then begin
+    { No siblings - write directly }
+    if G <> nil then begin
+      if G.Owner <> nil then
+        do_writeViewRec2(x1, x2, G, ShadowCounter)
+      else
+        WriteSpanToVideoBuf(x1, x2, ShadowCounter);
+    end;
+    Exit;
+  end;
+
+  Sentinel := G.Last.Next; { = G.First = first view below top }
+
+  repeat
+    P := P.Next;
+
+    { If we've wrapped past Last to First, all above-siblings are processed }
+    if P = Sentinel then begin
+      { Remaining span [x1..x2) is unoccluded at this group level - ascend }
+      if G.Owner <> nil then
+        do_writeViewRec2(x1, x2, G, ShadowCounter)
+      else
+        WriteSpanToVideoBuf(x1, x2, ShadowCounter);
+      Exit;
+    end;
+
+    { P is a sibling above WVTarget - check if it occludes the span }
+    if ((P.State and sfVisible) <> 0) and (WVY >= P.Origin.Y) then begin
+      { Check if scanline intersects the sibling's body }
+      if WVY < P.Origin.Y + P.Size.Y then begin
+        { Sibling body overlaps this scanline }
+        if x1 < P.Origin.X then begin
+          { Span starts left of sibling }
+          if x2 <= P.Origin.X then
+            Continue; { Span entirely left of sibling - no occlusion }
+          { Partial overlap: recurse for left uncovered fragment }
+          do_writeViewRec1(x1, P.Origin.X, P, ShadowCounter);
+          x1 := P.Origin.X;
+        end;
+        dx := P.Origin.X + P.Size.X;
+        if x2 <= dx then
+          Exit; { Span entirely covered by sibling }
+        if x1 < dx then
+          x1 := dx; { Advance past sibling }
+        { Check shadow to the right of sibling body }
+        Inc(dx, ShadowSize.X);
+        if ((P.State and sfShadow) <> 0) and (WVY >= P.Origin.Y + ShadowSize.Y) then begin
+          if x1 >= dx then
+            Continue; { Span starts past shadow }
+          Inc(ShadowCounter);
+          if x2 <= dx then
+            Continue; { Span entirely within shadow }
+          { Partial shadow: recurse for shadow fragment }
+          do_writeViewRec1(x1, dx, P, ShadowCounter);
+          x1 := dx;
+          Dec(ShadowCounter);
+          Continue;
+        end else
+          Continue;
+      end;
+
+      { Check shadow below sibling body (bottom shadow strip) }
+      if ((P.State and sfShadow) <> 0) and (WVY < P.Origin.Y + P.Size.Y + ShadowSize.Y) then begin
+        dx := P.Origin.X + ShadowSize.X;
+        if x1 < dx then begin
+          if x2 <= dx then
+            Continue; { Span entirely left of bottom shadow }
+          do_writeViewRec1(x1, dx, P, ShadowCounter);
+          x1 := dx;
+        end;
+        dx := P.Origin.X + ShadowSize.X + P.Size.X;
+        if x1 >= dx then
+          Continue; { Span starts past bottom shadow }
+        Inc(ShadowCounter);
+        if x2 <= dx then
+          Continue; { Span entirely within bottom shadow }
+        do_writeViewRec1(x1, dx, P, ShadowCounter);
+        x1 := dx;
+        Dec(ShadowCounter);
+      end;
+    end;
+  until False;
+end;
+
+{ do_WriteView - per-scanline entry point. Clips to own bounds, sets up
+  static state, and initiates the recursive Z-order clipping walk.
+  BufPtr points to the full draw buffer, RowStart is the index of the first
+  cell for this scanline row. }
+procedure TView.do_WriteView(x1, x2, y: Integer; BufPtr: PDrawBuffer; RowStart: Integer);
+begin
+  if (y >= 0) and (y < Size.Y) then begin
+    if x1 < 0 then x1 := 0;
+    if x2 > Size.X then x2 := Size.X;
+    if x1 < x2 then begin
+      WVBufOffset := x1 - RowStart;
+      WVY := y;
+      WVBuf := BufPtr;
+      WVTarget := nil; { Will be set by do_writeViewRec2 }
+      do_writeViewRec2(x1, x2, Self, 0);
+    end;
+  end;
+end;
+
+{ WriteBuf - public entry point. Breaks multi-row buffer into per-scanline
+  calls to do_WriteView which performs Z-order aware clipping.
+  Buf is a flat array of TDrawCell, with rows of width W. }
+procedure TView.WriteBuf(X, Y, W, H: Integer; var Buf);
+var
+  I: Integer;
+  DrawBuf: PDrawBuffer;
+begin
+  if ((State and sfExposed) <> 0) and (W > 0) and (H > 0) then begin
+    DrawBuf := @Buf;
+    for I := 0 to H - 1 do
+      do_WriteView(X, X + W, Y + I, DrawBuf, I * W);
   end;
 end;
 
