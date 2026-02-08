@@ -130,6 +130,9 @@ type
     procedure RegisterSixelRegion(ScreenX, ScreenY, CellW, CellH: Integer;
       const SixelData: string);
 
+    { Terminal window title }
+    procedure SetWindowTitle(const ATitle: string);
+
     { Cursor }
     procedure SetCursor(X, Y: Integer);
     procedure GetCursor(var X, Y: Integer);
@@ -653,6 +656,14 @@ procedure TScreenBuffer.GetCursor(var X, Y: Integer);
 begin
   X := FCursorX;
   Y := FCursorY;
+end;
+
+procedure TScreenBuffer.SetWindowTitle(const ATitle: string);
+begin
+  if FInitialized then begin
+    WriteVT(VT_ESC + ']0;' + ATitle + #7);
+    FlushVT;
+  end;
 end;
 
 procedure TScreenBuffer.ShowCursor;
