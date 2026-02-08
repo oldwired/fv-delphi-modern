@@ -179,7 +179,7 @@ type
 
 const
   { Maximum width for draw buffers }
-  MaxViewWidth = 255;
+  MaxViewWidth = 2048;
 
 type
   { Draw buffer - array of draw cells for line-based drawing }

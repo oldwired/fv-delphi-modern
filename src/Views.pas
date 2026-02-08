@@ -110,8 +110,6 @@ const
   { Window number constants }
   wnNoNumber = 0;
 
-  { Maximum view width }
-  MaxViewWidth = 255;
 
 {***************************************************************************}
 {                          PUBLIC TYPE DEFINITIONS                          }

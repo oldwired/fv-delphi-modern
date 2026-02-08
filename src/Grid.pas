@@ -792,7 +792,7 @@ begin
   FTitle := string(ATitle);
   FWidth := AWidth;
   FMinWidth := 3;
-  FMaxWidth := 255;
+  FMaxWidth := MaxViewWidth;
   FAlignment := gaLeft;
   FColor := 0;  { Use default palette }
   FSortable := True;
