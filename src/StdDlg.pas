@@ -2474,7 +2474,12 @@ begin
   { Filename input field }
   R.Assign(9, 2, 48, 3);
   FileName := TFileInputLine.Create(R, 128);
-  FileName.Data := WildCard;
+  { For save dialogs, start with empty name so user can just type;
+    for open dialogs, start with the wildcard to show current filter }
+  if AOptions and (fdOkButton or fdReplaceButton) <> 0 then
+    FileName.Data := ''
+  else
+    FileName.Data := WildCard;
   Insert(FileName);
 
   { Action button - text and command depend on options }
