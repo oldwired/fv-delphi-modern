@@ -1014,7 +1014,7 @@ begin
   FillChar(LegacyOldBuf, SizeOf(LegacyOldBuf), 0);
 
   { Initialize Unicode character buffer }
-  BufSize := ScreenWidth * ScreenHeight;
+  BufSize := Integer(ScreenWidth) * Integer(ScreenHeight);
   SetLength(UnicodeCharBuf, BufSize);
   SetLength(FGRGBBuf, BufSize);
   SetLength(BGRGBBuf, BufSize);
@@ -1072,7 +1072,7 @@ begin
 
   { Copy current to old for legacy diff detection }
   if VideoBuf <> nil then
-    Move(VideoBuf^, OldVideoBuf^, ScreenWidth * ScreenHeight * 2);
+    Move(VideoBuf^, OldVideoBuf^, Integer(ScreenWidth) * Integer(ScreenHeight) * 2);
 end;
 
 procedure ClearScreen;
@@ -1080,7 +1080,7 @@ begin
   if Screen <> nil then
     Screen.ClearScreen;
   { Clear legacy buffer too }
-  for var I := 0 to ScreenWidth * ScreenHeight - 1 do
+  for var I := 0 to Integer(ScreenWidth) * Integer(ScreenHeight) - 1 do
     LegacyBuf[I] := $0720;
 end;
 
@@ -1149,9 +1149,26 @@ begin
 end;
 
 procedure ResizeVideo(NewWidth, NewHeight: Word);
+var
+  BufSize: Integer;
 begin
-  if Screen <> nil then
+  if Screen <> nil then begin
     Screen.Resize(NewWidth, NewHeight);
+
+    { Resize parallel legacy buffers to match new screen dimensions }
+    BufSize := Integer(ScreenWidth) * Integer(ScreenHeight);
+    SetLength(UnicodeCharBuf, BufSize);
+    SetLength(FGRGBBuf, BufSize);
+    SetLength(BGRGBBuf, BufSize);
+    FillChar(LegacyBuf, SizeOf(LegacyBuf), 0);
+    FillChar(LegacyOldBuf, SizeOf(LegacyOldBuf), 0);
+    for var I := 0 to BufSize - 1 do begin
+      LegacyBuf[I] := $0720;
+      UnicodeCharBuf[I] := ' ';
+      FGRGBBuf[I] := 0;
+      BGRGBBuf[I] := 0;
+    end;
+  end;
 end;
 
 initialization

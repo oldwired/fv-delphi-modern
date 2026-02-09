@@ -654,7 +654,7 @@ procedure TProgram.HandleEvent(var Event: TEvent);
 var
   Handled: Boolean;
   R: TRect;
-  NewWidth, NewHeight: Word;
+  NewWidth, NewHeight: Integer;
   I: Integer;
 begin
   Handled := False;
@@ -689,9 +689,9 @@ begin
 
   { Handle cmResizeApp BEFORE passing to subviews - this is a system event }
   if (Event.What = evCommand) and (Event.Command = cmResizeApp) then begin
-    { Extract new dimensions from InfoWord (height in high byte, width in low byte) }
-    NewWidth := Event.InfoWord and $FF;
-    NewHeight := Event.InfoWord shr 8;
+    { Extract new dimensions from InfoLong (height in high word, width in low word) }
+    NewWidth := Event.InfoLong and $FFFF;
+    NewHeight := (Event.InfoLong shr 16) and $FFFF;
 
     { Resize the video buffer }
     FVScreen.ResizeVideo(NewWidth, NewHeight);

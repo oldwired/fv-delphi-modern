@@ -1252,7 +1252,7 @@ begin
       { Generate resize event }
       Event.What := evCommand;
       Event.Command := cmResizeApp;
-      Event.InfoWord := (NewHeight shl 8) or NewWidth; { Pack new dimensions }
+      Event.InfoLong := (LongInt(NewHeight) shl 16) or LongInt(NewWidth); { Pack new dimensions }
 
       { Update tracking }
       LastScreenWidth := NewWidth;
