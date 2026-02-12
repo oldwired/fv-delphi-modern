@@ -731,8 +731,9 @@ procedure TView.DrawView;
 begin
   if (State and sfExposed) <> 0 then begin
     Draw;
-    if (State and sfShadow) <> 0 then
-      DrawShadow;
+    { Shadow rendering is handled by ShadowCounter in do_writeViewRec1
+      during Z-order clipping. Do NOT call DrawShadow here - it bypasses
+      clipping and overwrites content of windows in front of the shadow. }
     DrawCursor;
   end;
 end;
@@ -952,9 +953,12 @@ begin
       sfVisible: begin
         if Owner.GetState(sfExposed) then
           SetState(sfExposed, Enable);
-        if Enable then
-          DrawView
-        else
+        if Enable then begin
+          if (State and sfShadow) <> 0 then
+            Owner.Draw  { Full redraw so shadow area gets ShadowCounter applied }
+          else
+            DrawView;
+        end else
           Owner.Draw;  { Redraw owner to fill gap left by hidden view }
         { When a selectable view visibility changes, let ResetCurrent find
           the appropriate view to be Current. FPC always calls ResetCurrent here. }
