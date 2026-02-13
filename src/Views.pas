@@ -745,6 +745,8 @@ var
   I, J: Integer;
   Target: PWord;
 begin
+  FVScreen.MarkVideoDirty;
+
   { Calculate global position }
   GX := Origin.X;
   GY := Origin.Y;
@@ -1148,6 +1150,8 @@ begin
   if x2 > FVScreen.ScreenWidth then x2 := FVScreen.ScreenWidth;
   if (x1 >= x2) then Exit;
   if (WVY < 0) or (WVY >= FVScreen.ScreenHeight) then Exit;
+
+  FVScreen.MarkVideoDirty;
 
   ScreenOffset := WVY * FVScreen.ScreenWidth + x1;
   Target := @VideoBuf^[ScreenOffset];

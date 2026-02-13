@@ -181,6 +181,7 @@ var
 { Legacy API - calls through to Screen object }
 procedure InitVideo;
 procedure DoneVideo;
+procedure MarkVideoDirty;
 procedure UpdateScreen(Force: Boolean);
 procedure ClearScreen;
 procedure SetCursorPos(X, Y: Word);
@@ -216,6 +217,7 @@ var
   LegacyBufPtr: PVideoBuf;
   LegacyOldBufPtr: PVideoBuf;
   LegacyBufCells: Integer;
+  VideoBufDirty: Boolean;
 
 { TScreenBuffer }
 
@@ -1030,6 +1032,7 @@ begin
     FGRGBBuf[I] := 0;
     BGRGBBuf[I] := 0;
   end;
+  VideoBufDirty := True;
 end;
 
 procedure DoneVideo;
@@ -1074,8 +1077,16 @@ begin
   end;
 end;
 
+procedure MarkVideoDirty;
+begin
+  VideoBufDirty := True;
+end;
+
 procedure UpdateScreen(Force: Boolean);
 begin
+  if (not Force) and (not VideoBufDirty) then
+    Exit;
+
   { Sync legacy buffer to new screen cells }
   SyncVideoBufToScreen;
 
@@ -1086,6 +1097,8 @@ begin
   { Copy current to old for legacy diff detection }
   if VideoBuf <> nil then
     Move(VideoBuf^, OldVideoBuf^, Integer(ScreenWidth) * Integer(ScreenHeight) * 2);
+
+  VideoBufDirty := False;
 end;
 
 procedure ClearScreen;
@@ -1095,6 +1108,7 @@ begin
   { Clear legacy buffer too }
   for var I := 0 to LegacyBufCells - 1 do
     VideoBuf^[I] := $0720;
+  VideoBufDirty := True;
 end;
 
 procedure SetCursorPos(X, Y: Word);
@@ -1186,6 +1200,7 @@ begin
       FGRGBBuf[I] := 0;
       BGRGBBuf[I] := 0;
     end;
+    VideoBufDirty := True;
   end;
 end;
 
@@ -1198,6 +1213,7 @@ initialization
   OldVideoBuf := nil;
   ScreenWidth := 80;
   ScreenHeight := 25;
+  VideoBufDirty := True;
 
 finalization
   FreeMem(LegacyBufPtr);
