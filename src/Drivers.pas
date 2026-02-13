@@ -278,6 +278,9 @@ var
   SysErrorFunc : TSysErrorFunc;
   MouseIntFlag : Byte;
   MouseButtons : Byte;
+  { Milliseconds to wait for console input when idle.
+    0 = pure polling (highest responsiveness, highest CPU). }
+  EventIdleWaitMs: DWORD = 10;
   DriversScreenWidth  : Word;
   DriversScreenHeight : Word;
   DriversScreenMode   : TDriversVideoMode;
@@ -1291,7 +1294,7 @@ begin
   EventsInitialized := False;
 end;
 
-procedure GetEvent(var Event: TEvent);
+procedure PollEventSources(var Event: TEvent);
 begin
   NextQueuedEvent(Event);
   if Event.What <> evNothing then
@@ -1300,8 +1303,25 @@ begin
   if Event.What <> evNothing then
     Exit;
   GetMouseEvent(Event);
-  if Event.What <> evNothing then Exit;
+  if Event.What <> evNothing then
+    Exit;
   GetSystemEvent(Event);
+end;
+
+procedure GetEvent(var Event: TEvent);
+begin
+  PollEventSources(Event);
+  if Event.What <> evNothing then
+    Exit;
+
+  { Prevent a hot idle spin: wait briefly for new console input (or APCs),
+    then poll once more before returning evNothing to the app idle loop. }
+  if (ConsoleInput <> 0) and (ConsoleInput <> INVALID_HANDLE_VALUE) then
+    WaitForSingleObjectEx(ConsoleInput, EventIdleWaitMs, True)
+  else
+    SleepEx(EventIdleWaitMs, True);
+
+  PollEventSources(Event);
 end;
 
 procedure PutEvent(var Event: TEvent);
