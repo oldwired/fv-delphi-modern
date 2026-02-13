@@ -11,6 +11,8 @@
 
 unit FVScreen;
 
+{$R-}  { Disable range checking for legacy buffer operations }
+
 interface
 
 uses
@@ -211,8 +213,9 @@ const
   ENABLE_VIRTUAL_TERMINAL_INPUT = $0200;
 
 var
-  LegacyBuf: TVideoBuf;
-  LegacyOldBuf: TVideoBuf;
+  LegacyBufPtr: PVideoBuf;
+  LegacyOldBufPtr: PVideoBuf;
+  LegacyBufCells: Integer;
 
 { TScreenBuffer }
 
@@ -1007,19 +1010,22 @@ begin
     Screen := TScreenBuffer.Create;
   Screen.Init;
 
-  { Set up legacy buffer pointers }
-  VideoBuf := @LegacyBuf;
-  OldVideoBuf := @LegacyOldBuf;
-  FillChar(LegacyBuf, SizeOf(LegacyBuf), 0);
-  FillChar(LegacyOldBuf, SizeOf(LegacyOldBuf), 0);
+  { Allocate legacy buffers dynamically based on actual screen size }
+  BufSize := Integer(ScreenWidth) * Integer(ScreenHeight);
+  ReallocMem(LegacyBufPtr, BufSize * SizeOf(TVideoCell));
+  ReallocMem(LegacyOldBufPtr, BufSize * SizeOf(TVideoCell));
+  LegacyBufCells := BufSize;
+  FillChar(LegacyBufPtr^, BufSize * SizeOf(TVideoCell), 0);
+  FillChar(LegacyOldBufPtr^, BufSize * SizeOf(TVideoCell), 0);
+  VideoBuf := LegacyBufPtr;
+  OldVideoBuf := LegacyOldBufPtr;
 
   { Initialize Unicode character buffer }
-  BufSize := Integer(ScreenWidth) * Integer(ScreenHeight);
   SetLength(UnicodeCharBuf, BufSize);
   SetLength(FGRGBBuf, BufSize);
   SetLength(BGRGBBuf, BufSize);
   for var I := 0 to BufSize - 1 do begin
-    LegacyBuf[I] := $0720;
+    VideoBuf^[I] := $0720;
     UnicodeCharBuf[I] := ' ';
     FGRGBBuf[I] := 0;
     BGRGBBuf[I] := 0;
@@ -1030,6 +1036,13 @@ procedure DoneVideo;
 begin
   if Screen <> nil then
     Screen.Done;
+  FreeMem(LegacyBufPtr);
+  LegacyBufPtr := nil;
+  FreeMem(LegacyOldBufPtr);
+  LegacyOldBufPtr := nil;
+  LegacyBufCells := 0;
+  VideoBuf := nil;
+  OldVideoBuf := nil;
 end;
 
 procedure SyncVideoBufToScreen;
@@ -1044,7 +1057,7 @@ begin
   for Y := 0 to Screen.Height - 1 do begin
     for X := 0 to Screen.Width - 1 do begin
       I := Y * Screen.Width + X;
-      if I < Length(LegacyBuf) then begin
+      if I < LegacyBufCells then begin
         Cell := VideoBuf^[I];
         { Use Unicode string from parallel buffer instead of Lo(Cell) }
         if (I < Length(UnicodeCharBuf)) and (UnicodeCharBuf[I] <> '') then
@@ -1080,8 +1093,8 @@ begin
   if Screen <> nil then
     Screen.ClearScreen;
   { Clear legacy buffer too }
-  for var I := 0 to Integer(ScreenWidth) * Integer(ScreenHeight) - 1 do
-    LegacyBuf[I] := $0720;
+  for var I := 0 to LegacyBufCells - 1 do
+    VideoBuf^[I] := $0720;
 end;
 
 procedure SetCursorPos(X, Y: Word);
@@ -1157,13 +1170,18 @@ begin
 
     { Resize parallel legacy buffers to match new screen dimensions }
     BufSize := Integer(ScreenWidth) * Integer(ScreenHeight);
+    ReallocMem(LegacyBufPtr, BufSize * SizeOf(TVideoCell));
+    ReallocMem(LegacyOldBufPtr, BufSize * SizeOf(TVideoCell));
+    LegacyBufCells := BufSize;
+    FillChar(LegacyBufPtr^, BufSize * SizeOf(TVideoCell), 0);
+    FillChar(LegacyOldBufPtr^, BufSize * SizeOf(TVideoCell), 0);
+    VideoBuf := LegacyBufPtr;
+    OldVideoBuf := LegacyOldBufPtr;
     SetLength(UnicodeCharBuf, BufSize);
     SetLength(FGRGBBuf, BufSize);
     SetLength(BGRGBBuf, BufSize);
-    FillChar(LegacyBuf, SizeOf(LegacyBuf), 0);
-    FillChar(LegacyOldBuf, SizeOf(LegacyOldBuf), 0);
     for var I := 0 to BufSize - 1 do begin
-      LegacyBuf[I] := $0720;
+      VideoBuf^[I] := $0720;
       UnicodeCharBuf[I] := ' ';
       FGRGBBuf[I] := 0;
       BGRGBBuf[I] := 0;
@@ -1173,12 +1191,17 @@ end;
 
 initialization
   Screen := nil;
+  LegacyBufPtr := nil;
+  LegacyOldBufPtr := nil;
+  LegacyBufCells := 0;
   VideoBuf := nil;
   OldVideoBuf := nil;
   ScreenWidth := 80;
   ScreenHeight := 25;
 
 finalization
+  FreeMem(LegacyBufPtr);
+  FreeMem(LegacyOldBufPtr);
   if Screen <> nil then begin
     Screen.Free;
     Screen := nil;
