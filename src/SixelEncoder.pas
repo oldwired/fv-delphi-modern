@@ -16,6 +16,56 @@ uses
   System.Math,
   System.Generics.Collections;
 
+const
+  { =====================================================================
+    Realtime Sixel Palette: 6x6x6 RGB Color Cube (216 colors)
+    =====================================================================
+
+    Each RGB channel is quantized to 6 evenly spaced levels:
+
+      Level:   0     1     2     3     4     5
+      Value:   0    51   102   153   204   255
+      Hex:   $00   $33   $66   $99   $CC   $FF
+
+    Register index = R_level * 36 + G_level * 6 + B_level
+    (Range: 0..215)
+
+    To use exact palette colors in game art, pick RGB values from:
+      (0, 51, 102, 153, 204, 255) per channel.
+
+    Examples:
+      Pure red     = (255,   0,   0) = $FF0000  -> register 180
+      Pure green   = (  0, 255,   0) = $00FF00  -> register  30
+      Pure blue    = (  0,   0, 255) = $0000FF  -> register   5
+      Yellow       = (255, 255,   0) = $FFFF00  -> register 210
+      White        = (255, 255, 255) = $FFFFFF  -> register 215
+      Black        = (  0,   0,   1) = $000001  -> register   0
+      Mid gray     = (153, 153, 153) = $999999  -> register 129
+      Dark red     = (102,   0,   0) = $660000  -> register  72
+      Brick brown  = (153,  51,   0) = $993300  -> register 114
+      Forest green = (  0, 102,  51) = $006633  -> register  13
+
+    IMPORTANT: In the FV pixel pipeline, RGB value $000000 means "use
+    palette color" (not black). Use $000001 for black. Both map to
+    register 0 since (1+25) div 51 = 0.
+
+    Any RGB value maps to its nearest cube entry:
+      R_level = (R + 25) div 51    (rounds to nearest)
+      G_level = (G + 25) div 51
+      B_level = (B + 25) div 51
+
+    Maximum quantization error: 25 per channel (~10%).
+    ===================================================================== }
+
+  RTCubeLevels = 6;
+  RTCubeColors = RTCubeLevels * RTCubeLevels * RTCubeLevels;  { 216 }
+
+  { The 6 channel values in 0..255 }
+  RTCubeChannel: array[0..RTCubeLevels - 1] of Byte = (0, 51, 102, 153, 204, 255);
+
+  { The 6 channel values as sixel percentages (0..100) }
+  RTCubePercent: array[0..RTCubeLevels - 1] of Integer = (0, 20, 40, 60, 80, 100);
+
 type
   { Pixel row type for encoder input }
   TPixelRow = array of Cardinal;  { $00RRGGBB per pixel }
@@ -27,14 +77,26 @@ type
     class var FCachedCellW: Integer;
     class var FCachedCellH: Integer;
     class var FCachedCellDetected: Boolean;
+    class var FRTCubePalette: array[0..RTCubeColors - 1] of string;  { Per-register definition }
+    class var FRTCubePaletteBuilt: Boolean;
+    class var FRTCubeLUT: array[0..255] of Byte;  { Channel value -> cube level (0..5) }
+    class var FRTRegMap: array of array of Integer;  { Pre-allocated register map }
+    class var FRTRegMapW, FRTRegMapH: Integer;
+    class var FRTSB: TStringBuilder;  { Pre-allocated string builder }
     { Quantize a pixel to a hash encoding its palette percentages.
       Step is the quantization step in percentage points (e.g. 4 = round to
       nearest 4%). Hash = RQ*10201 + GQ*101 + BQ where RQ/GQ/BQ are 0..100. }
     class function QuantPixelHash(RGB: Cardinal; Step: Integer): Integer;
+    class procedure EnsureRTInit;
   public
     class function IsSixelSupported: Boolean;
     class function GetCellPixelSize(out CellW, CellH: Integer): Boolean;
+    { Quality encoder: adaptive palette, optional dithering. Best for images. }
     class function Encode(const Pixels: TPixelGrid;
+      SrcX, SrcY, SrcW, SrcH: Integer): string;
+    { Realtime encoder: fixed 6x6x6 color cube, direct mapping, no dithering.
+      Optimized for game engines and animations where speed > fidelity. }
+    class function EncodeRealtime(const Pixels: TPixelGrid;
       SrcX, SrcY, SrcW, SrcH: Integer): string;
   end;
 
@@ -543,8 +605,249 @@ begin
   end;
 end;
 
+class procedure TSixelEncoder.EnsureRTInit;
+var
+  SB: TStringBuilder;
+  RI, GI, BI, Idx, I: Integer;
+begin
+  if FRTCubePaletteBuilt then Exit;
+
+  { Build channel LUT: maps 0..255 to cube level 0..5 }
+  for I := 0 to 255 do
+    FRTCubeLUT[I] := Byte((I + 25) div 51);
+
+  { Build per-register palette definition strings }
+  SB := TStringBuilder.Create(32);
+  try
+    for RI := 0 to RTCubeLevels - 1 do
+      for GI := 0 to RTCubeLevels - 1 do
+        for BI := 0 to RTCubeLevels - 1 do
+        begin
+          Idx := RI * 36 + GI * 6 + BI;
+          SB.Clear;
+          SB.Append('#');
+          SB.Append(IntToStr(Idx));
+          SB.Append(';2;');
+          SB.Append(IntToStr(RTCubePercent[RI]));
+          SB.Append(';');
+          SB.Append(IntToStr(RTCubePercent[GI]));
+          SB.Append(';');
+          SB.Append(IntToStr(RTCubePercent[BI]));
+          FRTCubePalette[Idx] := SB.ToString;
+        end;
+  finally
+    SB.Free;
+  end;
+
+  { Pre-allocate string builder }
+  FRTSB := TStringBuilder.Create(256 * 1024);
+
+  FRTCubePaletteBuilt := True;
+end;
+
+class function TSixelEncoder.EncodeRealtime(const Pixels: TPixelGrid;
+  SrcX, SrcY, SrcW, SrcH: Integer): string;
+var
+  SB: TStringBuilder;
+  PixelH, PixelW: Integer;
+  X, Y, J: Integer;
+  BandY, RowInBand: Integer;
+  NumBands: Integer;
+  ImgH, ImgW: Integer;
+  ClampedW, ClampedH: Integer;
+  RegIdx: Integer;
+  RGB: Cardinal;
+  PixRow: TPixelRow;
+  { Track which registers are used across the whole frame (for palette) }
+  UsedRegs: array[0..RTCubeColors - 1] of Boolean;
+  { Band encoding }
+  BandColors: array[0..RTCubeColors - 1] of Boolean;
+  SixelBit: Integer;
+  SixelVal: Byte;
+  LastVal: Byte;
+  RunLen: Integer;
+begin
+  Result := '';
+  if (Pixels = nil) or (Length(Pixels) = 0) then Exit;
+  ImgH := Length(Pixels);
+  ImgW := Length(Pixels[0]);
+  if ImgW = 0 then Exit;
+  if (SrcW <= 0) or (SrcH <= 0) then Exit;
+
+  { Clamp source rect to image bounds }
+  ClampedW := SrcW;
+  ClampedH := SrcH;
+  if SrcX + ClampedW > ImgW then ClampedW := ImgW - SrcX;
+  if SrcY + ClampedH > ImgH then ClampedH := ImgH - SrcY;
+  if SrcX < 0 then begin ClampedW := ClampedW + SrcX; SrcX := 0; end;
+  if SrcY < 0 then begin ClampedH := ClampedH + SrcY; SrcY := 0; end;
+  if (ClampedW <= 0) or (ClampedH <= 0) then Exit;
+
+  PixelW := ClampedW;
+  PixelH := ClampedH;
+  NumBands := (PixelH + 5) div 6;
+
+  { One-time init: channel LUT, palette strings, string builder }
+  EnsureRTInit;
+
+  { Grow pre-allocated RegMap if needed (never shrinks — avoids realloc) }
+  if (PixelH > FRTRegMapH) or (PixelW > FRTRegMapW) then
+  begin
+    if PixelH > FRTRegMapH then FRTRegMapH := PixelH;
+    if PixelW > FRTRegMapW then FRTRegMapW := PixelW;
+    SetLength(FRTRegMap, FRTRegMapH, FRTRegMapW);
+  end;
+
+  { Build per-pixel register map via LUT (3 array lookups, no division).
+    Also track which registers are used for sparse palette emission. }
+  FillChar(UsedRegs, SizeOf(UsedRegs), 0);
+  for Y := 0 to PixelH - 1 do
+  begin
+    if SrcY + Y >= ImgH then
+    begin
+      for X := 0 to PixelW - 1 do
+        FRTRegMap[Y][X] := -1;
+      Continue;
+    end;
+    PixRow := Pixels[SrcY + Y];
+    for X := 0 to PixelW - 1 do
+    begin
+      if SrcX + X >= ImgW then
+      begin
+        FRTRegMap[Y][X] := -1;
+        Continue;
+      end;
+      RGB := PixRow[SrcX + X];
+      RegIdx :=
+        Integer(FRTCubeLUT[(RGB shr 16) and $FF]) * 36 +
+        Integer(FRTCubeLUT[(RGB shr 8) and $FF]) * 6 +
+        Integer(FRTCubeLUT[RGB and $FF]);
+      FRTRegMap[Y][X] := RegIdx;
+      UsedRegs[RegIdx] := True;
+    end;
+  end;
+
+  { Reuse pre-allocated string builder }
+  SB := FRTSB;
+  SB.Clear;
+
+  { DCS introducer: P1=0 normal aspect, P2=1 transparent background }
+  SB.Append(#27'P0;1q');
+
+  { Raster attributes }
+  SB.Append('"1;1;');
+  SB.Append(IntToStr(PixelW));
+  SB.Append(';');
+  SB.Append(IntToStr(PixelH));
+
+  { Emit only palette entries for registers actually used in this frame }
+  for RegIdx := 0 to RTCubeColors - 1 do
+    if UsedRegs[RegIdx] then
+      SB.Append(FRTCubePalette[RegIdx]);
+
+  { Encode bands of 6 pixel rows }
+  for BandY := 0 to NumBands - 1 do
+  begin
+    { Determine which registers appear in this band }
+    FillChar(BandColors, SizeOf(BandColors), 0);
+    for RowInBand := 0 to 5 do
+    begin
+      Y := BandY * 6 + RowInBand;
+      if Y >= PixelH then Break;
+      for X := 0 to PixelW - 1 do
+      begin
+        RegIdx := FRTRegMap[Y][X];
+        if RegIdx >= 0 then
+          BandColors[RegIdx] := True;
+      end;
+    end;
+
+    { Encode each register present in this band }
+    for RegIdx := 0 to RTCubeColors - 1 do
+    begin
+      if not BandColors[RegIdx] then Continue;
+
+      { Select color register }
+      SB.Append('#');
+      SB.Append(IntToStr(RegIdx));
+
+      { Build sixel data for this register with RLE compression }
+      RunLen := 0;
+      LastVal := 255;  { Invalid sentinel }
+
+      for X := 0 to PixelW - 1 do
+      begin
+        SixelBit := 0;
+        for RowInBand := 0 to 5 do
+        begin
+          Y := BandY * 6 + RowInBand;
+          if (Y < PixelH) and (FRTRegMap[Y][X] = RegIdx) then
+            SixelBit := SixelBit or (1 shl RowInBand);
+        end;
+
+        SixelVal := SixelBit + 63;
+
+        if SixelVal = LastVal then
+          Inc(RunLen)
+        else
+        begin
+          { Flush previous run }
+          if RunLen > 0 then
+          begin
+            if RunLen >= 4 then
+            begin
+              SB.Append('!');
+              SB.Append(IntToStr(RunLen));
+              SB.Append(Char(LastVal));
+            end
+            else
+            begin
+              for J := 0 to RunLen - 1 do
+                SB.Append(Char(LastVal));
+            end;
+          end;
+          LastVal := SixelVal;
+          RunLen := 1;
+        end;
+      end;
+
+      { Flush final run }
+      if RunLen > 0 then
+      begin
+        if RunLen >= 4 then
+        begin
+          SB.Append('!');
+          SB.Append(IntToStr(RunLen));
+          SB.Append(Char(LastVal));
+        end
+        else
+        begin
+          for J := 0 to RunLen - 1 do
+            SB.Append(Char(LastVal));
+        end;
+      end;
+
+      { Carriage return within band }
+      SB.Append('$');
+    end;
+
+    { Line feed - advance to next band (except after last) }
+    if BandY < NumBands - 1 then
+      SB.Append('-');
+  end;
+
+  { String Terminator }
+  SB.Append(#27'\');
+
+  Result := SB.ToString;
+end;
+
 initialization
   TSixelEncoder.FCachedSupported := -1;
   TSixelEncoder.FCachedCellDetected := False;
+  TSixelEncoder.FRTCubePaletteBuilt := False;
+  TSixelEncoder.FRTRegMapW := 0;
+  TSixelEncoder.FRTRegMapH := 0;
+  TSixelEncoder.FRTSB := nil;
 
 end.

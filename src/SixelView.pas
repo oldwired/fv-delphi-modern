@@ -44,6 +44,7 @@ type
   TSixelAnimView = class(TView)
   private
     FSixelMode: Boolean;
+    FRealtimeMode: Boolean;
     FCellPixelW: Integer;
     FCellPixelH: Integer;
     FSixelData: string;
@@ -68,6 +69,9 @@ type
     procedure SetSixelMode(AValue: Boolean);
     function GetPalette: PPalette; override;
     property SixelMode: Boolean read FSixelMode write SetSixelMode;
+    { When True, uses the fast 6x6x6 cube encoder instead of the adaptive
+      quality encoder. Best for game engines and animations. }
+    property RealtimeMode: Boolean read FRealtimeMode write FRealtimeMode;
   end;
 
   { Window wrapper that fixes the TWindow.Close crash (Hide before Close)
@@ -525,7 +529,10 @@ begin
 
   if FSixelDirty or (EncPixW <> FLastEncPixW) or (EncPixH <> FLastEncPixH) then
   begin
-    FSixelData := TSixelEncoder.Encode(FPixels, EncSrcX, EncSrcY, EncPixW, EncPixH);
+    if FRealtimeMode then
+      FSixelData := TSixelEncoder.EncodeRealtime(FPixels, EncSrcX, EncSrcY, EncPixW, EncPixH)
+    else
+      FSixelData := TSixelEncoder.Encode(FPixels, EncSrcX, EncSrcY, EncPixW, EncPixH);
     FSixelDirty := False;
     FLastEncPixW := EncPixW;
     FLastEncPixH := EncPixH;
