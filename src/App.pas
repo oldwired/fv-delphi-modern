@@ -643,7 +643,6 @@ end;
 
 procedure TProgram.GetEvent(var Event: TEvent);
 begin
-  if StatusLine <> nil then StatusLine.Update;
   Drivers.GetEvent(Event);
   if Event.What = evNothing then begin
     Idle;
@@ -724,6 +723,10 @@ end;
 procedure TProgram.Idle;
 begin
   if StatusLine <> nil then StatusLine.Update;
+  if CommandSetChanged then begin
+    Message(Self, evBroadcast, cmCommandSetChanged, nil);
+    CommandSetChanged := False;
+  end;
   FVScreen.UpdateScreen(False);
 end;
 

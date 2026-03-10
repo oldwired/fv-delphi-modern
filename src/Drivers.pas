@@ -192,8 +192,6 @@ type
 {***************************************************************************}
 
 function GetDosTicks: LongInt;
-procedure GiveUpTimeSlice;
-
 { Draw buffer routines - unified Unicode support }
 procedure DrawCell(var Buf: TDrawBuffer; Pos: Integer; Ch: Char; Attr: Byte); inline;
 procedure DrawChar(var Buf: TDrawBuffer; Pos: Integer; Ch: Char; Attr: Byte; Count: Integer);
@@ -425,11 +423,6 @@ const
 function GetDosTicks: LongInt;
 begin
   Result := GetTickCount div 55;
-end;
-
-procedure GiveUpTimeSlice;
-begin
-  SleepEx(10, True);
 end;
 
 { New unified draw buffer routines }
@@ -1119,6 +1112,7 @@ begin
       Event.CharCode := AnsiChar(Lo(KeyCode));  { Extract ASCII char from KeyCode }
       Event.ScanCode := Hi(KeyCode);            { Extract scan code from KeyCode }
       Event.UnicodeChar := UChar;               { Store full Unicode character }
+      Event.KeyShift := GetShiftState;
       Exit;
     end;
   end;

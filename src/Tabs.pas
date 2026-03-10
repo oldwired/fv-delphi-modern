@@ -39,6 +39,8 @@ type
     FActiveDef: SmallInt;
     FDefCount: Word;
     FInDraw: Boolean;
+    FContentBorder: Boolean;
+    FSkipRedrawInDraw: Boolean;
     function FirstSelectable: TView;
     function LastSelectable: TView;
   public
@@ -65,6 +67,8 @@ type
     property TabDefs: PTabDef read FTabDefs write FTabDefs;
     property ActiveDef: SmallInt read FActiveDef write FActiveDef;
     property DefCount: Word read FDefCount write FDefCount;
+    property ContentBorder: Boolean read FContentBorder write FContentBorder;
+    property SkipRedrawInDraw: Boolean read FSkipRedrawInDraw write FSkipRedrawInDraw;
   end;
 
 function NewTabItem(AView: TView; ANext: PTabItem): PTabItem;
@@ -94,6 +98,7 @@ begin
   inherited Create(Bounds);
   Options := Options or ofSelectable or ofFirstClick or ofPreProcess or ofPostProcess;
   GrowMode := gfGrowHiX + gfGrowHiY + gfGrowRel;
+  FContentBorder := True;
   FTabDefs := ATabDef;
   FActiveDef := -1;
   SelectTab(0);
@@ -682,22 +687,27 @@ begin
 
   { Remaining rows - draw only the side borders, not the content area.
     Children will fill the content area when Redraw is called. }
-  for I := 3 to Size.Y - 2 do begin
-    DrawChar(B, 0, CharVert, C1, 1);  { Left border only }
-    SWriteBuf(0, I, 1, 1, B);
-    DrawChar(B, 0, CharVert, C1, 1);  { Right border only }
-    SWriteBuf(Size.X - 1, I, 1, 1, B);
-  end;
+  if FContentBorder then
+    for I := 3 to Size.Y - 2 do begin
+      DrawChar(B, 0, CharVert, C1, 1);  { Left border only }
+      SWriteBuf(0, I, 1, 1, B);
+      DrawChar(B, 0, CharVert, C1, 1);  { Right border only }
+      SWriteBuf(Size.X - 1, I, 1, 1, B);
+    end;
 
   { Bottom row }
-  DrawChar(B, 0, CharBottomLeft, C1, 1);
-  if Size.X - 2 > 0 then
-    DrawChar(B, 1, CharHoriz, C1, Size.X - 2);
-  DrawChar(B, Size.X - 1, CharBottomRight, C1, 1);
-  SWriteBuf(0, Size.Y - 1, Size.X, 1, B);
+  if FContentBorder then
+  begin
+    DrawChar(B, 0, CharBottomLeft, C1, 1);
+    if Size.X - 2 > 0 then
+      DrawChar(B, 1, CharHoriz, C1, Size.X - 2);
+    DrawChar(B, Size.X - 1, CharBottomRight, C1, 1);
+    SWriteBuf(0, Size.Y - 1, Size.X, 1, B);
+  end;
 
-  { Draw child views }
-  Redraw;
+  { Draw child views (unless suppressed — parent handles ReDraw explicitly) }
+  if not FSkipRedrawInDraw then
+    Redraw;
 
   FInDraw := False;
 end;
@@ -815,7 +825,8 @@ end;
 destructor TTab.Destroy;
 var
   P, NextP: PTabDef;
-  PI, NextPI: PTabItem;
+  PI, NextPI, QI: PTabItem;
+  QD: PTabDef;
   V: TView;
 begin
   { Remove all views from current tab from the group (don't dispose - we'll do that below) }
@@ -828,7 +839,9 @@ begin
 
   inherited Destroy;
 
-  { Now dispose all tab definitions and their views }
+  { Now dispose all tab definitions and their views.
+    A view may appear in multiple tab item lists (shared controls),
+    so after freeing a view, nil out all other references to it. }
   P := FTabDefs;
   while P <> nil do
   begin
@@ -838,7 +851,27 @@ begin
     while PI <> nil do
     begin
       NextPI := PI^.Next;
-      FreeAndNil(PI^.View);
+      if PI^.View <> nil then
+      begin
+        V := PI^.View;
+        { Nil out all other references to this view across all tab items }
+        QD := P;
+        while QD <> nil do
+        begin
+          if QD = P then
+            QI := NextPI  { skip already-disposed items in current tab }
+          else
+            QI := QD^.Items;
+          while QI <> nil do
+          begin
+            if QI^.View = V then
+              QI^.View := nil;
+            QI := QI^.Next;
+          end;
+          QD := QD^.Next;
+        end;
+        V.Free;
+      end;
       Dispose(PI);
       PI := NextPI;
     end;

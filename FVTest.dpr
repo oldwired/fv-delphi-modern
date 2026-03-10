@@ -126,6 +126,13 @@ const
   cmTestImageView    = 1059;
   cmTestSixelSpectrometer = 1060;
   cmTestSixelSine         = 1061;
+  cmTestCommandSet        = 1062;
+
+  { Local commands for CommandSet demo - must be 0..255 to work with TCommandSet }
+  cmDemoSave    = 60;
+  cmDemoPrint   = 61;
+  cmDemoExport  = 62;
+  cmDemoToggle  = 63;
 
 var
   ExceptionLog: TextFile;
@@ -244,6 +251,7 @@ type
     procedure TestImageView;
     procedure TestSixelSpectrometer;
     procedure TestSixelSine;
+    procedure TestCommandSet;
     property CalendarDateLabel: TStaticText read FCalendarDateLabel write FCalendarDateLabel;
   end;
 
@@ -333,6 +341,16 @@ type
     constructor Create; reintroduce;
     procedure HandleEvent(var Event: TEvent); override;
     procedure UpdateGadgets;
+  end;
+
+  { Demo dialog for CommandSetChanged mechanism }
+  TCommandSetDemoDialog = class(TDialog)
+  private
+    FEnabled: Boolean;
+    FStatusLabel: TStaticText;
+  public
+    constructor Create; reintroduce;
+    procedure HandleEvent(var Event: TEvent); override;
   end;
 
   { Custom scroller that displays numbered lines }
@@ -1866,7 +1884,8 @@ begin
         NewItem('~I~mage Viewer', '', kbNoKey, cmTestImageView, hcNoContext,
         NewItem('SIXEL ~S~pectrometer', '', kbNoKey, cmTestSixelSpectrometer, hcNoContext,
         NewItem('SIXEL ~A~nimated Sine', '', kbNoKey, cmTestSixelSine, hcNoContext,
-        nil))))))))))))),
+        NewItem('Command~S~et Demo', '', kbNoKey, cmTestCommandSet, hcNoContext,
+        nil)))))))))))))),
       nil)))))))))))))))))))))))))))),
     NewSubMenu('~W~indow', hcNoContext, NewMenu(
       NewItem('~T~ile', '', kbNoKey, cmTile, hcNoContext,
@@ -1972,6 +1991,7 @@ begin
         cmTestImageView: TestImageView;
         cmTestSixelSpectrometer: TestSixelSpectrometer;
         cmTestSixelSine: TestSixelSine;
+        cmTestCommandSet: TestCommandSet;
       else
         Exit;
       end;
@@ -4042,6 +4062,83 @@ begin
   Inc(WindowCount);
   R.Assign(5, 2, 75, 20);
   Desktop.Insert(TSixelSineWindow.Create(R));
+end;
+
+{ TCommandSetDemoDialog }
+
+constructor TCommandSetDemoDialog.Create;
+var
+  R: TRect;
+begin
+  R.Assign(10, 3, 60, 18);
+  inherited Create(R, 'CommandSet Demo');
+
+  FEnabled := True;
+
+  R.Assign(3, 2, 47, 4);
+  Insert(TStaticText.Create(R,
+    'Click "Toggle" to enable/disable the three'#13 +
+    'action buttons via EnableCommands/DisableCommands.'));
+
+  { Three action buttons that will be toggled }
+  R.Assign(3, 5, 17, 7);
+  Insert(TButton.Create(R, '~S~ave', cmDemoSave, bfNormal));
+
+  R.Assign(18, 5, 32, 7);
+  Insert(TButton.Create(R, '~P~rint', cmDemoPrint, bfNormal));
+
+  R.Assign(33, 5, 47, 7);
+  Insert(TButton.Create(R, '~E~xport', cmDemoExport, bfNormal));
+
+  { Status label }
+  R.Assign(3, 8, 47, 9);
+  FStatusLabel := TStaticText.Create(R, 'Status: Commands are ENABLED');
+  Insert(FStatusLabel);
+
+  { Toggle button and Close button }
+  R.Assign(10, 10, 26, 12);
+  Insert(TButton.Create(R, '~T~oggle', cmDemoToggle, bfNormal));
+
+  R.Assign(28, 10, 42, 12);
+  Insert(TButton.Create(R, '~C~lose', cmCancel, bfDefault));
+end;
+
+procedure TCommandSetDemoDialog.HandleEvent(var Event: TEvent);
+var
+  DemoCmds: TCommandSet;
+begin
+  inherited HandleEvent(Event);
+  if (Event.What = evCommand) and (Event.Command = cmDemoToggle) then begin
+    FEnabled := not FEnabled;
+    DemoCmds := [cmDemoSave, cmDemoPrint, cmDemoExport];
+    if FEnabled then begin
+      EnableCommands(DemoCmds);
+      FStatusLabel.Text := 'Status: Commands are ENABLED';
+    end else begin
+      DisableCommands(DemoCmds);
+      FStatusLabel.Text := 'Status: Commands are DISABLED';
+    end;
+    FStatusLabel.DrawView;
+    ClearEvent(Event);
+  end
+  else if (Event.What = evCommand) then begin
+    case Event.Command of
+      cmDemoSave:   begin MessageBox('Save clicked!', mfInformation or mfOKButton); ClearEvent(Event); end;
+      cmDemoPrint:  begin MessageBox('Print clicked!', mfInformation or mfOKButton); ClearEvent(Event); end;
+      cmDemoExport: begin MessageBox('Export clicked!', mfInformation or mfOKButton); ClearEvent(Event); end;
+    end;
+  end;
+end;
+
+procedure TMyApp.TestCommandSet;
+var
+  D: TCommandSetDemoDialog;
+begin
+  D := TCommandSetDemoDialog.Create;
+  Desktop.ExecView(D);
+  { Re-enable commands in case dialog was closed while disabled }
+  EnableCommands([cmDemoSave, cmDemoPrint, cmDemoExport]);
+  D.Free;
 end;
 
 begin
