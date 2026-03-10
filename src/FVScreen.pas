@@ -552,6 +552,12 @@ var
 begin
   if not FInitialized then Exit;
 
+  { Begin synchronized output (DEC mode 2026): the terminal buffers all
+    changes and applies them atomically when the end sequence arrives.
+    This prevents flicker when sixel pixel data and overlapping text cells
+    (e.g., dialog over sixel view) are emitted in the same frame. }
+  WriteVT(VT_CSI + '?2026h');
+
   { Phase 0: Erase any previous Sixel regions that moved or disappeared }
   if FSixelPrevRegions.Count > 0 then
     EraseStaleSixelRegions;
@@ -624,6 +630,9 @@ begin
     MoveCursorVT(FCursorX, FCursorY);
     WriteVT(VT_CSI + '?25h');
   end;
+
+  { End synchronized output: terminal renders all buffered changes now }
+  WriteVT(VT_CSI + '?2026l');
 
   FlushVT;
 end;

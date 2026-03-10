@@ -10,6 +10,7 @@ unit SixelView;
 interface
 
 uses
+  Winapi.Windows,
   FVCommon, Drivers, Views, SixelEncoder;
 
 type
@@ -35,6 +36,50 @@ type
     property PixelWidth: Integer read FPixelWidth;
     property PixelHeight: Integer read FPixelHeight;
     property SixelData: string read FSixelData;
+  end;
+
+  { Animated view base class with dual rendering: Sixel (primary) + half-block.
+    Subclasses override UpdatePixels to fill the pixel buffer each frame.
+    Call Update() from the application's Idle loop. }
+  TSixelAnimView = class(TView)
+  private
+    FSixelMode: Boolean;
+    FCellPixelW: Integer;
+    FCellPixelH: Integer;
+    FSixelData: string;
+    FLastEncPixW: Integer;
+    FLastEncPixH: Integer;
+    FLastUpdate: UInt64;
+    procedure DrawSixel;
+    procedure DrawHalfBlock;
+  protected
+    FSixelDirty: Boolean;
+    FPixels: TPixelGrid;
+    FPixelW: Integer;
+    FPixelH: Integer;
+    FUpdateInterval: Integer;
+    FTick: Integer;
+    procedure EnsurePixelBuffer;
+    procedure UpdatePixels; virtual; abstract;
+  public
+    constructor Create(var Bounds: TRect; AUpdateInterval: Integer); reintroduce; virtual;
+    procedure Draw; override;
+    procedure Update; virtual;
+    procedure SetSixelMode(AValue: Boolean);
+    function GetPalette: PPalette; override;
+    property SixelMode: Boolean read FSixelMode write SetSixelMode;
+  end;
+
+  { Window wrapper that fixes the TWindow.Close crash (Hide before Close)
+    and auto-nils the owner's view field reference on destroy }
+  TSixelAnimWindow = class(TWindow)
+  private
+    FViewRef: Pointer;  { Points to owner's TSixelAnimView field }
+  public
+    constructor Create(var Bounds: TRect; const ATitle: string;
+      AViewRef: Pointer); reintroduce;
+    procedure Close; override;
+    destructor Destroy; override;
   end;
 
   { Mutable pixel canvas that renders through SIXEL. Draw into the pixel
@@ -72,7 +117,7 @@ type
 implementation
 
 uses
-  System.SysUtils, System.Classes, FVScreen;
+  System.SysUtils, System.Classes, System.Math, FVScreen;
 
 constructor TSixelView.Create(var Bounds: TRect);
 begin
@@ -317,6 +362,237 @@ begin
 
   Screen.RegisterSixelRegion(ScreenX, ScreenY, CoveredW, CoveredH, FSixelData);
 end;
+
+{ TSixelAnimView }
+
+constructor TSixelAnimView.Create(var Bounds: TRect; AUpdateInterval: Integer);
+begin
+  inherited Create(Bounds);
+  GrowMode := gfGrowHiX or gfGrowHiY;
+  FUpdateInterval := AUpdateInterval;
+  FTick := 0;
+  FLastUpdate := 0;
+  FSixelDirty := True;
+  FPixelW := 0;
+  FPixelH := 0;
+
+  FSixelMode := TSixelEncoder.IsSixelSupported;
+  if FSixelMode then
+  begin
+    if (Screen <> nil) and Screen.Initialized then
+    begin
+      FCellPixelW := Screen.CellPixelWidth;
+      FCellPixelH := Screen.CellPixelHeight;
+    end
+    else if not TSixelEncoder.GetCellPixelSize(FCellPixelW, FCellPixelH) then
+    begin
+      FCellPixelW := 8;
+      FCellPixelH := 16;
+    end;
+  end;
+end;
+
+procedure TSixelAnimView.EnsurePixelBuffer;
+var
+  NeedW, NeedH: Integer;
+begin
+  if FSixelMode then
+  begin
+    NeedW := Size.X * FCellPixelW;
+    NeedH := Size.Y * FCellPixelH;
+  end
+  else
+  begin
+    NeedW := Size.X;
+    NeedH := Size.Y * 2;
+  end;
+  if NeedW < 1 then NeedW := 1;
+  if NeedH < 1 then NeedH := 1;
+
+  if (NeedW <> FPixelW) or (NeedH <> FPixelH) then
+  begin
+    FPixelW := NeedW;
+    FPixelH := NeedH;
+    SetLength(FPixels, FPixelH, FPixelW);
+    FSixelDirty := True;
+  end;
+end;
+
+procedure TSixelAnimView.Draw;
+begin
+  if FSixelMode then
+    DrawSixel
+  else
+    DrawHalfBlock;
+end;
+
+procedure TSixelAnimView.DrawHalfBlock;
+var
+  B: TDrawBuffer;
+  X, Y: Integer;
+  TopRGB, BotRGB: Cardinal;
+begin
+  EnsurePixelBuffer;
+
+  for Y := 0 to Size.Y - 1 do
+  begin
+    DrawChar(B, 0, ' ', $07, Size.X);
+
+    for X := 0 to Size.X - 1 do
+    begin
+      if (X < FPixelW) and (Y * 2 < FPixelH) then
+      begin
+        TopRGB := FPixels[Y * 2][X];
+        if TopRGB = 0 then TopRGB := 1;
+
+        if Y * 2 + 1 < FPixelH then
+          BotRGB := FPixels[Y * 2 + 1][X]
+        else
+          BotRGB := 1;
+        if BotRGB = 0 then BotRGB := 1;
+
+        DrawRGBCell(B, X, #$2580, TopRGB, BotRGB);
+      end;
+    end;
+
+    WriteLine(0, Y, Size.X, 1, B);
+  end;
+end;
+
+procedure TSixelAnimView.DrawSixel;
+var
+  B: TDrawBuffer;
+  Y: Integer;
+  GlobalPt: TPoint;
+  EncCellW, EncCellH: Integer;
+  EncSrcX, EncSrcY: Integer;
+  EncScreenX, EncScreenY: Integer;
+  EncPixW, EncPixH: Integer;
+begin
+  if (Screen = nil) or not Screen.Initialized then Exit;
+
+  EnsurePixelBuffer;
+
+  { Fill all cells with sixel placeholder }
+  for Y := 0 to Size.Y - 1 do
+  begin
+    DrawChar(B, 0, SixelPlaceholder, $00, Size.X);
+    WriteLine(0, Y, Size.X, 1, B);
+  end;
+
+  { Compute global screen position }
+  GlobalPt.X := 0;
+  GlobalPt.Y := 0;
+  MakeGlobal(GlobalPt, GlobalPt);
+
+  { Start with full view dimensions }
+  EncCellW := Size.X;
+  EncCellH := Size.Y;
+  EncSrcX := 0;
+  EncSrcY := 0;
+  EncScreenX := GlobalPt.X;
+  EncScreenY := GlobalPt.Y;
+
+  { Clamp left edge }
+  if EncScreenX < 0 then
+  begin
+    EncCellW := EncCellW + EncScreenX;
+    EncSrcX := -EncScreenX * FCellPixelW;
+    EncScreenX := 0;
+  end;
+
+  { Clamp top edge }
+  if EncScreenY < 0 then
+  begin
+    EncCellH := EncCellH + EncScreenY;
+    EncSrcY := -EncScreenY * FCellPixelH;
+    EncScreenY := 0;
+  end;
+
+  { Clamp right edge }
+  if EncScreenX + EncCellW > Screen.Width then
+    EncCellW := Screen.Width - EncScreenX;
+
+  { Clamp bottom edge with 1-row margin }
+  if EncScreenY + EncCellH >= Screen.Height then
+    EncCellH := Screen.Height - 1 - EncScreenY;
+
+  if (EncCellW <= 0) or (EncCellH <= 0) then Exit;
+
+  { Encode visible portion }
+  EncPixW := EncCellW * FCellPixelW;
+  EncPixH := EncCellH * FCellPixelH;
+
+  if FSixelDirty or (EncPixW <> FLastEncPixW) or (EncPixH <> FLastEncPixH) then
+  begin
+    FSixelData := TSixelEncoder.Encode(FPixels, EncSrcX, EncSrcY, EncPixW, EncPixH);
+    FSixelDirty := False;
+    FLastEncPixW := EncPixW;
+    FLastEncPixH := EncPixH;
+  end;
+
+  if FSixelData <> '' then
+    Screen.RegisterSixelRegion(EncScreenX, EncScreenY, EncCellW, EncCellH, FSixelData);
+end;
+
+procedure TSixelAnimView.Update;
+var
+  Now64: UInt64;
+begin
+  Now64 := GetTickCount64;
+  if (Now64 - FLastUpdate) < Cardinal(FUpdateInterval) then Exit;
+  FLastUpdate := Now64;
+
+  EnsurePixelBuffer;
+  UpdatePixels;
+  Inc(FTick);
+  FSixelDirty := True;
+  DrawView;
+end;
+
+function TSixelAnimView.GetPalette: PPalette;
+begin
+  Result := nil;
+end;
+
+procedure TSixelAnimView.SetSixelMode(AValue: Boolean);
+begin
+  if AValue = FSixelMode then Exit;
+  FSixelMode := AValue;
+  { Force pixel buffer reallocation for new resolution }
+  FPixelW := 0;
+  FPixelH := 0;
+  FSixelDirty := True;
+end;
+
+{ TSixelAnimWindow }
+
+constructor TSixelAnimWindow.Create(var Bounds: TRect; const ATitle: string;
+  AViewRef: Pointer);
+begin
+  inherited Create(Bounds, ATitle, wnNoNumber);
+  Options := Options or ofTileable;
+  FViewRef := AViewRef;
+end;
+
+procedure TSixelAnimWindow.Close;
+begin
+  { Hide while subviews are still alive to prevent nil access
+    during cascading focus changes in SetState/ResetCurrent }
+  Hide;
+  inherited Close;
+end;
+
+destructor TSixelAnimWindow.Destroy;
+begin
+  { Nil the owner's field reference so Idle doesn't call Update
+    on a freed view }
+  if FViewRef <> nil then
+    TSixelAnimView(FViewRef^) := nil;
+  inherited Destroy;
+end;
+
+{ TSixelCanvasView }
 
 constructor TSixelCanvasView.Create(var Bounds: TRect; APixelWidth,
   APixelHeight: Integer);
