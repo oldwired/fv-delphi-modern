@@ -97,7 +97,7 @@ type
     { Realtime encoder: fixed 6x6x6 color cube, direct mapping, no dithering.
       Optimized for game engines and animations where speed > fidelity. }
     class function EncodeRealtime(const Pixels: TPixelGrid;
-      SrcX, SrcY, SrcW, SrcH: Integer): string;
+      SrcX, SrcY, SrcW, SrcH: Integer; Scale: Integer = 1): string;
   end;
 
 implementation
@@ -646,10 +646,11 @@ begin
 end;
 
 class function TSixelEncoder.EncodeRealtime(const Pixels: TPixelGrid;
-  SrcX, SrcY, SrcW, SrcH: Integer): string;
+  SrcX, SrcY, SrcW, SrcH: Integer; Scale: Integer = 1): string;
 var
   SB: TStringBuilder;
   PixelH, PixelW: Integer;
+  OutW, OutH: Integer;
   X, Y, J: Integer;
   BandY, RowInBand: Integer;
   NumBands: Integer;
@@ -658,6 +659,7 @@ var
   RegIdx: Integer;
   RGB: Cardinal;
   PixRow: TPixelRow;
+  OutY, SrcRow: Integer;
   { Track which registers are used across the whole frame (for palette) }
   UsedRegs: array[0..RTCubeColors - 1] of Boolean;
   { Band encoding }
@@ -673,6 +675,7 @@ begin
   ImgW := Length(Pixels[0]);
   if ImgW = 0 then Exit;
   if (SrcW <= 0) or (SrcH <= 0) then Exit;
+  if Scale < 1 then Scale := 1;
 
   { Clamp source rect to image bounds }
   ClampedW := SrcW;
@@ -685,7 +688,10 @@ begin
 
   PixelW := ClampedW;
   PixelH := ClampedH;
-  NumBands := (PixelH + 5) div 6;
+  { Output dimensions: source pixels scaled up }
+  OutW := PixelW * Scale;
+  OutH := PixelH * Scale;
+  NumBands := (OutH + 5) div 6;
 
   { One-time init: channel LUT, palette strings, string builder }
   EnsureRTInit;
@@ -734,29 +740,32 @@ begin
   { DCS introducer: P1=0 normal aspect, P2=1 transparent background }
   SB.Append(#27'P0;1q');
 
-  { Raster attributes }
+  { Raster attributes — declare full output (scaled) dimensions }
   SB.Append('"1;1;');
-  SB.Append(IntToStr(PixelW));
+  SB.Append(IntToStr(OutW));
   SB.Append(';');
-  SB.Append(IntToStr(PixelH));
+  SB.Append(IntToStr(OutH));
 
   { Emit only palette entries for registers actually used in this frame }
   for RegIdx := 0 to RTCubeColors - 1 do
     if UsedRegs[RegIdx] then
       SB.Append(FRTCubePalette[RegIdx]);
 
-  { Encode bands of 6 pixel rows }
+  { Encode bands of 6 output pixel rows.
+    Each output row maps back to a source row via div Scale.
+    Each source column emits Scale output pixels via RLE. }
   for BandY := 0 to NumBands - 1 do
   begin
     { Determine which registers appear in this band }
     FillChar(BandColors, SizeOf(BandColors), 0);
     for RowInBand := 0 to 5 do
     begin
-      Y := BandY * 6 + RowInBand;
-      if Y >= PixelH then Break;
+      OutY := BandY * 6 + RowInBand;
+      SrcRow := OutY div Scale;
+      if SrcRow >= PixelH then Break;
       for X := 0 to PixelW - 1 do
       begin
-        RegIdx := FRTRegMap[Y][X];
+        RegIdx := FRTRegMap[SrcRow][X];
         if RegIdx >= 0 then
           BandColors[RegIdx] := True;
       end;
@@ -771,7 +780,8 @@ begin
       SB.Append('#');
       SB.Append(IntToStr(RegIdx));
 
-      { Build sixel data for this register with RLE compression }
+      { Build sixel data for this register with RLE compression.
+        Iterate source columns; each emits Scale output pixels. }
       RunLen := 0;
       LastVal := 255;  { Invalid sentinel }
 
@@ -780,15 +790,16 @@ begin
         SixelBit := 0;
         for RowInBand := 0 to 5 do
         begin
-          Y := BandY * 6 + RowInBand;
-          if (Y < PixelH) and (FRTRegMap[Y][X] = RegIdx) then
+          OutY := BandY * 6 + RowInBand;
+          SrcRow := OutY div Scale;
+          if (SrcRow < PixelH) and (FRTRegMap[SrcRow][X] = RegIdx) then
             SixelBit := SixelBit or (1 shl RowInBand);
         end;
 
         SixelVal := SixelBit + 63;
 
         if SixelVal = LastVal then
-          Inc(RunLen)
+          Inc(RunLen, Scale)
         else
         begin
           { Flush previous run }
@@ -807,7 +818,7 @@ begin
             end;
           end;
           LastVal := SixelVal;
-          RunLen := 1;
+          RunLen := Scale;
         end;
       end;
 

@@ -93,6 +93,7 @@ type
     FSixelSupported: Boolean;                  // True if terminal supports Sixel graphics
     FCellPixelWidth: Integer;                  // Cell width in pixels
     FCellPixelHeight: Integer;                 // Cell height in pixels
+    FByteStr: array[0..255] of string;         // Pre-built IntToStr lookup for 0..255
 
     procedure EnableVTMode;
     procedure DisableVTMode;
@@ -222,6 +223,8 @@ var
 { TScreenBuffer }
 
 constructor TScreenBuffer.Create;
+var
+  I: Integer;
 begin
   inherited Create;
   FWidth := 0;
@@ -232,12 +235,15 @@ begin
   FCursorY := 0;
   FCursorVisible := True;
   FInitialized := False;
-  FOutputBuffer := TStringBuilder.Create(4096);
+  FOutputBuffer := TStringBuilder.Create(256 * 1024);
   FSixelRegions := TList<TSixelRegion>.Create;
   FSixelPrevRegions := TList<TSixelRegion>.Create;
   FSixelSupported := False;
   FCellPixelWidth := 8;
   FCellPixelHeight := 16;
+  { Pre-build IntToStr lookup for all byte values }
+  for I := 0 to 255 do
+    FByteStr[I] := IntToStr(I);
 end;
 
 destructor TScreenBuffer.Destroy;
@@ -546,9 +552,17 @@ end;
 procedure TScreenBuffer.UpdateScreen(Force: Boolean);
 var
   X, Y: Integer;
-  LastSGR: string;
-  CurrentSGR: string;
   IsWide: Boolean;
+  { Cursor tracking - skip MoveCursorVT when cells are consecutive }
+  ExpectX, ExpectY: Integer;
+  CursorKnown: Boolean;
+  { Differential SGR - only emit color components that changed }
+  PrevFG_RGB, PrevBG_RGB: Cardinal;
+  PrevFGIdx, PrevBGIdx: Byte;
+  PrevBold, PrevUnder, PrevInv: Boolean;
+  CurFG_RGB, CurBG_RGB: Cardinal;
+  CurFGIdx, CurBGIdx: Byte;
+  NeedReset, NeedFG, NeedBG, SGRStarted: Boolean;
 begin
   if not FInitialized then Exit;
 
@@ -566,8 +580,15 @@ begin
   if FSixelRegions.Count > 0 then
     EmitSixelRegions;
 
-  { Phase 2: Normal cell rendering loop }
-  LastSGR := '';
+  { Phase 2: Optimized cell rendering with cursor tracking + differential SGR }
+  CursorKnown := False;
+  PrevFG_RGB := $FFFFFFFF;  { Impossible value forces first emit }
+  PrevBG_RGB := $FFFFFFFF;
+  PrevFGIdx := 255;
+  PrevBGIdx := 255;
+  PrevBold := False;
+  PrevUnder := False;
+  PrevInv := False;
 
   for Y := 0 to FHeight - 1 do begin
     X := 0;
@@ -576,40 +597,159 @@ begin
         { Skip Sixel placeholder cells - they are covered by Sixel pixel data }
         if FCells[Y, X].Ch = SixelPlaceholder then begin
           FOldCells[Y, X] := FCells[Y, X];
+          CursorKnown := False;
           Inc(X);
           Continue;
         end;
 
-        { Position cursor for this cell }
-        MoveCursorVT(X, Y);
+        { Cursor positioning: skip if cursor is already at correct position
+          from the previous character output (terminal auto-advances cursor) }
+        if not (CursorKnown and (X = ExpectX) and (Y = ExpectY)) then
+          MoveCursorVT(X, Y);
 
-        { Set attributes if changed }
-        CurrentSGR := BuildSGR(FCells[Y, X]);
-        if CurrentSGR <> LastSGR then begin
-          WriteVT(CurrentSGR);
-          LastSGR := CurrentSGR;
+        { Determine current cell's color state }
+        CurFG_RGB := FCells[Y, X].FG_RGB;
+        CurBG_RGB := FCells[Y, X].BG_RGB;
+        if CurFG_RGB = 0 then begin
+          if FCells[Y, X].FG < 16 then
+            CurFGIdx := ColorMap[FCells[Y, X].FG]
+          else
+            CurFGIdx := FCells[Y, X].FG;
         end;
+        if CurBG_RGB = 0 then begin
+          if FCells[Y, X].BG < 16 then
+            CurBGIdx := ColorMap[FCells[Y, X].BG]
+          else
+            CurBGIdx := FCells[Y, X].BG;
+        end;
+
+        { Check if we need a full SGR reset: required on first cell, or when
+          text attributes (bold/underline/inverse) change — these can't be
+          turned off individually without a reset }
+        NeedReset := (PrevFG_RGB = $FFFFFFFF) or
+          (FCells[Y, X].Bold <> PrevBold) or
+          (FCells[Y, X].Underline <> PrevUnder) or
+          (FCells[Y, X].Inverse <> PrevInv);
+
+        if NeedReset then begin
+          { Full SGR: reset + all attributes + both colors }
+          FOutputBuffer.Append(VT_CSI);
+          FOutputBuffer.Append('0');
+          if FCells[Y, X].Bold then FOutputBuffer.Append(';1');
+          if FCells[Y, X].Underline then FOutputBuffer.Append(';4');
+          if FCells[Y, X].Inverse then FOutputBuffer.Append(';7');
+
+          if CurFG_RGB <> 0 then begin
+            FOutputBuffer.Append(';38;2;');
+            FOutputBuffer.Append(FByteStr[(CurFG_RGB shr 16) and $FF]);
+            FOutputBuffer.Append(';');
+            FOutputBuffer.Append(FByteStr[(CurFG_RGB shr 8) and $FF]);
+            FOutputBuffer.Append(';');
+            FOutputBuffer.Append(FByteStr[CurFG_RGB and $FF]);
+          end else begin
+            FOutputBuffer.Append(';38;5;');
+            FOutputBuffer.Append(FByteStr[CurFGIdx]);
+          end;
+
+          if CurBG_RGB <> 0 then begin
+            FOutputBuffer.Append(';48;2;');
+            FOutputBuffer.Append(FByteStr[(CurBG_RGB shr 16) and $FF]);
+            FOutputBuffer.Append(';');
+            FOutputBuffer.Append(FByteStr[(CurBG_RGB shr 8) and $FF]);
+            FOutputBuffer.Append(';');
+            FOutputBuffer.Append(FByteStr[CurBG_RGB and $FF]);
+          end else begin
+            FOutputBuffer.Append(';48;5;');
+            FOutputBuffer.Append(FByteStr[CurBGIdx]);
+          end;
+
+          FOutputBuffer.Append('m');
+          PrevBold := FCells[Y, X].Bold;
+          PrevUnder := FCells[Y, X].Underline;
+          PrevInv := FCells[Y, X].Inverse;
+        end
+        else begin
+          { Differential SGR: only emit color components that changed }
+          NeedFG := False;
+          NeedBG := False;
+
+          if CurFG_RGB <> 0 then begin
+            if CurFG_RGB <> PrevFG_RGB then NeedFG := True;
+          end else begin
+            if (PrevFG_RGB <> 0) or (CurFGIdx <> PrevFGIdx) then NeedFG := True;
+          end;
+
+          if CurBG_RGB <> 0 then begin
+            if CurBG_RGB <> PrevBG_RGB then NeedBG := True;
+          end else begin
+            if (PrevBG_RGB <> 0) or (CurBGIdx <> PrevBGIdx) then NeedBG := True;
+          end;
+
+          if NeedFG or NeedBG then begin
+            FOutputBuffer.Append(VT_CSI);
+            SGRStarted := False;
+
+            if NeedFG then begin
+              if CurFG_RGB <> 0 then begin
+                FOutputBuffer.Append('38;2;');
+                FOutputBuffer.Append(FByteStr[(CurFG_RGB shr 16) and $FF]);
+                FOutputBuffer.Append(';');
+                FOutputBuffer.Append(FByteStr[(CurFG_RGB shr 8) and $FF]);
+                FOutputBuffer.Append(';');
+                FOutputBuffer.Append(FByteStr[CurFG_RGB and $FF]);
+              end else begin
+                FOutputBuffer.Append('38;5;');
+                FOutputBuffer.Append(FByteStr[CurFGIdx]);
+              end;
+              SGRStarted := True;
+            end;
+
+            if NeedBG then begin
+              if SGRStarted then FOutputBuffer.Append(';');
+              if CurBG_RGB <> 0 then begin
+                FOutputBuffer.Append('48;2;');
+                FOutputBuffer.Append(FByteStr[(CurBG_RGB shr 16) and $FF]);
+                FOutputBuffer.Append(';');
+                FOutputBuffer.Append(FByteStr[(CurBG_RGB shr 8) and $FF]);
+                FOutputBuffer.Append(';');
+                FOutputBuffer.Append(FByteStr[CurBG_RGB and $FF]);
+              end else begin
+                FOutputBuffer.Append('48;5;');
+                FOutputBuffer.Append(FByteStr[CurBGIdx]);
+              end;
+            end;
+
+            FOutputBuffer.Append('m');
+          end;
+        end;
+
+        { Update SGR tracking state }
+        PrevFG_RGB := CurFG_RGB;
+        PrevBG_RGB := CurBG_RGB;
+        PrevFGIdx := CurFGIdx;
+        PrevBGIdx := CurBGIdx;
 
         { Output character }
         if FCells[Y, X].Ch <> '' then
-          WriteVT(FCells[Y, X].Ch)
+          FOutputBuffer.Append(FCells[Y, X].Ch)
         else
-          WriteVT(' ');
+          FOutputBuffer.Append(' ');
 
         { Update old buffer }
         FOldCells[Y, X] := FCells[Y, X];
 
-        { Check if this cell contains a wide character (emoji, CJK, etc.)
-          If so, skip the next cell - the terminal already used 2 columns
-          for this character. Writing the continuation cell would overwrite
-          the second visual column of the wide character. }
+        { Track cursor for sequential detection + handle wide characters }
         IsWide := IsWideString(FCells[Y, X].Ch);
         if IsWide and (X + 1 < FWidth) then begin
-          { Mark continuation cell as up-to-date so it won't be redrawn }
           FOldCells[Y, X + 1] := FCells[Y, X + 1];
           Inc(X);  { Skip the continuation cell }
         end;
-      end;
+        ExpectX := X + 1;
+        ExpectY := Y;
+        CursorKnown := True;
+      end
+      else
+        CursorKnown := False;
       Inc(X);
     end;
   end;

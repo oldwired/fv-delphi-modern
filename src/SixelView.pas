@@ -51,6 +51,7 @@ type
     FLastEncPixW: Integer;
     FLastEncPixH: Integer;
     FLastUpdate: UInt64;
+    FSixelScale: Integer;
     procedure DrawSixel;
     procedure DrawHalfBlock;
   protected
@@ -72,6 +73,8 @@ type
     { When True, uses the fast 6x6x6 cube encoder instead of the adaptive
       quality encoder. Best for game engines and animations. }
     property RealtimeMode: Boolean read FRealtimeMode write FRealtimeMode;
+    { Sixel render scale divisor: 1=full, 2=half, 4=quarter resolution }
+    property SixelScale: Integer read FSixelScale write FSixelScale;
   end;
 
   { Window wrapper that fixes the TWindow.Close crash (Hide before Close)
@@ -379,6 +382,7 @@ begin
   FSixelDirty := True;
   FPixelW := 0;
   FPixelH := 0;
+  FSixelScale := 1;
 
   FSixelMode := TSixelEncoder.IsSixelSupported;
   if FSixelMode then
@@ -399,11 +403,14 @@ end;
 procedure TSixelAnimView.EnsurePixelBuffer;
 var
   NeedW, NeedH: Integer;
+  Scale: Integer;
 begin
   if FSixelMode then
   begin
-    NeedW := Size.X * FCellPixelW;
-    NeedH := Size.Y * FCellPixelH;
+    Scale := FSixelScale;
+    if Scale < 1 then Scale := 1;
+    NeedW := (Size.X * FCellPixelW) div Scale;
+    NeedH := (Size.Y * FCellPixelH) div Scale;
   end
   else
   begin
@@ -472,10 +479,13 @@ var
   EncSrcX, EncSrcY: Integer;
   EncScreenX, EncScreenY: Integer;
   EncPixW, EncPixH: Integer;
+  Scale: Integer;
 begin
   if (Screen = nil) or not Screen.Initialized then Exit;
 
   EnsurePixelBuffer;
+  Scale := FSixelScale;
+  if Scale < 1 then Scale := 1;
 
   { Fill all cells with sixel placeholder }
   for Y := 0 to Size.Y - 1 do
@@ -501,7 +511,7 @@ begin
   if EncScreenX < 0 then
   begin
     EncCellW := EncCellW + EncScreenX;
-    EncSrcX := -EncScreenX * FCellPixelW;
+    EncSrcX := (-EncScreenX * FCellPixelW) div Scale;
     EncScreenX := 0;
   end;
 
@@ -509,7 +519,7 @@ begin
   if EncScreenY < 0 then
   begin
     EncCellH := EncCellH + EncScreenY;
-    EncSrcY := -EncScreenY * FCellPixelH;
+    EncSrcY := (-EncScreenY * FCellPixelH) div Scale;
     EncScreenY := 0;
   end;
 
@@ -523,14 +533,14 @@ begin
 
   if (EncCellW <= 0) or (EncCellH <= 0) then Exit;
 
-  { Encode visible portion }
-  EncPixW := EncCellW * FCellPixelW;
-  EncPixH := EncCellH * FCellPixelH;
+  { Encode visible portion — pixel buffer is already at scaled resolution }
+  EncPixW := (EncCellW * FCellPixelW) div Scale;
+  EncPixH := (EncCellH * FCellPixelH) div Scale;
 
   if FSixelDirty or (EncPixW <> FLastEncPixW) or (EncPixH <> FLastEncPixH) then
   begin
     if FRealtimeMode then
-      FSixelData := TSixelEncoder.EncodeRealtime(FPixels, EncSrcX, EncSrcY, EncPixW, EncPixH)
+      FSixelData := TSixelEncoder.EncodeRealtime(FPixels, EncSrcX, EncSrcY, EncPixW, EncPixH, Scale)
     else
       FSixelData := TSixelEncoder.Encode(FPixels, EncSrcX, EncSrcY, EncPixW, EncPixH);
     FSixelDirty := False;
