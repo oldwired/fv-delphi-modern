@@ -1550,6 +1550,12 @@ begin
     EditorDialog(edPasteNotPossible, nil);
     Exit;
   end;
+  { Check for bulk paste from burst detection first }
+  if Drivers.PasteText <> '' then begin
+    InsertUnicodeStr(Drivers.PasteText);
+    Drivers.PasteText := '';
+    Exit;
+  end;
   { Try system clipboard first }
   if FVClipboard.ClipboardHasText then begin
     SysText := FVClipboard.ClipboardGetText;

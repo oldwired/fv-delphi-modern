@@ -55,10 +55,14 @@ type
     FG: Byte;                  // Foreground color (0-15 classic, 0-255 extended)
     BG: Byte;                  // Background color (0-15 classic, 0-255 extended)
     Bold: Boolean;
-    Underline: Boolean;
+    Underline: Boolean;        // Kept for backward compat (set from UnderlineStyle > 0)
     Inverse: Boolean;
+    Italic: Boolean;           // SGR 3
+    Strikethrough: Boolean;    // SGR 9
+    UnderlineStyle: Byte;      // 0=none, 1=single, 2=double, 3=curly, 4=dotted, 5=dashed
     FG_RGB: Cardinal;          // $00RRGGBB, 0 = use FG palette byte
     BG_RGB: Cardinal;          // $00RRGGBB, 0 = use BG palette byte
+    HyperlinkURL: string;      // OSC 8 URL (empty = no link)
     class function Empty: TScreenCell; static;
   end;
 
@@ -68,6 +72,8 @@ type
     Attr: Word;                // Color attribute (legacy format: hi=BG, lo=FG)
     FG_RGB: Cardinal;          // $00RRGGBB, 0 = use Attr palette
     BG_RGB: Cardinal;          // $00RRGGBB, 0 = use Attr palette
+    ExtAttrs: Byte;            // Extended attributes (eaItalic, eaStrikethrough, underline style)
+    HyperlinkURL: string;      // OSC 8 URL (empty = no link)
     class operator Equal(const A, B: TDrawCell): Boolean;
   end;
   PDrawCell = ^TDrawCell;
@@ -84,6 +90,15 @@ type
   PtrUInt = NativeUInt;
 
 const
+  { Extended text attribute flags (for TDrawCell.ExtAttrs) }
+  eaItalic        = $01;  { Bit 0: SGR 3 }
+  eaStrikethrough = $02;  { Bit 1: SGR 9 }
+  eaUnderMask     = $1C;  { Bits 2-4: underline style }
+  eaUnderShift    = 2;
+  { Underline styles (value in bits 2-4):
+    0=none, 1=single(SGR 4), 2=double(SGR 21),
+    3=curly(SGR 4:3), 4=dotted(SGR 4:4), 5=dashed(SGR 4:5) }
+
   { Sixel placeholder character (Private Use Area) }
   SixelPlaceholder = #$E000;
 
@@ -145,8 +160,12 @@ begin
   Result.Bold := False;
   Result.Underline := False;
   Result.Inverse := False;
+  Result.Italic := False;
+  Result.Strikethrough := False;
+  Result.UnderlineStyle := 0;
   Result.FG_RGB := 0;
   Result.BG_RGB := 0;
+  Result.HyperlinkURL := '';
 end;
 
 { TDrawCell }
@@ -154,7 +173,8 @@ end;
 class operator TDrawCell.Equal(const A, B: TDrawCell): Boolean;
 begin
   Result := (A.Ch = B.Ch) and (A.Attr = B.Attr) and
-            (A.FG_RGB = B.FG_RGB) and (A.BG_RGB = B.BG_RGB);
+            (A.FG_RGB = B.FG_RGB) and (A.BG_RGB = B.BG_RGB) and
+            (A.ExtAttrs = B.ExtAttrs) and (A.HyperlinkURL = B.HyperlinkURL);
 end;
 
 function GetErrorCode: LongInt;

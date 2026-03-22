@@ -130,6 +130,8 @@ const
   cmTestCommandSet        = 1062;
   cmTestKeyUpDown         = 1063;
   cmTestConsoleFocus      = 1064;
+  cmTestTextAttrs         = 1065;
+  cmTestPasteDetect       = 1066;
 
   { Local commands for CommandSet demo - must be 0..255 to work with TCommandSet }
   cmDemoSave    = 60;
@@ -257,6 +259,8 @@ type
     procedure TestCommandSet;
     procedure TestKeyUpDown;
     procedure TestConsoleFocus;
+    procedure TestTextAttrs;
+    procedure TestPasteDetect;
     property CalendarDateLabel: TStaticText read FCalendarDateLabel write FCalendarDateLabel;
   end;
 
@@ -397,6 +401,12 @@ type
   public
     constructor Create; reintroduce;
     procedure HandleEvent(var Event: TEvent); override;
+  end;
+
+  { Interior view for text attributes demo }
+  TTextAttrsDemoView = class(TView)
+  public
+    procedure Draw; override;
   end;
 
   { Custom scroller that displays numbered lines }
@@ -1933,7 +1943,9 @@ begin
         NewItem('Command~S~et Demo', '', kbNoKey, cmTestCommandSet, hcNoContext,
         NewItem('~K~ey Up/Down', '', kbNoKey, cmTestKeyUpDown, hcNoContext,
         NewItem('Console ~F~ocus', '', kbNoKey, cmTestConsoleFocus, hcNoContext,
-        nil)))))))))))))))),
+        NewItem('Text ~A~ttributes', '', kbNoKey, cmTestTextAttrs, hcNoContext,
+        NewItem('~P~aste Detection', '', kbNoKey, cmTestPasteDetect, hcNoContext,
+        nil)))))))))))))))))),
       nil)))))))))))))))))))))))))))),
     NewSubMenu('~W~indow', hcNoContext, NewMenu(
       NewItem('~T~ile', '', kbNoKey, cmTile, hcNoContext,
@@ -2042,6 +2054,8 @@ begin
         cmTestCommandSet: TestCommandSet;
         cmTestKeyUpDown: TestKeyUpDown;
         cmTestConsoleFocus: TestConsoleFocus;
+        cmTestTextAttrs: TestTextAttrs;
+        cmTestPasteDetect: TestPasteDetect;
       else
         Exit;
       end;
@@ -4500,6 +4514,126 @@ var
 begin
   W := TConsoleFocusDemo.Create;
   Inc(WindowCount);
+  Desktop.Insert(W);
+end;
+
+{ TTextAttrsDemoView }
+
+procedure TTextAttrsDemoView.Draw;
+var
+  B: TDrawBuffer;
+  W: Integer;
+  C: Byte;
+begin
+  W := Size.X;
+  C := $1E; { yellow on blue }
+
+  { Line 0: Normal }
+  DrawChar(B, 0, ' ', $17, W);
+  DrawStr(B, 1, 'Normal text', $17);
+  WriteLine(0, 0, W, 1, B);
+
+  { Line 1: Italic }
+  DrawChar(B, 0, ' ', $17, W);
+  DrawStrEx(B, 1, 'Italic text (SGR 3)', $17, eaItalic);
+  WriteLine(0, 1, W, 1, B);
+
+  { Line 2: Strikethrough }
+  DrawChar(B, 0, ' ', $17, W);
+  DrawStrEx(B, 1, 'Strikethrough text (SGR 9)', $17, eaStrikethrough);
+  WriteLine(0, 2, W, 1, B);
+
+  { Line 3: Italic + Strikethrough }
+  DrawChar(B, 0, ' ', $17, W);
+  DrawStrEx(B, 1, 'Italic + Strikethrough', $17, eaItalic or eaStrikethrough);
+  WriteLine(0, 3, W, 1, B);
+
+  { Line 4: separator }
+  DrawChar(B, 0, #$2500, $17, W);
+  WriteLine(0, 4, W, 1, B);
+
+  { Lines 5-9: Underline styles }
+  DrawChar(B, 0, ' ', $17, W);
+  DrawStrEx(B, 1, 'Single underline (SGR 4)', $17, 1 shl eaUnderShift);
+  WriteLine(0, 5, W, 1, B);
+
+  DrawChar(B, 0, ' ', $17, W);
+  DrawStrEx(B, 1, 'Double underline (SGR 21)', $17, 2 shl eaUnderShift);
+  WriteLine(0, 6, W, 1, B);
+
+  DrawChar(B, 0, ' ', $17, W);
+  DrawStrEx(B, 1, 'Curly underline (SGR 4:3)', $1C, 3 shl eaUnderShift);
+  WriteLine(0, 7, W, 1, B);
+
+  DrawChar(B, 0, ' ', $17, W);
+  DrawStrEx(B, 1, 'Dotted underline (SGR 4:4)', $17, 4 shl eaUnderShift);
+  WriteLine(0, 8, W, 1, B);
+
+  DrawChar(B, 0, ' ', $17, W);
+  DrawStrEx(B, 1, 'Dashed underline (SGR 4:5)', $17, 5 shl eaUnderShift);
+  WriteLine(0, 9, W, 1, B);
+
+  { Line 10: separator }
+  DrawChar(B, 0, #$2500, $17, W);
+  WriteLine(0, 10, W, 1, B);
+
+  { Line 11: Combined }
+  DrawChar(B, 0, ' ', $17, W);
+  DrawStrEx(B, 1, 'Italic + Curly + Strikethrough', $1E,
+    eaItalic or eaStrikethrough or (3 shl eaUnderShift));
+  WriteLine(0, 11, W, 1, B);
+
+  { Line 12: Hyperlink }
+  DrawChar(B, 0, ' ', $17, W);
+  DrawStr(B, 1, 'Hyperlink: ', $17);
+  DrawHyperlink(B, 12, 'https://github.com', $1F, 'https://github.com');
+  WriteLine(0, 12, W, 1, B);
+
+  { Line 13: Note }
+  DrawChar(B, 0, ' ', $17, W);
+  DrawStr(B, 1, '(Requires Windows Terminal for full support)', $18);
+  WriteLine(0, 13, W, 1, B);
+end;
+
+procedure TMyApp.TestTextAttrs;
+var
+  R: TRect;
+  W: TWindow;
+  V: TTextAttrsDemoView;
+begin
+  R.Assign(5, 2, 65, 19);
+  W := TWindow.Create(R, 'Text Attributes Demo', wnNoNumber);
+  W.GetExtent(R);
+  R.Grow(-1, -1);
+  V := TTextAttrsDemoView.Create(R);
+  V.GrowMode := gfGrowHiX or gfGrowHiY;
+  W.Insert(V);
+  Inc(WindowCount);
+  Desktop.Insert(W);
+end;
+
+procedure TMyApp.TestPasteDetect;
+var
+  R: TRect;
+  W: TEditWindow;
+  TestText: string;
+begin
+  R.Assign(5, 3, 75, 20);
+  Inc(WindowCount);
+  W := TEditWindow.Create(R, '', SmallInt(WindowCount));
+  W.Title := 'Paste Detection Demo';
+  TestText :=
+    'Paste Detection Demo' + #13#10 +
+    '====================' + #13#10 +
+    '' + #13#10 +
+    'Copy some text from another application and' + #13#10 +
+    'paste it below this line. When 3+ characters' + #13#10 +
+    'arrive in rapid succession, FV detects it as' + #13#10 +
+    'a paste and inserts as a single operation via' + #13#10 +
+    'the cmPaste command.' + #13#10 +
+    '' + #13#10 +
+    'Paste here:' + #13#10;
+  W.Editor.InsertUnicodeStr(TestText);
   Desktop.Insert(W);
 end;
 

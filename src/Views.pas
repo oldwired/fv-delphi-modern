@@ -1198,6 +1198,16 @@ begin
         FVScreen.BGRGBBuf[ScreenOffset + (J - x1)] := Cell.BG_RGB;
       end;
     end;
+    { Copy extended attributes and hyperlink URL }
+    if ScreenOffset + (J - x1) < Length(FVScreen.ExtAttrsBuf) then begin
+      if ShadowCounter > 0 then begin
+        FVScreen.ExtAttrsBuf[ScreenOffset + (J - x1)] := 0;
+        FVScreen.HyperlinkBuf[ScreenOffset + (J - x1)] := '';
+      end else begin
+        FVScreen.ExtAttrsBuf[ScreenOffset + (J - x1)] := Cell.ExtAttrs;
+        FVScreen.HyperlinkBuf[ScreenOffset + (J - x1)] := Cell.HyperlinkURL;
+      end;
+    end;
   end;
 end;
 

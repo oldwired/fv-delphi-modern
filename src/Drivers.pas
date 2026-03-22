@@ -201,6 +201,10 @@ procedure DrawCStr(var Buf: TDrawBuffer; Pos: Integer; const S: string; Attrs: W
 procedure DrawBuf(var Dest: TDrawBuffer; DestPos: Integer; const Source: TDrawBuffer; SourcePos: Integer; Count: Integer);
 procedure DrawRGBCell(var Buf: TDrawBuffer; Pos: Integer;
   const Ch: string; FG_RGB, BG_RGB: Cardinal);
+{ Extended attribute drawing }
+procedure DrawCharEx(var Buf: TDrawBuffer; Pos: Integer; Ch: Char; Attr: Byte; ExtAttrs: Byte; Count: Integer);
+procedure DrawStrEx(var Buf: TDrawBuffer; Pos: Integer; const S: string; Attr: Byte; ExtAttrs: Byte);
+procedure DrawHyperlink(var Buf: TDrawBuffer; Pos: Integer; const Text: string; Attr: Byte; const URL: string);
 
 { String measurement }
 function StrWidth(const S: string): Integer;
@@ -289,6 +293,11 @@ var
     Supports surrogate pairs (emoji) that can't fit in a single Char.
     When this is non-empty, use it instead of Event.UnicodeChar for text insertion. }
   LastUnicodeStr: string;
+
+  { Accumulated text from paste burst detection.
+    When non-empty, GetKeyEvent detected a paste and returned cmPaste.
+    ClipPaste checks this before the system clipboard. }
+  PasteText: string;
 
 implementation
 
@@ -436,6 +445,8 @@ begin
     Buf[Pos].Attr := Attr;
     Buf[Pos].FG_RGB := 0;
     Buf[Pos].BG_RGB := 0;
+    Buf[Pos].ExtAttrs := 0;
+    Buf[Pos].HyperlinkURL := '';
   end;
 end;
 
@@ -452,6 +463,8 @@ begin
       Buf[Pos + I].Attr := Attr;
       Buf[Pos + I].FG_RGB := 0;
       Buf[Pos + I].BG_RGB := 0;
+      Buf[Pos + I].ExtAttrs := 0;
+      Buf[Pos + I].HyperlinkURL := '';
     end;
   end;
 end;
@@ -482,6 +495,8 @@ begin
         Buf[Pos + Col].Attr := Attr;
         Buf[Pos + Col].FG_RGB := 0;
         Buf[Pos + Col].BG_RGB := 0;
+        Buf[Pos + Col].ExtAttrs := 0;
+        Buf[Pos + Col].HyperlinkURL := '';
       end;
       { Fill continuation cell for wide chars }
       if (W = 2) and (Pos + Col + 1 >= 0) and (Pos + Col + 1 < MaxViewWidth) then
@@ -490,6 +505,8 @@ begin
         Buf[Pos + Col + 1].Attr := Attr;
         Buf[Pos + Col + 1].FG_RGB := 0;
         Buf[Pos + Col + 1].BG_RGB := 0;
+        Buf[Pos + Col + 1].ExtAttrs := 0;
+        Buf[Pos + Col + 1].HyperlinkURL := '';
       end;
       Inc(Col, W);
       Inc(I, 2);
@@ -503,6 +520,8 @@ begin
         Buf[Pos + Col].Attr := Attr;
         Buf[Pos + Col].FG_RGB := 0;
         Buf[Pos + Col].BG_RGB := 0;
+        Buf[Pos + Col].ExtAttrs := 0;
+        Buf[Pos + Col].HyperlinkURL := '';
       end;
       { Fill continuation cell for wide BMP chars (CJK) }
       if (W = 2) and (Pos + Col + 1 >= 0) and (Pos + Col + 1 < MaxViewWidth) then
@@ -511,6 +530,8 @@ begin
         Buf[Pos + Col + 1].Attr := Attr;
         Buf[Pos + Col + 1].FG_RGB := 0;
         Buf[Pos + Col + 1].BG_RGB := 0;
+        Buf[Pos + Col + 1].ExtAttrs := 0;
+        Buf[Pos + Col + 1].HyperlinkURL := '';
       end;
       Inc(Col, W);
       Inc(I);
@@ -614,6 +635,55 @@ begin
     Buf[Pos].Attr := 0;
     Buf[Pos].FG_RGB := FG_RGB;
     Buf[Pos].BG_RGB := BG_RGB;
+    Buf[Pos].ExtAttrs := 0;
+    Buf[Pos].HyperlinkURL := '';
+  end;
+end;
+
+procedure DrawCharEx(var Buf: TDrawBuffer; Pos: Integer; Ch: Char; Attr: Byte; ExtAttrs: Byte; Count: Integer);
+var
+  I: Integer;
+begin
+  for I := 0 to Count - 1 do
+  begin
+    if Pos + I >= MaxViewWidth then Break;
+    if Pos + I >= 0 then
+    begin
+      Buf[Pos + I].Ch := Ch;
+      Buf[Pos + I].Attr := Attr;
+      Buf[Pos + I].FG_RGB := 0;
+      Buf[Pos + I].BG_RGB := 0;
+      Buf[Pos + I].ExtAttrs := ExtAttrs;
+      Buf[Pos + I].HyperlinkURL := '';
+    end;
+  end;
+end;
+
+procedure DrawStrEx(var Buf: TDrawBuffer; Pos: Integer; const S: string; Attr: Byte; ExtAttrs: Byte);
+var
+  I, Len, Col: Integer;
+begin
+  { Draw with standard function first, then apply ExtAttrs }
+  DrawStr(Buf, Pos, S, Attr);
+  { Now set ExtAttrs on the cells we just wrote }
+  Len := StringDisplayWidth(S);
+  for I := 0 to Len - 1 do begin
+    Col := Pos + I;
+    if (Col >= 0) and (Col < MaxViewWidth) then
+      Buf[Col].ExtAttrs := ExtAttrs;
+  end;
+end;
+
+procedure DrawHyperlink(var Buf: TDrawBuffer; Pos: Integer; const Text: string; Attr: Byte; const URL: string);
+var
+  I, Len, Col: Integer;
+begin
+  DrawStr(Buf, Pos, Text, Attr);
+  Len := StringDisplayWidth(Text);
+  for I := 0 to Len - 1 do begin
+    Col := Pos + I;
+    if (Col >= 0) and (Col < MaxViewWidth) then
+      Buf[Col].HyperlinkURL := URL;
   end;
 end;
 
@@ -704,9 +774,9 @@ var
   Written: DWORD;
 begin
   if Enable then
-    Seq := CSI + '?1000h' + CSI + '?1002h' + CSI + '?1006h'
+    Seq := CSI + '?1000h' + CSI + '?1002h' + CSI + '?1006h' + CSI + '?2004h'
   else
-    Seq := CSI + '?1006l' + CSI + '?1003l' + CSI + '?1002l' + CSI + '?1000l';
+    Seq := CSI + '?2004l' + CSI + '?1006l' + CSI + '?1003l' + CSI + '?1002l' + CSI + '?1000l';
 
   WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), PChar(Seq), Length(Seq), Written, nil);
 end;
@@ -1011,6 +1081,57 @@ begin
       end else begin
         PendingHighSurrogate := #0;
         LastUnicodeStr := UChar;
+      end;
+
+      { Paste burst detection: if many printable chars are queued without
+        modifier keys, accumulate as a single paste event instead of
+        individual key events. Threshold: 3+ printable key-downs pending. }
+      if (Ord(UChar) >= 32) and not Ctrl and not Alt then begin
+        var PeekBuf: array[0..3] of TInputRecord;
+        var PeekCount: DWORD;
+        if PeekConsoleInputW(ConsoleInput, PeekBuf[0], 4, PeekCount) and (PeekCount >= 3) then begin
+          var PrintableCount: Integer := 0;
+          for var K := 0 to Integer(PeekCount) - 1 do
+            if (PeekBuf[K].EventType = KEY_EVENT) and PeekBuf[K].Event.KeyEvent.bKeyDown
+               and (Ord(PeekBuf[K].Event.KeyEvent.UnicodeChar) >= 32) then
+              Inc(PrintableCount);
+          if PrintableCount >= 3 then begin
+            { Accumulate all queued printable chars as a single paste }
+            var SB := TStringBuilder.Create;
+            try
+              SB.Append(UChar);
+              while PeekConsoleInputW(ConsoleInput, PeekBuf[0], 1, PeekCount) and (PeekCount > 0) do begin
+                if PeekBuf[0].EventType <> KEY_EVENT then Break;
+                if not PeekBuf[0].Event.KeyEvent.bKeyDown then begin
+                  ReadConsoleInputW(ConsoleInput, PeekBuf[0], 1, PeekCount);
+                  Continue;
+                end;
+                var PCh := PeekBuf[0].Event.KeyEvent.UnicodeChar;
+                if (Ord(PCh) < 32) and (PCh <> #13) and (PCh <> #10) and (PCh <> #9) then
+                  Break;
+                ReadConsoleInputW(ConsoleInput, PeekBuf[0], 1, PeekCount);
+                { Handle surrogate pairs }
+                if (Ord(PCh) >= $D800) and (Ord(PCh) <= $DBFF) then begin
+                  if PeekConsoleInputW(ConsoleInput, PeekBuf[0], 1, PeekCount) and (PeekCount > 0)
+                     and (PeekBuf[0].EventType = KEY_EVENT) and PeekBuf[0].Event.KeyEvent.bKeyDown then begin
+                    ReadConsoleInputW(ConsoleInput, PeekBuf[0], 1, PeekCount);
+                    SB.Append(PCh);
+                    SB.Append(PeekBuf[0].Event.KeyEvent.UnicodeChar);
+                  end;
+                  Continue;
+                end;
+                SB.Append(PCh);
+              end;
+              PasteText := SB.ToString;
+              FillChar(Event, SizeOf(Event), 0);
+              Event.What := evCommand;
+              Event.Command := cmPaste;
+              Exit;
+            finally
+              SB.Free;
+            end;
+          end;
+        end;
       end;
 
       { Build KeyCode - for ASCII chars, use the byte value; for Unicode, use 0 in low byte }
