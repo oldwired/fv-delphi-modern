@@ -3,6 +3,7 @@
 {$APPTYPE CONSOLE}
 
 uses
+  Winapi.Windows,
   System.SysUtils, System.Classes, System.Generics.Collections, System.JSON,
   FVInterfaces in 'src\FVInterfaces.pas',
   FVSerialization in 'src\FVSerialization.pas',
@@ -127,6 +128,7 @@ const
   cmTestSixelSpectrometer = 1060;
   cmTestSixelSine         = 1061;
   cmTestCommandSet        = 1062;
+  cmTestKeyUpDown         = 1063;
 
   { Local commands for CommandSet demo - must be 0..255 to work with TCommandSet }
   cmDemoSave    = 60;
@@ -252,6 +254,7 @@ type
     procedure TestSixelSpectrometer;
     procedure TestSixelSine;
     procedure TestCommandSet;
+    procedure TestKeyUpDown;
     property CalendarDateLabel: TStaticText read FCalendarDateLabel write FCalendarDateLabel;
   end;
 
@@ -351,6 +354,22 @@ type
   public
     constructor Create; reintroduce;
     procedure HandleEvent(var Event: TEvent); override;
+  end;
+
+  { Demo dialog for key-up/key-down events }
+  TKeyUpDownDemo = class(TDialog)
+  private
+    FEventLog: array[0..11] of string;  { Scrolling event log lines }
+    FHeldKeys: array[0..7] of string;   { Currently held key names }
+    FHeldCount: Integer;
+  public
+    constructor Create; reintroduce;
+    procedure HandleEvent(var Event: TEvent); override;
+    procedure Draw; override;
+    procedure AddLogLine(const S: string);
+    procedure KeyPressed(const Name: string);
+    procedure KeyReleased(const Name: string);
+    function VKeyName(VKey: Word; UChar: Char): string;
   end;
 
   { Custom scroller that displays numbered lines }
@@ -1885,7 +1904,8 @@ begin
         NewItem('SIXEL ~S~pectrometer', '', kbNoKey, cmTestSixelSpectrometer, hcNoContext,
         NewItem('SIXEL ~A~nimated Sine', '', kbNoKey, cmTestSixelSine, hcNoContext,
         NewItem('Command~S~et Demo', '', kbNoKey, cmTestCommandSet, hcNoContext,
-        nil)))))))))))))),
+        NewItem('~K~ey Up/Down', '', kbNoKey, cmTestKeyUpDown, hcNoContext,
+        nil))))))))))))))),
       nil)))))))))))))))))))))))))))),
     NewSubMenu('~W~indow', hcNoContext, NewMenu(
       NewItem('~T~ile', '', kbNoKey, cmTile, hcNoContext,
@@ -1992,6 +2012,7 @@ begin
         cmTestSixelSpectrometer: TestSixelSpectrometer;
         cmTestSixelSine: TestSixelSine;
         cmTestCommandSet: TestCommandSet;
+        cmTestKeyUpDown: TestKeyUpDown;
       else
         Exit;
       end;
@@ -4138,6 +4159,209 @@ begin
   Desktop.ExecView(D);
   { Re-enable commands in case dialog was closed while disabled }
   EnableCommands([cmDemoSave, cmDemoPrint, cmDemoExport]);
+  D.Free;
+end;
+
+{ TKeyUpDownDemo }
+
+constructor TKeyUpDownDemo.Create;
+var
+  R: TRect;
+begin
+  R.Assign(5, 2, 65, 22);
+  inherited Create(R, 'Key Up/Down Events');
+  FHeldCount := 0;
+end;
+
+function TKeyUpDownDemo.VKeyName(VKey: Word; UChar: Char): string;
+begin
+  case VKey of
+    VK_BACK:    Result := 'Backspace';
+    VK_TAB:     Result := 'Tab';
+    VK_RETURN:  Result := 'Enter';
+    VK_ESCAPE:  Result := 'Esc';
+    VK_SPACE:   Result := 'Space';
+    VK_PRIOR:   Result := 'PgUp';
+    VK_NEXT:    Result := 'PgDn';
+    VK_END:     Result := 'End';
+    VK_HOME:    Result := 'Home';
+    VK_LEFT:    Result := 'Left';
+    VK_UP:      Result := 'Up';
+    VK_RIGHT:   Result := 'Right';
+    VK_DOWN:    Result := 'Down';
+    VK_INSERT:  Result := 'Ins';
+    VK_DELETE:  Result := 'Del';
+    VK_F1..VK_F12: Result := 'F' + IntToStr(VKey - VK_F1 + 1);
+  else
+    if (UChar >= ' ') and (UChar <= '~') then
+      Result := UpperCase(UChar)
+    else if UChar <> #0 then
+      Result := 'U+' + IntToHex(Ord(UChar), 4)
+    else
+      Result := 'VK_' + IntToHex(VKey, 2);
+  end;
+end;
+
+procedure TKeyUpDownDemo.AddLogLine(const S: string);
+var
+  I: Integer;
+begin
+  for I := 0 to High(FEventLog) - 1 do
+    FEventLog[I] := FEventLog[I + 1];
+  FEventLog[High(FEventLog)] := S;
+end;
+
+procedure TKeyUpDownDemo.KeyPressed(const Name: string);
+var
+  I: Integer;
+begin
+  { Check if already tracked }
+  for I := 0 to FHeldCount - 1 do
+    if FHeldKeys[I] = Name then Exit;
+  if FHeldCount <= High(FHeldKeys) then begin
+    FHeldKeys[FHeldCount] := Name;
+    Inc(FHeldCount);
+  end;
+end;
+
+procedure TKeyUpDownDemo.KeyReleased(const Name: string);
+var
+  I, J: Integer;
+begin
+  for I := 0 to FHeldCount - 1 do begin
+    if FHeldKeys[I] = Name then begin
+      for J := I to FHeldCount - 2 do
+        FHeldKeys[J] := FHeldKeys[J + 1];
+      Dec(FHeldCount);
+      FHeldKeys[FHeldCount] := '';
+      Exit;
+    end;
+  end;
+end;
+
+procedure TKeyUpDownDemo.HandleEvent(var Event: TEvent);
+var
+  Name, Line, Shift: string;
+  VKey: Word;
+begin
+  if ((Event.What = evKeyDown) or (Event.What = evKeyUp)) and
+     (Event.KeyCode <> kbEsc) then begin
+    { Extract VKey from ScanCode - for basic keys this works }
+    VKey := Event.ScanCode;
+    { Map common scan codes to VK codes for display }
+    case VKey of
+      $01: VKey := VK_ESCAPE;
+      $0E: VKey := VK_BACK;
+      $0F: VKey := VK_TAB;
+      $1C: VKey := VK_RETURN;
+      $39: VKey := VK_SPACE;
+      $3B..$44: VKey := VK_F1 + (VKey - $3B);
+      $47: VKey := VK_HOME;
+      $48: VKey := VK_UP;
+      $49: VKey := VK_PRIOR;
+      $4B: VKey := VK_LEFT;
+      $4D: VKey := VK_RIGHT;
+      $4F: VKey := VK_END;
+      $50: VKey := VK_DOWN;
+      $51: VKey := VK_NEXT;
+      $52: VKey := VK_INSERT;
+      $53: VKey := VK_DELETE;
+      $57: VKey := VK_F11;
+      $58: VKey := VK_F12;
+    else
+      { For letter/number keys, use UnicodeChar }
+      if Event.UnicodeChar >= ' ' then
+        VKey := Ord(UpCase(Event.UnicodeChar));
+    end;
+
+    Name := VKeyName(VKey, Event.UnicodeChar);
+
+    { Build shift state string }
+    Shift := '';
+    if Event.KeyShift and kbCtrlShift <> 0 then Shift := Shift + 'Ctrl+';
+    if Event.KeyShift and kbAltShift <> 0 then Shift := Shift + 'Alt+';
+    if Event.KeyShift and (kbLeftShift or kbRightShift) <> 0 then Shift := Shift + 'Shift+';
+
+    if Event.What = evKeyDown then begin
+      Line := 'DOWN  ' + Shift + Name;
+      KeyPressed(Name);
+    end else begin
+      Line := '  UP  ' + Shift + Name;
+      KeyReleased(Name);
+    end;
+    Line := Line + '  (code=$' + IntToHex(Event.KeyCode, 4) + ')';
+
+    AddLogLine(Line);
+    DrawView;
+    ClearEvent(Event);
+    Exit;
+  end;
+
+  { Let Esc close the dialog via inherited }
+  inherited HandleEvent(Event);
+end;
+
+procedure TKeyUpDownDemo.Draw;
+var
+  B: TDrawBuffer;
+  I, W: Integer;
+  S, HeldStr: string;
+  C: Byte;
+begin
+  inherited Draw;
+  W := Size.X;
+  C := GetColor(1);
+
+  { Title line: "Held keys:" }
+  DrawChar(B, 0, ' ', C, W);
+  HeldStr := 'Held: ';
+  if FHeldCount = 0 then
+    HeldStr := HeldStr + '(none)'
+  else begin
+    for I := 0 to FHeldCount - 1 do begin
+      if I > 0 then HeldStr := HeldStr + ', ';
+      HeldStr := HeldStr + '[' + FHeldKeys[I] + ']';
+    end;
+  end;
+  DrawStr(B, 1, HeldStr, C);
+  WriteLine(0, 1, W, 1, B);
+
+  { Separator }
+  DrawChar(B, 0, #$2500, C, W);
+  WriteLine(0, 2, W, 1, B);
+
+  { Header }
+  DrawChar(B, 0, ' ', C, W);
+  DrawStr(B, 1, 'Event Log (press and release keys):', C);
+  WriteLine(0, 3, W, 1, B);
+
+  { Event log lines }
+  for I := 0 to High(FEventLog) do begin
+    DrawChar(B, 0, ' ', C, W);
+    S := FEventLog[I];
+    if S <> '' then begin
+      if Copy(S, 1, 4) = 'DOWN' then
+        DrawStr(B, 1, S, $2E)  { yellow on green - key down }
+      else
+        DrawStr(B, 1, S, $1F); { white on blue - key up }
+    end;
+    WriteLine(0, 4 + I, W, 1, B);
+  end;
+
+  { Footer }
+  DrawChar(B, 0, #$2500, C, W);
+  WriteLine(0, 17, W, 1, B);
+  DrawChar(B, 0, ' ', C, W);
+  DrawStr(B, 1, 'Press Esc to close. Modifier-only releases are filtered.', C);
+  WriteLine(0, 18, W, 1, B);
+end;
+
+procedure TMyApp.TestKeyUpDown;
+var
+  D: TKeyUpDownDemo;
+begin
+  D := TKeyUpDownDemo.Create;
+  Desktop.ExecView(D);
   D.Free;
 end;
 

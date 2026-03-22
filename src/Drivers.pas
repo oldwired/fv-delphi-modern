@@ -24,6 +24,7 @@ const
   evMouseMove = $0004;
   evMouseAuto = $0008;
   evKeyDown   = $0010;
+  evKeyUp     = $0020;
   evCommand   = $0100;
   evBroadcast = $0200;
   evTerminal  = $1000;   { Terminal/ConPTY events }
@@ -31,7 +32,7 @@ const
   { Event code masks }
   evNothing   = $0000;
   evMouse     = $000F;
-  evKeyboard  = $0010;
+  evKeyboard  = $0030;
   evMessage   = $FF00;
 
   { Terminal event commands }
@@ -1112,6 +1113,37 @@ begin
       Event.CharCode := AnsiChar(Lo(KeyCode));  { Extract ASCII char from KeyCode }
       Event.ScanCode := Hi(KeyCode);            { Extract scan code from KeyCode }
       Event.UnicodeChar := UChar;               { Store full Unicode character }
+      Event.KeyShift := GetShiftState;
+      Exit;
+    end
+    else begin
+      { Key-up event: report which key was released }
+      VKey := InputRec.Event.KeyEvent.wVirtualKeyCode;
+      ScanCode := InputRec.Event.KeyEvent.wVirtualScanCode;
+      UChar := InputRec.Event.KeyEvent.UnicodeChar;
+
+      { Skip bare modifier releases (Shift/Ctrl/Alt/CapsLock/NumLock/ScrollLock)
+        unless the application explicitly wants them - they generate too much noise.
+        We still deliver key-up for all normal keys. }
+      case VKey of
+        VK_SHIFT, VK_LSHIFT, VK_RSHIFT,
+        VK_CONTROL, VK_LCONTROL, VK_RCONTROL,
+        VK_MENU, VK_LMENU, VK_RMENU,
+        VK_CAPITAL, VK_NUMLOCK, VK_SCROLL:
+          Continue;  { Skip modifier-only key-up }
+      end;
+
+      { Build a simple KeyCode from scan code + Unicode char }
+      if Ord(UChar) <= 255 then
+        KeyCode := (ScanCode shl 8) or Ord(UChar)
+      else
+        KeyCode := (ScanCode shl 8);
+
+      Event.What := evKeyUp;
+      Event.KeyCode := KeyCode;
+      Event.CharCode := AnsiChar(Lo(KeyCode));
+      Event.ScanCode := Hi(KeyCode);
+      Event.UnicodeChar := UChar;
       Event.KeyShift := GetShiftState;
       Exit;
     end;
