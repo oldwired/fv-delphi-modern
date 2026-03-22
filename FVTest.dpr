@@ -129,6 +129,7 @@ const
   cmTestSixelSine         = 1061;
   cmTestCommandSet        = 1062;
   cmTestKeyUpDown         = 1063;
+  cmTestConsoleFocus      = 1064;
 
   { Local commands for CommandSet demo - must be 0..255 to work with TCommandSet }
   cmDemoSave    = 60;
@@ -255,6 +256,7 @@ type
     procedure TestSixelSine;
     procedure TestCommandSet;
     procedure TestKeyUpDown;
+    procedure TestConsoleFocus;
     property CalendarDateLabel: TStaticText read FCalendarDateLabel write FCalendarDateLabel;
   end;
 
@@ -356,20 +358,45 @@ type
     procedure HandleEvent(var Event: TEvent); override;
   end;
 
-  { Demo dialog for key-up/key-down events }
-  TKeyUpDownDemo = class(TDialog)
-  private
+  { Interior content view for key-up/key-down demo }
+  TKeyUpDownView = class(TView)
+  public
     FEventLog: array[0..11] of string;  { Scrolling event log lines }
     FHeldKeys: array[0..7] of string;   { Currently held key names }
     FHeldCount: Integer;
-  public
-    constructor Create; reintroduce;
-    procedure HandleEvent(var Event: TEvent); override;
     procedure Draw; override;
     procedure AddLogLine(const S: string);
     procedure KeyPressed(const Name: string);
     procedure KeyReleased(const Name: string);
     function VKeyName(VKey: Word; UChar: Char): string;
+  end;
+
+  { Demo dialog for key-up/key-down events }
+  TKeyUpDownDemo = class(TDialog)
+  private
+    FContent: TKeyUpDownView;
+  public
+    constructor Create; reintroduce;
+    procedure HandleEvent(var Event: TEvent); override;
+  end;
+
+  { Interior content view for console focus demo }
+  TConsoleFocusView = class(TView)
+  public
+    FEventLog: array[0..13] of string;
+    FLogCount: Integer;
+    FFocused: Boolean;
+    procedure Draw; override;
+    procedure AddLogLine(const S: string);
+  end;
+
+  { Demo window for console focus in/out events }
+  TConsoleFocusDemo = class(TWindow)
+  private
+    FContent: TConsoleFocusView;
+  public
+    constructor Create; reintroduce;
+    procedure HandleEvent(var Event: TEvent); override;
   end;
 
   { Custom scroller that displays numbered lines }
@@ -1905,7 +1932,8 @@ begin
         NewItem('SIXEL ~A~nimated Sine', '', kbNoKey, cmTestSixelSine, hcNoContext,
         NewItem('Command~S~et Demo', '', kbNoKey, cmTestCommandSet, hcNoContext,
         NewItem('~K~ey Up/Down', '', kbNoKey, cmTestKeyUpDown, hcNoContext,
-        nil))))))))))))))),
+        NewItem('Console ~F~ocus', '', kbNoKey, cmTestConsoleFocus, hcNoContext,
+        nil)))))))))))))))),
       nil)))))))))))))))))))))))))))),
     NewSubMenu('~W~indow', hcNoContext, NewMenu(
       NewItem('~T~ile', '', kbNoKey, cmTile, hcNoContext,
@@ -2013,6 +2041,7 @@ begin
         cmTestSixelSine: TestSixelSine;
         cmTestCommandSet: TestCommandSet;
         cmTestKeyUpDown: TestKeyUpDown;
+        cmTestConsoleFocus: TestConsoleFocus;
       else
         Exit;
       end;
@@ -4162,18 +4191,9 @@ begin
   D.Free;
 end;
 
-{ TKeyUpDownDemo }
+{ TKeyUpDownView }
 
-constructor TKeyUpDownDemo.Create;
-var
-  R: TRect;
-begin
-  R.Assign(5, 2, 65, 22);
-  inherited Create(R, 'Key Up/Down Events');
-  FHeldCount := 0;
-end;
-
-function TKeyUpDownDemo.VKeyName(VKey: Word; UChar: Char): string;
+function TKeyUpDownView.VKeyName(VKey: Word; UChar: Char): string;
 begin
   case VKey of
     VK_BACK:    Result := 'Backspace';
@@ -4202,7 +4222,7 @@ begin
   end;
 end;
 
-procedure TKeyUpDownDemo.AddLogLine(const S: string);
+procedure TKeyUpDownView.AddLogLine(const S: string);
 var
   I: Integer;
 begin
@@ -4211,11 +4231,10 @@ begin
   FEventLog[High(FEventLog)] := S;
 end;
 
-procedure TKeyUpDownDemo.KeyPressed(const Name: string);
+procedure TKeyUpDownView.KeyPressed(const Name: string);
 var
   I: Integer;
 begin
-  { Check if already tracked }
   for I := 0 to FHeldCount - 1 do
     if FHeldKeys[I] = Name then Exit;
   if FHeldCount <= High(FHeldKeys) then begin
@@ -4224,7 +4243,7 @@ begin
   end;
 end;
 
-procedure TKeyUpDownDemo.KeyReleased(const Name: string);
+procedure TKeyUpDownView.KeyReleased(const Name: string);
 var
   I, J: Integer;
 begin
@@ -4239,6 +4258,77 @@ begin
   end;
 end;
 
+procedure TKeyUpDownView.Draw;
+var
+  B: TDrawBuffer;
+  I, W: Integer;
+  S, HeldStr: string;
+  C: Byte;
+begin
+  W := Size.X;
+  C := $1E; { yellow on blue }
+
+  { Held keys line }
+  DrawChar(B, 0, ' ', C, W);
+  HeldStr := 'Held: ';
+  if FHeldCount = 0 then
+    HeldStr := HeldStr + '(none)'
+  else begin
+    for I := 0 to FHeldCount - 1 do begin
+      if I > 0 then HeldStr := HeldStr + ', ';
+      HeldStr := HeldStr + '[' + FHeldKeys[I] + ']';
+    end;
+  end;
+  DrawStr(B, 1, HeldStr, C);
+  WriteLine(0, 0, W, 1, B);
+
+  { Separator }
+  DrawChar(B, 0, #$2500, $17, W);
+  WriteLine(0, 1, W, 1, B);
+
+  { Header }
+  DrawChar(B, 0, ' ', $17, W);
+  DrawStr(B, 1, 'Event Log (press and release keys):', $17);
+  WriteLine(0, 2, W, 1, B);
+
+  { Event log lines }
+  for I := 0 to High(FEventLog) do begin
+    DrawChar(B, 0, ' ', $17, W);
+    S := FEventLog[I];
+    if S <> '' then begin
+      if Copy(S, 1, 4) = 'DOWN' then
+        DrawStr(B, 1, S, $2E)  { yellow on green }
+      else
+        DrawStr(B, 1, S, $1F); { white on blue }
+    end;
+    WriteLine(0, 3 + I, W, 1, B);
+  end;
+
+  { Footer }
+  DrawChar(B, 0, #$2500, $17, W);
+  WriteLine(0, Size.Y - 2, W, 1, B);
+  DrawChar(B, 0, ' ', $17, W);
+  DrawStr(B, 1, 'Press Esc to close. Modifier-only releases filtered.', $17);
+  WriteLine(0, Size.Y - 1, W, 1, B);
+end;
+
+{ TKeyUpDownDemo }
+
+constructor TKeyUpDownDemo.Create;
+var
+  R: TRect;
+begin
+  R.Assign(5, 2, 65, 22);
+  inherited Create(R, 'Key Up/Down Events');
+
+  GetExtent(R);
+  R.Grow(-1, -1);  { Inset by frame }
+  FContent := TKeyUpDownView.Create(R);
+  FContent.GrowMode := gfGrowHiX or gfGrowHiY;
+  FContent.FHeldCount := 0;
+  Insert(FContent);
+end;
+
 procedure TKeyUpDownDemo.HandleEvent(var Event: TEvent);
 var
   Name, Line, Shift: string;
@@ -4246,9 +4336,7 @@ var
 begin
   if ((Event.What = evKeyDown) or (Event.What = evKeyUp)) and
      (Event.KeyCode <> kbEsc) then begin
-    { Extract VKey from ScanCode - for basic keys this works }
     VKey := Event.ScanCode;
-    { Map common scan codes to VK codes for display }
     case VKey of
       $01: VKey := VK_ESCAPE;
       $0E: VKey := VK_BACK;
@@ -4269,14 +4357,12 @@ begin
       $57: VKey := VK_F11;
       $58: VKey := VK_F12;
     else
-      { For letter/number keys, use UnicodeChar }
       if Event.UnicodeChar >= ' ' then
         VKey := Ord(UpCase(Event.UnicodeChar));
     end;
 
-    Name := VKeyName(VKey, Event.UnicodeChar);
+    Name := FContent.VKeyName(VKey, Event.UnicodeChar);
 
-    { Build shift state string }
     Shift := '';
     if Event.KeyShift and kbCtrlShift <> 0 then Shift := Shift + 'Ctrl+';
     if Event.KeyShift and kbAltShift <> 0 then Shift := Shift + 'Alt+';
@@ -4284,76 +4370,20 @@ begin
 
     if Event.What = evKeyDown then begin
       Line := 'DOWN  ' + Shift + Name;
-      KeyPressed(Name);
+      FContent.KeyPressed(Name);
     end else begin
       Line := '  UP  ' + Shift + Name;
-      KeyReleased(Name);
+      FContent.KeyReleased(Name);
     end;
     Line := Line + '  (code=$' + IntToHex(Event.KeyCode, 4) + ')';
 
-    AddLogLine(Line);
-    DrawView;
+    FContent.AddLogLine(Line);
+    FContent.DrawView;
     ClearEvent(Event);
     Exit;
   end;
 
-  { Let Esc close the dialog via inherited }
   inherited HandleEvent(Event);
-end;
-
-procedure TKeyUpDownDemo.Draw;
-var
-  B: TDrawBuffer;
-  I, W: Integer;
-  S, HeldStr: string;
-  C: Byte;
-begin
-  inherited Draw;
-  W := Size.X;
-  C := GetColor(1);
-
-  { Title line: "Held keys:" }
-  DrawChar(B, 0, ' ', C, W);
-  HeldStr := 'Held: ';
-  if FHeldCount = 0 then
-    HeldStr := HeldStr + '(none)'
-  else begin
-    for I := 0 to FHeldCount - 1 do begin
-      if I > 0 then HeldStr := HeldStr + ', ';
-      HeldStr := HeldStr + '[' + FHeldKeys[I] + ']';
-    end;
-  end;
-  DrawStr(B, 1, HeldStr, C);
-  WriteLine(0, 1, W, 1, B);
-
-  { Separator }
-  DrawChar(B, 0, #$2500, C, W);
-  WriteLine(0, 2, W, 1, B);
-
-  { Header }
-  DrawChar(B, 0, ' ', C, W);
-  DrawStr(B, 1, 'Event Log (press and release keys):', C);
-  WriteLine(0, 3, W, 1, B);
-
-  { Event log lines }
-  for I := 0 to High(FEventLog) do begin
-    DrawChar(B, 0, ' ', C, W);
-    S := FEventLog[I];
-    if S <> '' then begin
-      if Copy(S, 1, 4) = 'DOWN' then
-        DrawStr(B, 1, S, $2E)  { yellow on green - key down }
-      else
-        DrawStr(B, 1, S, $1F); { white on blue - key up }
-    end;
-    WriteLine(0, 4 + I, W, 1, B);
-  end;
-
-  { Footer }
-  DrawChar(B, 0, #$2500, C, W);
-  WriteLine(0, 17, W, 1, B);
-  DrawChar(B, 0, ' ', C, W);
-  DrawStr(B, 1, 'Press Esc to close. Modifier-only releases are filtered.', C);
-  WriteLine(0, 18, W, 1, B);
 end;
 
 procedure TMyApp.TestKeyUpDown;
@@ -4363,6 +4393,114 @@ begin
   D := TKeyUpDownDemo.Create;
   Desktop.ExecView(D);
   D.Free;
+end;
+
+{ TConsoleFocusView }
+
+procedure TConsoleFocusView.AddLogLine(const S: string);
+var
+  I: Integer;
+  TimeStr: string;
+begin
+  for I := 0 to High(FEventLog) - 1 do
+    FEventLog[I] := FEventLog[I + 1];
+  DateTimeToString(TimeStr, 'hh:nn:ss', Now);
+  Inc(FLogCount);
+  FEventLog[High(FEventLog)] := Format('%3d  %s  %s', [FLogCount, TimeStr, S]);
+end;
+
+procedure TConsoleFocusView.Draw;
+var
+  B: TDrawBuffer;
+  I, W: Integer;
+  C, CStatus: Byte;
+  S: string;
+begin
+  W := Size.X;
+  C := $17; { white on blue }
+
+  { Status indicator }
+  DrawChar(B, 0, ' ', C, W);
+  if FFocused then begin
+    CStatus := $2A; { green on green }
+    S := 'Console Status:  FOCUSED';
+  end else begin
+    CStatus := $4F; { white on red }
+    S := 'Console Status:  NOT FOCUSED';
+  end;
+  DrawStr(B, 1, S, CStatus);
+  WriteLine(0, 0, W, 1, B);
+
+  { Separator }
+  DrawChar(B, 0, #$2500, C, W);
+  WriteLine(0, 1, W, 1, B);
+
+  { Header }
+  DrawChar(B, 0, ' ', C, W);
+  DrawStr(B, 1, 'Event Log:', C);
+  WriteLine(0, 2, W, 1, B);
+
+  { Event log lines }
+  for I := 0 to High(FEventLog) do begin
+    DrawChar(B, 0, ' ', C, W);
+    S := FEventLog[I];
+    if S <> '' then begin
+      if Pos('FOCUS IN', S) > 0 then
+        DrawStr(B, 1, S, $2E)   { yellow on green }
+      else if Pos('FOCUS OUT', S) > 0 then
+        DrawStr(B, 1, S, $4F)   { white on red }
+      else
+        DrawStr(B, 1, S, C);
+    end;
+    WriteLine(0, 3 + I, W, 1, B);
+  end;
+end;
+
+{ TConsoleFocusDemo }
+
+constructor TConsoleFocusDemo.Create;
+var
+  R: TRect;
+begin
+  R.Assign(8, 3, 62, 21);
+  inherited Create(R, 'Console Focus Events', wnNoNumber);
+
+  GetExtent(R);
+  R.Grow(-1, -1);  { Inset by frame }
+  FContent := TConsoleFocusView.Create(R);
+  FContent.GrowMode := gfGrowHiX or gfGrowHiY;
+  FContent.FFocused := True;
+  FContent.FLogCount := 0;
+  FContent.AddLogLine('Switch to another window and back to see events.');
+  Insert(FContent);
+end;
+
+procedure TConsoleFocusDemo.HandleEvent(var Event: TEvent);
+begin
+  inherited HandleEvent(Event);
+  if (Event.What = evBroadcast) then begin
+    case Event.Command of
+      cmConsoleFocusIn: begin
+        FContent.FFocused := True;
+        FContent.AddLogLine('FOCUS IN  - console window activated');
+        FContent.DrawView;
+      end;
+      cmConsoleFocusOut: begin
+        FContent.FFocused := False;
+        FContent.AddLogLine('FOCUS OUT - console window deactivated');
+        FContent.DrawView;
+      end;
+    end;
+  end;
+end;
+
+procedure TMyApp.TestConsoleFocus;
+var
+  W: TConsoleFocusDemo;
+begin
+  W := TConsoleFocusDemo.Create;
+  Inc(WindowCount);
+  Desktop.Insert(W);
 end;
 
 begin

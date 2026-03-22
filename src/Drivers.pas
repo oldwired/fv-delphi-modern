@@ -1183,9 +1183,22 @@ begin
 
   while PeekConsoleInputW(ConsoleInput, InputRec, 1, NumRead) and (NumRead > 0) do begin
     if InputRec.EventType <> _MOUSE_EVENT then begin
-      { Not a mouse event, leave it in the queue for keyboard handler }
-      if InputRec.EventType <> KEY_EVENT then
-        ReadConsoleInputW(ConsoleInput, InputRec, 1, NumRead); { Remove non-key/mouse events }
+      { Not a mouse event - leave KEY_EVENTs for keyboard handler }
+      if InputRec.EventType = KEY_EVENT then
+        Exit;
+      { Consume the record }
+      ReadConsoleInputW(ConsoleInput, InputRec, 1, NumRead);
+      { Generate focus events instead of discarding }
+      if InputRec.EventType = FOCUS_EVENT then begin
+        Event.What := evBroadcast;
+        if InputRec.Event.FocusEvent.bSetFocus then
+          Event.Command := cmConsoleFocusIn
+        else
+          Event.Command := cmConsoleFocusOut;
+        Event.InfoPtr := nil;
+        Exit;
+      end;
+      { Discard WINDOW_BUFFER_SIZE_EVENT, MENU_EVENT etc. }
       Exit;
     end;
 
