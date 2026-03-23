@@ -60,8 +60,11 @@ type
     Italic: Boolean;           // SGR 3
     Strikethrough: Boolean;    // SGR 9
     UnderlineStyle: Byte;      // 0=none, 1=single, 2=double, 3=curly, 4=dotted, 5=dashed
+    Dim: Boolean;              // SGR 2 (faint/dim)
+    Overline: Boolean;         // SGR 53
     FG_RGB: Cardinal;          // $00RRGGBB, 0 = use FG palette byte
     BG_RGB: Cardinal;          // $00RRGGBB, 0 = use BG palette byte
+    UL_RGB: Cardinal;          // $00RRGGBB, 0 = use FG for underline (SGR 58;2;R;G;B)
     HyperlinkURL: string;      // OSC 8 URL (empty = no link)
     class function Empty: TScreenCell; static;
   end;
@@ -72,7 +75,8 @@ type
     Attr: Word;                // Color attribute (legacy format: hi=BG, lo=FG)
     FG_RGB: Cardinal;          // $00RRGGBB, 0 = use Attr palette
     BG_RGB: Cardinal;          // $00RRGGBB, 0 = use Attr palette
-    ExtAttrs: Byte;            // Extended attributes (eaItalic, eaStrikethrough, underline style)
+    ExtAttrs: Byte;            // Extended attributes (eaItalic, eaStrikethrough, underline style, dim, overline)
+    UL_RGB: Cardinal;          // $00RRGGBB, 0 = use FG for underline (SGR 58;2;R;G;B)
     HyperlinkURL: string;      // OSC 8 URL (empty = no link)
     class operator Equal(const A, B: TDrawCell): Boolean;
   end;
@@ -98,6 +102,8 @@ const
   { Underline styles (value in bits 2-4):
     0=none, 1=single(SGR 4), 2=double(SGR 21),
     3=curly(SGR 4:3), 4=dotted(SGR 4:4), 5=dashed(SGR 4:5) }
+  eaDim           = $20;  { Bit 5: SGR 2 (faint/dim) }
+  eaOverline      = $40;  { Bit 6: SGR 53 }
 
   { Sixel placeholder character (Private Use Area) }
   SixelPlaceholder = #$E000;
@@ -163,8 +169,11 @@ begin
   Result.Italic := False;
   Result.Strikethrough := False;
   Result.UnderlineStyle := 0;
+  Result.Dim := False;
+  Result.Overline := False;
   Result.FG_RGB := 0;
   Result.BG_RGB := 0;
+  Result.UL_RGB := 0;
   Result.HyperlinkURL := '';
 end;
 
@@ -174,7 +183,8 @@ class operator TDrawCell.Equal(const A, B: TDrawCell): Boolean;
 begin
   Result := (A.Ch = B.Ch) and (A.Attr = B.Attr) and
             (A.FG_RGB = B.FG_RGB) and (A.BG_RGB = B.BG_RGB) and
-            (A.ExtAttrs = B.ExtAttrs) and (A.HyperlinkURL = B.HyperlinkURL);
+            (A.ExtAttrs = B.ExtAttrs) and (A.UL_RGB = B.UL_RGB) and
+            (A.HyperlinkURL = B.HyperlinkURL);
 end;
 
 function GetErrorCode: LongInt;

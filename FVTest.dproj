@@ -121,6 +121,25 @@
         <DCCReference Include="src\Editors.pas"/>
         <DCCReference Include="src\Calendar.pas"/>
         <DCCReference Include="src\Grid.pas"/>
+        <DCCReference Include="src\ConPTY.pas"/>
+        <DCCReference Include="src\Terminal.pas"/>
+        <DCCReference Include="src\HexEdit.pas"/>
+        <DCCReference Include="src\UptimeView.pas"/>
+        <DCCReference Include="src\ToggleSwitch.pas"/>
+        <DCCReference Include="src\LogViewer.pas"/>
+        <DCCReference Include="src\LEDDigits.pas"/>
+        <DCCReference Include="src\BlinkIndicator.pas"/>
+        <DCCReference Include="src\Marquee.pas"/>
+        <DCCReference Include="src\Sparkline.pas"/>
+        <DCCReference Include="src\BarChart.pas"/>
+        <DCCReference Include="src\VUMeter.pas"/>
+        <DCCReference Include="src\RAMView.pas"/>
+        <DCCReference Include="src\DiskUsageView.pas"/>
+        <DCCReference Include="src\ProcessView.pas"/>
+        <DCCReference Include="src\CPUMeter.pas"/>
+        <DCCReference Include="src\BatteryView.pas"/>
+        <DCCReference Include="src\NetworkView.pas"/>
+        <DCCReference Include="src\CPUCoreView.pas"/>
         <DCCReference Include="src\ProgressBar.pas"/>
         <DCCReference Include="src\Breadcrumb.pas"/>
         <DCCReference Include="src\ToolBar.pas"/>
@@ -131,7 +150,14 @@
         <DCCReference Include="src\Notification.pas"/>
         <DCCReference Include="src\FVClipboard.pas"/>
         <DCCReference Include="src\SixelEncoder.pas"/>
+        <DCCReference Include="src\SixelView.pas"/>
         <DCCReference Include="src\ImageView.pas"/>
+        <DCCReference Include="src\TreeView.pas"/>
+        <DCCReference Include="src\PopupMenu.pas"/>
+        <DCCReference Include="src\FuzzyFinder.pas"/>
+        <DCCReference Include="src\Tooltip.pas"/>
+        <DCCReference Include="src\SyntaxHighlight.pas"/>
+        <DCCReference Include="src\MarkdownView.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

@@ -62,6 +62,7 @@ type
     procedure HandleEvent(var Event: TEvent); override;
     function GetPalette: PPalette; override;
     property Image: TBMPImage read FImage;
+    function CellToPixel(CellX, CellY: Integer; out ImgX, ImgY: Integer): Boolean;
     property OffsetX: Integer read FOffsetX write FOffsetX;
     property OffsetY: Integer read FOffsetY write FOffsetY;
     property SixelMode: Boolean read FSixelMode;
@@ -608,6 +609,20 @@ begin
     FHScrollBar.SetParams(FOffsetX, 0, MaxH, Size.X, 1);
   if FVScrollBar <> nil then
     FVScrollBar.SetParams(FOffsetY, 0, MaxV, Size.Y, 1);
+end;
+
+function TImageView.CellToPixel(CellX, CellY: Integer; out ImgX, ImgY: Integer): Boolean;
+begin
+  if FSixelMode then begin
+    ImgX := (CellX + FOffsetX) * FCellPixelW + FCellPixelW div 2;
+    ImgY := (CellY + FOffsetY) * FCellPixelH + FCellPixelH div 2;
+  end else begin
+    { Half-block mode: each cell = 1 pixel wide, 2 pixels tall }
+    ImgX := CellX + FOffsetX;
+    ImgY := (CellY + FOffsetY) * 2;
+  end;
+  Result := FImage.Loaded and (ImgX >= 0) and (ImgX < FImage.Width) and
+            (ImgY >= 0) and (ImgY < FImage.Height);
 end;
 
 function TImageView.GetPalette: PPalette;

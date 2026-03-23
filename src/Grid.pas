@@ -125,6 +125,8 @@ type
     const Value: string; var Accept: Boolean) of object;
   TGridCompareEvent = procedure(Sender: TObject; Col: Integer;
     const S1, S2: string; var Result: Integer) of object;
+  TGridGetCellEvent = procedure(Sender: TObject; Col, Row: Integer;
+    var CellText: string) of object;
 
   { TGridColumn - column definition }
   TGridColumn = class(TObject)
@@ -221,6 +223,27 @@ type
     { Sorting }
     FSortColumn: Integer;
     FSortDirection: TSortDirection;
+
+    { Virtual mode }
+    FVirtualMode: Boolean;
+    FVirtualRowCount: Integer;
+    FOnGetCell: TGridGetCellEvent;
+
+    { Column filter }
+    FShowFilterRow: Boolean;
+    FColumnFilters: TArray<string>;
+    FFilteredRows: TList<Integer>;
+    FFilterDirty: Boolean;
+
+    { Column resize }
+    FResizingCol: Integer;
+    FResizeStartX: Integer;
+    FResizeOrigWidth: Integer;
+
+    { Filter row editing }
+    FFilterFocusedCol: Integer;
+    FFilterCursorPos: Integer;
+    FFilterActive: Boolean;  { True when filter row has focus }
 
     { Event callbacks }
     FOnCellFocused: TGridCellEvent;
@@ -377,6 +400,20 @@ type
     property OnAfterEdit: TGridCellEvent read FOnAfterEdit write FOnAfterEdit;
     property OnValidateCell: TGridValidateEvent read FOnValidateCell write FOnValidateCell;
     property OnCompare: TGridCompareEvent read FOnCompare write FOnCompare;
+    property OnGetCell: TGridGetCellEvent read FOnGetCell write FOnGetCell;
+
+    { Virtual mode }
+    property VirtualMode: Boolean read FVirtualMode write FVirtualMode;
+    property VirtualRowCount: Integer read FVirtualRowCount write FVirtualRowCount;
+
+    { Column filtering }
+    property ShowFilterRow: Boolean read FShowFilterRow write FShowFilterRow;
+    procedure SetColumnFilter(Col: Integer; const AFilter: string);
+    function GetColumnFilter(Col: Integer): string;
+    procedure ClearFilters;
+    procedure ApplyFilters;
+    function GetVisibleRowCount: Integer;
+    function VisibleToDataRow(VisibleRow: Integer): Integer;
 
     { ISerializable - persists layout (columns, settings), not cell data }
     function ToJSON: TJSONObject; override;
@@ -983,10 +1020,29 @@ begin
   { Sorting }
   FSortColumn := -1;
   FSortDirection := sdNone;
+
+  { Virtual mode }
+  FVirtualMode := False;
+  FVirtualRowCount := 0;
+
+  { Filtering }
+  FShowFilterRow := False;
+  SetLength(FColumnFilters, AColCount);
+  FFilteredRows := TList<Integer>.Create;
+  FFilterDirty := True;
+
+  { Column resize }
+  FResizingCol := -1;
+
+  { Filter row }
+  FFilterFocusedCol := 0;
+  FFilterCursorPos := 0;
+  FFilterActive := False;
 end;
 
 destructor TStringGrid.Destroy;
 begin
+  FreeAndNil(FFilteredRows);
   FreeAndNil(FChangeLog);
   FreeAndNil(FSelectedCells);
   FreeAndNil(FRowIDs);
@@ -1112,6 +1168,11 @@ end;
 
 function TStringGrid.GetCellText(Col, Row: Integer): string;
 begin
+  if FVirtualMode and Assigned(FOnGetCell) then begin
+    Result := '';
+    FOnGetCell(Self, Col, Row, Result);
+    Exit;
+  end;
   Result := GetCell(Col, Row);
   { If empty, show default value }
   if (Result = '') and (Col < FColumns.Count) then
@@ -1412,10 +1473,75 @@ begin
     end;
   end;
 
+  { Draw filter row if enabled }
+  if FShowFilterRow and (ScreenY < Size.Y) then begin
+    for K := 0 to Size.X - 1 do begin
+      B[K].Ch := ' ';
+      B[K].Attr := $1F; { white on blue - filter input style }
+    end;
+    ScreenX := 0;
+    ScrollVisibleIndex := 0;
+    for J := 0 to FColumns.Count - 1 do begin
+      if ScreenX >= Size.X then Break;
+      if not FColumns[J].Visible then Continue;
+      if (J >= FFixedCols) and (ScrollVisibleIndex < FLeftCol) then begin
+        Inc(ScrollVisibleIndex);
+        Continue;
+      end;
+      ColWidth := FColumns[J].Width;
+      if ScreenX + ColWidth > Size.X then
+        ColWidth := Size.X - ScreenX;
+      if ColWidth > 0 then begin
+        { Draw filter text }
+        var FilterText: string;
+        if J < Length(FColumnFilters) then
+          FilterText := FColumnFilters[J]
+        else
+          FilterText := '';
+        var FilterColor: Byte;
+        if FFilterActive and (J = FFilterFocusedCol) then
+          FilterColor := $3F  { white on cyan - active filter }
+        else
+          FilterColor := $1F; { white on blue }
+        for K := 0 to ColWidth - 1 do begin
+          if ScreenX + K < Size.X then begin
+            if K < Length(FilterText) then
+              B[ScreenX + K].Ch := FilterText[K + 1]
+            else
+              B[ScreenX + K].Ch := ' ';
+            B[ScreenX + K].Attr := FilterColor;
+          end;
+        end;
+        Inc(ScreenX, ColWidth);
+        { Grid line }
+        if FShowGridLines and (ScreenX < Size.X) then begin
+          B[ScreenX].Ch := GridVLine;
+          B[ScreenX].Attr := GridLineColor;
+          Inc(ScreenX);
+        end;
+      end;
+      if J >= FFixedCols then
+        Inc(ScrollVisibleIndex);
+    end;
+    WriteLine(0, ScreenY, Size.X, 1, B);
+    Inc(ScreenY);
+  end;
+
+  { Apply pending filters before drawing data }
+  if FShowFilterRow and FFilterDirty then
+    ApplyFilters;
+
   { Draw data rows (starting after fixed rows) }
   for I := 0 to Size.Y - ScreenY - 1 do
   begin
-    Row := FFixedRows + FTopRow + I;  { Data rows start at FFixedRows }
+    if FShowFilterRow then begin
+      var VisIdx := FTopRow + I;
+      if VisIdx < FFilteredRows.Count then
+        Row := FFilteredRows[VisIdx]
+      else
+        Row := FRowCount; { Past end — will draw empty }
+    end else
+      Row := FFixedRows + FTopRow + I;  { Data rows start at FFixedRows }
 
     { Clear buffer using new TDrawCell format }
     for K := 0 to Size.X - 1 do
@@ -1932,6 +2058,63 @@ begin
   case Event.What of
     evKeyDown:
     begin
+      { Filter row input handling }
+      if FShowFilterRow and FFilterActive then begin
+        case Event.KeyCode of
+          kbEsc: begin
+            FFilterActive := False;
+            DrawView;
+            ClearEvent(Event);
+          end;
+          kbTab: begin
+            if FFilterFocusedCol < FColumns.Count - 1 then
+              Inc(FFilterFocusedCol)
+            else begin
+              FFilterFocusedCol := 0;
+              FFilterActive := False;  { Leave filter row }
+            end;
+            FFilterCursorPos := Length(GetColumnFilter(FFilterFocusedCol));
+            DrawView;
+            ClearEvent(Event);
+          end;
+          kbEnter: begin
+            FFilterActive := False;
+            ApplyFilters;
+            DrawView;
+            ClearEvent(Event);
+          end;
+          kbBack: begin
+            var F := GetColumnFilter(FFilterFocusedCol);
+            if Length(F) > 0 then begin
+              SetColumnFilter(FFilterFocusedCol, Copy(F, 1, Length(F) - 1));
+              ApplyFilters;
+              DrawView;
+            end;
+            ClearEvent(Event);
+          end;
+        else
+          if (Event.UnicodeChar >= ' ') then begin
+            var F := GetColumnFilter(FFilterFocusedCol);
+            SetColumnFilter(FFilterFocusedCol, F + Event.UnicodeChar);
+            ApplyFilters;
+            DrawView;
+            ClearEvent(Event);
+          end;
+        end;
+        if Event.What = evNothing then Exit;
+      end;
+
+      { Ctrl+F activates filter row }
+      if FShowFilterRow and (Event.KeyCode = kbCtrlF) then begin
+        FFilterActive := True;
+        FFilterFocusedCol := FFocusedCell.Col;
+        if FFilterFocusedCol < 0 then FFilterFocusedCol := 0;
+        FFilterCursorPos := Length(GetColumnFilter(FFilterFocusedCol));
+        DrawView;
+        ClearEvent(Event);
+        Exit;
+      end;
+
       ShiftState := Event.KeyCode shr 8;
       Extend := (ShiftState and $03) <> 0;  { Shift pressed }
 
@@ -2028,8 +2211,32 @@ begin
       end;
 
       MakeLocal(Event.Where, Mouse);
+
+      { Check if click is on filter row }
+      if FShowFilterRow then begin
+        var FilterRowY := FFixedRows;
+        if FShowGridLines then Inc(FilterRowY);
+        if Mouse.Y = FilterRowY then begin
+          Col := ScreenToCol(Mouse.X);
+          if (Col >= 0) and (Col < FColumns.Count) then begin
+            FFilterActive := True;
+            FFilterFocusedCol := Col;
+            FFilterCursorPos := Length(GetColumnFilter(Col));
+            DrawView;
+          end;
+          ClearEvent(Event);
+          Exit;
+        end;
+      end;
+
       Col := ScreenToCol(Mouse.X);
       Row := ScreenToRow(Mouse.Y);
+
+      { Deactivate filter when clicking on data/header }
+      if FFilterActive then begin
+        FFilterActive := False;
+        DrawView;
+      end;
 
       if (Col >= 0) and (Row >= 0) then
       begin
@@ -2968,6 +3175,79 @@ var
 begin
   R.Assign(0, 0, 40, 10);
   Result := TStringGrid.Create(R, 3, nil, nil);
+end;
+
+{ Filter methods }
+
+procedure TStringGrid.SetColumnFilter(Col: Integer; const AFilter: string);
+begin
+  if Col < Length(FColumnFilters) then begin
+    FColumnFilters[Col] := AFilter;
+    FFilterDirty := True;
+  end;
+end;
+
+function TStringGrid.GetColumnFilter(Col: Integer): string;
+begin
+  if Col < Length(FColumnFilters) then
+    Result := FColumnFilters[Col]
+  else
+    Result := '';
+end;
+
+procedure TStringGrid.ClearFilters;
+var
+  I: Integer;
+begin
+  for I := 0 to High(FColumnFilters) do
+    FColumnFilters[I] := '';
+  FFilterDirty := True;
+end;
+
+procedure TStringGrid.ApplyFilters;
+var
+  R, C: Integer;
+  PassesFilter: Boolean;
+  CellText, FilterText: string;
+begin
+  FFilteredRows.Clear;
+  for R := 0 to FRowCount - 1 do begin
+    PassesFilter := True;
+    for C := 0 to FColumns.Count - 1 do begin
+      if (C < Length(FColumnFilters)) and (FColumnFilters[C] <> '') then begin
+        CellText := LowerCase(GetCellText(C, R));
+        FilterText := LowerCase(FColumnFilters[C]);
+        if Pos(FilterText, CellText) = 0 then begin
+          PassesFilter := False;
+          Break;
+        end;
+      end;
+    end;
+    if PassesFilter then
+      FFilteredRows.Add(R);
+  end;
+  FFilterDirty := False;
+end;
+
+function TStringGrid.GetVisibleRowCount: Integer;
+begin
+  if FShowFilterRow then begin
+    if FFilterDirty then ApplyFilters;
+    Result := FFilteredRows.Count;
+  end else
+    Result := FRowCount;
+end;
+
+function TStringGrid.VisibleToDataRow(VisibleRow: Integer): Integer;
+begin
+  if FShowFilterRow then begin
+    if FFilterDirty then ApplyFilters;
+    if (VisibleRow >= 0) and (VisibleRow < FFilteredRows.Count) then
+      Result := FFilteredRows[VisibleRow]
+    else
+      Result := -1;
+  end else
+    Result := VisibleRow;
 end;
 
 initialization

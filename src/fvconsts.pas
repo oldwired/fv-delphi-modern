@@ -224,8 +224,8 @@ const
   cmNewVideo      = 47;
   cmTransfer      = 48;
   cmResizeApp     = 49;
-  cmConsoleFocusIn  = 50;  { Console window gained OS focus }
-  cmConsoleFocusOut = 51;  { Console window lost OS focus }
+  cmConsoleFocusIn  = 53;  { Console window gained OS focus }
+  cmConsoleFocusOut = 54;  { Console window lost OS focus }
   cmQuitApp       = 57;
 
   cmRecordHistory  = 60;

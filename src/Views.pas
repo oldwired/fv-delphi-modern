@@ -137,6 +137,7 @@ type
     GrowMode: Byte;
     DragMode: Byte;
     HelpCtx: Word;
+    HintText: string;
     State: Word;
     Options: Word;
     EventMask: Word;
@@ -1198,13 +1199,15 @@ begin
         FVScreen.BGRGBBuf[ScreenOffset + (J - x1)] := Cell.BG_RGB;
       end;
     end;
-    { Copy extended attributes and hyperlink URL }
+    { Copy extended attributes, underline color, and hyperlink URL }
     if ScreenOffset + (J - x1) < Length(FVScreen.ExtAttrsBuf) then begin
       if ShadowCounter > 0 then begin
         FVScreen.ExtAttrsBuf[ScreenOffset + (J - x1)] := 0;
+        FVScreen.ULRGBBuf[ScreenOffset + (J - x1)] := 0;
         FVScreen.HyperlinkBuf[ScreenOffset + (J - x1)] := '';
       end else begin
         FVScreen.ExtAttrsBuf[ScreenOffset + (J - x1)] := Cell.ExtAttrs;
+        FVScreen.ULRGBBuf[ScreenOffset + (J - x1)] := Cell.UL_RGB;
         FVScreen.HyperlinkBuf[ScreenOffset + (J - x1)] := Cell.HyperlinkURL;
       end;
     end;

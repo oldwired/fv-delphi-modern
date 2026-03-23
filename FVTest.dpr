@@ -65,7 +65,13 @@ uses
   FVClipboard in 'src\FVClipboard.pas',
   SixelEncoder in 'src\SixelEncoder.pas',
   SixelView in 'src\SixelView.pas',
-  ImageView in 'src\ImageView.pas';
+  ImageView in 'src\ImageView.pas',
+  TreeView in 'src\TreeView.pas',
+  PopupMenu in 'src\PopupMenu.pas',
+  FuzzyFinder in 'src\FuzzyFinder.pas',
+  Tooltip in 'src\Tooltip.pas',
+  SyntaxHighlight in 'src\SyntaxHighlight.pas',
+  MarkdownView in 'src\MarkdownView.pas';
 
 const
   cmNewWindow = 100;
@@ -132,6 +138,13 @@ const
   cmTestConsoleFocus      = 1064;
   cmTestTextAttrs         = 1065;
   cmTestPasteDetect       = 1066;
+  cmTestTreeView          = 1067;
+  cmTestFuzzyFinder       = 1068;
+  cmTestTooltip           = 1069;
+  cmTestGridFilter        = 1070;
+  cmTestSyntaxHL          = 1072;
+  cmTestMarkdownView      = 1073;
+  cmTestPopupAutoComplete = 1074;
 
   { Local commands for CommandSet demo - must be 0..255 to work with TCommandSet }
   cmDemoSave    = 60;
@@ -261,6 +274,13 @@ type
     procedure TestConsoleFocus;
     procedure TestTextAttrs;
     procedure TestPasteDetect;
+    procedure TestTreeView;
+    procedure TestFuzzyFinder;
+    procedure TestTooltip;
+    procedure TestGridFilter;
+    procedure TestSyntaxHL;
+    procedure TestMarkdownView;
+    procedure TestPopupAutoComplete;
     property CalendarDateLabel: TStaticText read FCalendarDateLabel write FCalendarDateLabel;
   end;
 
@@ -1941,12 +1961,21 @@ begin
         NewItem('SIXEL ~S~pectrometer', '', kbNoKey, cmTestSixelSpectrometer, hcNoContext,
         NewItem('SIXEL ~A~nimated Sine', '', kbNoKey, cmTestSixelSine, hcNoContext,
         NewItem('Command~S~et Demo', '', kbNoKey, cmTestCommandSet, hcNoContext,
+        nil)))))))))))))),
+      NewSubMenu('~A~dvanced', hcNoContext, NewMenu(
         NewItem('~K~ey Up/Down', '', kbNoKey, cmTestKeyUpDown, hcNoContext,
         NewItem('Console ~F~ocus', '', kbNoKey, cmTestConsoleFocus, hcNoContext,
         NewItem('Text ~A~ttributes', '', kbNoKey, cmTestTextAttrs, hcNoContext,
         NewItem('~P~aste Detection', '', kbNoKey, cmTestPasteDetect, hcNoContext,
-        nil)))))))))))))))))),
-      nil)))))))))))))))))))))))))))),
+        NewItem('~T~ree View', '', kbNoKey, cmTestTreeView, hcNoContext,
+        NewItem('Fu~z~zy Finder', '', kbNoKey, cmTestFuzzyFinder, hcNoContext,
+        NewItem('Too~l~tips', '', kbNoKey, cmTestTooltip, hcNoContext,
+        NewItem('~G~rid Filter', '', kbNoKey, cmTestGridFilter, hcNoContext,
+        NewItem('~S~yntax Highlight', '', kbNoKey, cmTestSyntaxHL, hcNoContext,
+        NewItem('~M~arkdown Viewer', '', kbNoKey, cmTestMarkdownView, hcNoContext,
+        NewItem('A~u~tocomplete Popup', '', kbNoKey, cmTestPopupAutoComplete, hcNoContext,
+        nil)))))))))))),
+    nil))))))))))))))))))))))))))))),
     NewSubMenu('~W~indow', hcNoContext, NewMenu(
       NewItem('~T~ile', '', kbNoKey, cmTile, hcNoContext,
       NewItem('Tile ~H~orizontal', '', kbNoKey, cmTileHorizontal, hcNoContext,
@@ -2056,6 +2085,13 @@ begin
         cmTestConsoleFocus: TestConsoleFocus;
         cmTestTextAttrs: TestTextAttrs;
         cmTestPasteDetect: TestPasteDetect;
+        cmTestTreeView: TestTreeView;
+        cmTestFuzzyFinder: TestFuzzyFinder;
+        cmTestTooltip: TestTooltip;
+        cmTestGridFilter: TestGridFilter;
+        cmTestSyntaxHL: TestSyntaxHL;
+        cmTestMarkdownView: TestMarkdownView;
+        cmTestPopupAutoComplete: TestPopupAutoComplete;
       else
         Exit;
       end;
@@ -2087,6 +2123,9 @@ begin
     if Phase2Dialog <> nil then Phase2Dialog.UpdateGadgets;
     if SystemInfoDialog <> nil then SystemInfoDialog.UpdateWidgets;
     UpdateSixelDemoWindows;
+
+    { Update tooltips based on focus changes }
+    TTooltip.PollFocus;
 
     { Update notifications for auto-dismiss }
     if Desktop <> nil then begin
@@ -4583,16 +4622,36 @@ begin
     eaItalic or eaStrikethrough or (3 shl eaUnderShift));
   WriteLine(0, 11, W, 1, B);
 
-  { Line 12: Hyperlink }
+  { Line 12: Dim/Faint }
+  DrawChar(B, 0, ' ', $17, W);
+  DrawStrEx(B, 1, 'Dim/Faint text (SGR 2)', $17, eaDim);
+  WriteLine(0, 12, W, 1, B);
+
+  { Line 13: Overline }
+  DrawChar(B, 0, ' ', $17, W);
+  DrawStrEx(B, 1, 'Overline text (SGR 53)', $17, eaOverline);
+  WriteLine(0, 13, W, 1, B);
+
+  { Line 14: Colored underline - red curly }
+  DrawChar(B, 0, ' ', $17, W);
+  DrawStrRGBEx(B, 1, 'Red curly underline (SGR 58)', $C0C0C0, $000080, $FF0000,
+    3 shl eaUnderShift);
+  WriteLine(0, 14, W, 1, B);
+
+  { Line 15: separator }
+  DrawChar(B, 0, #$2500, $17, W);
+  WriteLine(0, 15, W, 1, B);
+
+  { Line 16: Hyperlink }
   DrawChar(B, 0, ' ', $17, W);
   DrawStr(B, 1, 'Hyperlink: ', $17);
   DrawHyperlink(B, 12, 'https://github.com', $1F, 'https://github.com');
-  WriteLine(0, 12, W, 1, B);
+  WriteLine(0, 16, W, 1, B);
 
-  { Line 13: Note }
+  { Line 17: Note }
   DrawChar(B, 0, ' ', $17, W);
   DrawStr(B, 1, '(Requires Windows Terminal for full support)', $18);
-  WriteLine(0, 13, W, 1, B);
+  WriteLine(0, 17, W, 1, B);
 end;
 
 procedure TMyApp.TestTextAttrs;
@@ -4601,7 +4660,7 @@ var
   W: TWindow;
   V: TTextAttrsDemoView;
 begin
-  R.Assign(5, 2, 65, 19);
+  R.Assign(5, 1, 65, 23);
   W := TWindow.Create(R, 'Text Attributes Demo', wnNoNumber);
   W.GetExtent(R);
   R.Grow(-1, -1);
@@ -4635,6 +4694,412 @@ begin
     'Paste here:' + #13#10;
   W.Editor.InsertUnicodeStr(TestText);
   Desktop.Insert(W);
+end;
+
+procedure TMyApp.TestTreeView;
+var
+  R: TRect;
+  W: TWindow;
+  TV: TTreeView;
+  HSB, VSB: TScrollBar;
+  Folder, Sub: TTreeNode;
+begin
+  R.Assign(5, 2, 55, 22);
+  W := TWindow.Create(R, 'Tree View Demo', wnNoNumber);
+
+  { Create scrollbar }
+  W.GetExtent(R);
+  R.Assign(R.B.X - 1, R.A.Y + 1, R.B.X, R.B.Y - 1);
+  VSB := TScrollBar.Create(R);
+  W.Insert(VSB);
+
+  { Create tree view }
+  W.GetExtent(R);
+  R.Grow(-1, -1);
+  Dec(R.B.X); { room for scrollbar }
+  TV := TTreeView.Create(R, nil, VSB);
+  TV.Checkboxes := True;
+
+  { Build sample tree }
+  Folder := TV.AddNode(nil, 'Documents');
+  Folder.Icon := #$D83D#$DCC1;  { folder emoji }
+  Folder.Expanded := True;
+    Sub := TV.AddNode(Folder, 'Report.pdf');
+    Sub.Icon := #$D83D#$DCC4;  { file emoji }
+    Sub.Checkable := True;
+    Sub := TV.AddNode(Folder, 'Notes.txt');
+    Sub.Icon := #$D83D#$DCC4;
+    Sub.Checkable := True;
+    Sub.Checked := True;
+
+  Folder := TV.AddNode(nil, 'Source');
+  Folder.Icon := #$D83D#$DCC1;
+  Folder.Expanded := True;
+    Sub := TV.AddNode(Folder, 'App.pas');
+    Sub.Icon := #$D83D#$DCC4;
+    Sub.Checkable := True;
+    Sub := TV.AddNode(Folder, 'Views.pas');
+    Sub.Icon := #$D83D#$DCC4;
+    Sub.Checkable := True;
+    Sub := TV.AddNode(Folder, 'Drivers.pas');
+    Sub.Icon := #$D83D#$DCC4;
+    Sub.Checkable := True;
+
+  Folder := TV.AddNode(nil, 'Projects');
+  Folder.Icon := #$D83D#$DCC1;
+  Folder.HasChildrenHint := True;  { Lazy loading indicator }
+  TV.OnGetChildren := procedure(Sender: TObject; Node: TTreeNode)
+    var Child: TTreeNode;
+    begin
+      Child := Node.AddChild('SubProject-A');
+      Child.Icon := #$D83D#$DCC1;
+      Child := Node.AddChild('SubProject-B');
+      Child.Icon := #$D83D#$DCC1;
+      Child := Node.AddChild('readme.md');
+      Child.Icon := #$D83D#$DCC4;
+      Child.Checkable := True;
+    end;
+
+  Folder := TV.AddNode(nil, 'Empty Folder');
+  Folder.Icon := #$D83D#$DCC1;
+
+  TV.InvalidateFlat;
+  W.Insert(TV);
+  Inc(WindowCount);
+  Desktop.Insert(W);
+end;
+
+procedure TMyApp.TestFuzzyFinder;
+var
+  Items: TStringList;
+  Finder: TFuzzyFinder;
+  C: Word;
+  Selected: string;
+begin
+  Items := TStringList.Create;
+  try
+    { Populate with .pas file names }
+    Items.Add('App.pas');
+    Items.Add('Views.pas');
+    Items.Add('Drivers.pas');
+    Items.Add('Dialogs.pas');
+    Items.Add('Editors.pas');
+    Items.Add('FVCommon.pas');
+    Items.Add('FVScreen.pas');
+    Items.Add('FVConsts.pas');
+    Items.Add('FVBoxChars.pas');
+    Items.Add('FVUTF8.pas');
+    Items.Add('Objects.pas');
+    Items.Add('Menus.pas');
+    Items.Add('Grid.pas');
+    Items.Add('Calendar.pas');
+    Items.Add('ComboBox.pas');
+    Items.Add('Splitter.pas');
+    Items.Add('Accordion.pas');
+    Items.Add('ProgressBar.pas');
+    Items.Add('Breadcrumb.pas');
+    Items.Add('ToolBar.pas');
+    Items.Add('EditorGutter.pas');
+    Items.Add('Notification.pas');
+    Items.Add('TreeView.pas');
+    Items.Add('PopupMenu.pas');
+    Items.Add('FuzzyFinder.pas');
+    Items.Add('ImageView.pas');
+    Items.Add('SixelEncoder.pas');
+    Items.Add('HexEdit.pas');
+    Items.Add('Terminal.pas');
+    Items.Add('Validate.pas');
+    Items.Add('ToggleSwitch.pas');
+
+    Finder := TFuzzyFinder.Create('Quick Open (type to filter)', Items);
+    C := Desktop.ExecView(Finder);
+    if C = cmOk then begin
+      Selected := Finder.GetSelectedItem;
+      if Selected <> '' then
+        MessageBox('Selected: ' + Selected, mfInformation or mfOKButton);
+    end;
+    Finder.Free;
+  finally
+    Items.Free;
+  end;
+end;
+
+procedure TMyApp.TestTooltip;
+var
+  R: TRect;
+  Dlg: TDialog;
+  IL: TInputLine;
+  Btn: TButton;
+  CB: TCheckBoxes;
+begin
+  R.Assign(10, 4, 60, 16);
+  Dlg := TDialog.Create(R, 'Tooltip Demo');
+
+  { Input line with tooltip }
+  R.Assign(3, 2, 30, 3);
+  Dlg.Insert(TStaticText.Create(R, 'Name:'));
+  R.Assign(3, 3, 45, 4);
+  IL := TInputLine.Create(R, 80);
+  IL.HintText := 'Enter your full name here';
+  Dlg.Insert(IL);
+
+  { Checkboxes with tooltip }
+  R.Assign(3, 5, 35, 8);
+  CB := TCheckBoxes.Create(R,
+    NewSItem('~B~old',
+    NewSItem('~I~talic',
+    NewSItem('~U~nderline', nil))));
+  CB.HintText := 'Select text formatting options';
+  Dlg.Insert(CB);
+
+  { Buttons with tooltips }
+  R.Assign(5, 9, 19, 11);
+  Btn := TButton.Create(R, '~O~K', cmOk, bfDefault);
+  Btn.HintText := 'Apply and close the dialog';
+  Dlg.Insert(Btn);
+
+  R.Assign(21, 9, 37, 11);
+  Btn := TButton.Create(R, '~C~ancel', cmCancel, bfNormal);
+  Btn.HintText := 'Discard changes and close';
+  Dlg.Insert(Btn);
+
+  Desktop.ExecView(Dlg);
+  Dlg.Free;
+end;
+
+procedure TMyApp.TestGridFilter;
+var
+  R: TRect;
+  W: TWindow;
+  G: TStringGrid;
+  HSB, VSB: TScrollBar;
+  I, J: Integer;
+begin
+  R.Assign(3, 2, 77, 22);
+  W := TWindow.Create(R, 'Grid Filter Demo (Ctrl+F to filter)', wnNoNumber);
+
+  W.GetExtent(R);
+  R.Assign(R.B.X - 1, R.A.Y + 1, R.B.X, R.B.Y - 1);
+  VSB := TScrollBar.Create(R);
+  W.Insert(VSB);
+
+  W.GetExtent(R);
+  R.Assign(R.A.X + 1, R.B.Y - 1, R.B.X - 1, R.B.Y);
+  HSB := TScrollBar.Create(R);
+  W.Insert(HSB);
+
+  W.GetExtent(R);
+  R.Assign(R.A.X + 1, R.A.Y + 1, R.B.X - 1, R.B.Y - 1);
+  G := TStringGrid.Create(R, 4, HSB, VSB);
+  G.GrowMode := gfGrowHiX or gfGrowHiY;
+  G.Columns[0].Title := 'Name';
+  G.Columns[0].Width := 15;
+  G.Columns[1].Title := 'City';
+  G.Columns[1].Width := 12;
+  G.Columns[2].Title := 'Age';
+  G.Columns[2].Width := 6;
+  G.Columns[3].Title := 'Status';
+  G.Columns[3].Width := 10;
+
+  { Populate with sample data }
+  G.RowCount := 20;
+  for I := 0 to 19 do begin
+    case I mod 5 of
+      0: begin G[0, I] := 'Alice'; G[1, I] := 'Berlin'; end;
+      1: begin G[0, I] := 'Bob'; G[1, I] := 'Paris'; end;
+      2: begin G[0, I] := 'Charlie'; G[1, I] := 'London'; end;
+      3: begin G[0, I] := 'Diana'; G[1, I] := 'Rome'; end;
+      4: begin G[0, I] := 'Eve'; G[1, I] := 'Madrid'; end;
+    end;
+    G[2, I] := IntToStr(25 + (I * 3) mod 40);
+    if I mod 3 = 0 then G[3, I] := 'Active'
+    else if I mod 3 = 1 then G[3, I] := 'Inactive'
+    else G[3, I] := 'Pending';
+  end;
+
+  G.Columns[0].Sortable := True;
+  G.Columns[1].Sortable := True;
+  G.Columns[2].Sortable := True;
+  G.Columns[3].Sortable := True;
+  G.ShowFilterRow := True;
+  W.Insert(G);
+  Inc(WindowCount);
+  Desktop.Insert(W);
+end;
+
+procedure TMyApp.TestSyntaxHL;
+var
+  R: TRect;
+  W: TEditWindow;
+  SampleJSON: string;
+  HL: ISyntaxHighlighter;
+begin
+  R.Assign(3, 2, 72, 22);
+  Inc(WindowCount);
+  W := TEditWindow.Create(R, '', SmallInt(WindowCount));
+  W.Title := 'JSON Syntax Highlighting';
+  SampleJSON :=
+    '{' + #13#10 +
+    '  "name": "Free Vision",' + #13#10 +
+    '  "version": 2.0,' + #13#10 +
+    '  "modern": true,' + #13#10 +
+    '  "features": [' + #13#10 +
+    '    "unicode",' + #13#10 +
+    '    "sixel",' + #13#10 +
+    '    "syntax-highlighting",' + #13#10 +
+    '    null' + #13#10 +
+    '  ],' + #13#10 +
+    '  "widgets": 42,' + #13#10 +
+    '  "nested": {' + #13#10 +
+    '    "key": "value",' + #13#10 +
+    '    "enabled": false' + #13#10 +
+    '  }' + #13#10 +
+    '}' + #13#10;
+  W.Editor.InsertUnicodeStr(SampleJSON);
+  HL := TJSONHighlighter.Create;
+  W.Editor.Highlighter := HL;
+  W.Editor.ColorTheme := CreateDefaultDarkTheme;
+  W.Editor.UseHighlighter := True;
+  Desktop.Insert(W);
+end;
+
+procedure TMyApp.TestMarkdownView;
+var
+  W: TMarkdownWindow;
+  MD: string;
+begin
+  MD :=
+    '# Markdown Viewer Demo' + #13#10 +
+    '' + #13#10 +
+    '## Features' + #13#10 +
+    '' + #13#10 +
+    'This viewer supports **bold**, *italic*, ~~strikethrough~~, and `inline code`.' + #13#10 +
+    '' + #13#10 +
+    '### Links' + #13#10 +
+    '' + #13#10 +
+    'Click here: [GitHub](https://github.com) or [Delphi](https://www.embarcadero.com)' + #13#10 +
+    '' + #13#10 +
+    '### Lists' + #13#10 +
+    '' + #13#10 +
+    '- First item with **bold** text' + #13#10 +
+    '- Second item with *italic* text' + #13#10 +
+    '- Third item with `code`' + #13#10 +
+    '' + #13#10 +
+    '1. Ordered item one' + #13#10 +
+    '2. Ordered item two' + #13#10 +
+    '3. Ordered item three' + #13#10 +
+    '' + #13#10 +
+    '### Code Block' + #13#10 +
+    '' + #13#10 +
+    '```' + #13#10 +
+    'procedure Hello;' + #13#10 +
+    'begin' + #13#10 +
+    '  WriteLn(''Hello, World!'');' + #13#10 +
+    'end;' + #13#10 +
+    '```' + #13#10 +
+    '' + #13#10 +
+    '### Blockquote' + #13#10 +
+    '' + #13#10 +
+    '> This is a blockquote.' + #13#10 +
+    '> It can span multiple lines.' + #13#10 +
+    '' + #13#10 +
+    '---' + #13#10 +
+    '' + #13#10 +
+    '### Table' + #13#10 +
+    '' + #13#10 +
+    '| Feature       | Status    |' + #13#10 +
+    '|---------------|-----------|' + #13#10 +
+    '| Italic        | Done      |' + #13#10 +
+    '| Strikethrough | Done      |' + #13#10 +
+    '| Underline     | Done      |' + #13#10 +
+    '| Hyperlinks    | Done      |' + #13#10 +
+    '' + #13#10 +
+    '#### Small Heading' + #13#10 +
+    '' + #13#10 +
+    'End of demo. All rendering uses the new SGR attributes.' + #13#10;
+
+  W := TMarkdownWindow.Create('Markdown Viewer', MD);
+  Inc(WindowCount);
+  Desktop.Insert(W);
+end;
+
+procedure TMyApp.TestPopupAutoComplete;
+var
+  R: TRect;
+  Dlg: TDialog;
+  IL: TInputLine;
+  ResultLabel: TStaticText;
+  Items: TStringList;
+  PM: TPopupMenu;
+  C: Word;
+  Selected: string;
+  AnchorX, AnchorY: Integer;
+begin
+  Items := TStringList.Create;
+  try
+    Items.Add('TView');
+    Items.Add('TWindow');
+    Items.Add('TDialog');
+    Items.Add('TButton');
+    Items.Add('TInputLine');
+    Items.Add('TListBox');
+    Items.Add('TScrollBar');
+    Items.Add('TCheckBoxes');
+    Items.Add('TRadioButtons');
+    Items.Add('TStaticText');
+    Items.Add('TStringGrid');
+    Items.Add('TTreeView');
+    Items.Add('TEditor');
+    Items.Add('TProgressBar');
+    Items.Add('TComboBox');
+    Items.Add('TSplitter');
+    Items.Add('TAccordion');
+    Items.Add('TFuzzyFinder');
+    Items.Add('TTooltip');
+    Items.Add('TPopupMenu');
+
+    R.Assign(8, 3, 58, 13);
+    Dlg := TDialog.Create(R, 'Autocomplete Demo');
+
+    R.Assign(3, 2, 46, 3);
+    Dlg.Insert(TStaticText.Create(R, 'Type part of a class name, then press Down:'));
+    R.Assign(3, 3, 40, 4);
+    IL := TInputLine.Create(R, 80);
+    Dlg.Insert(IL);
+
+    R.Assign(3, 5, 46, 6);
+    ResultLabel := TStaticText.Create(R, 'Selected: (none yet)');
+    Dlg.Insert(ResultLabel);
+
+    R.Assign(3, 7, 22, 9);
+    Dlg.Insert(TButton.Create(R, '~S~how Popup', cmOk, bfNormal));
+    R.Assign(24, 7, 40, 9);
+    Dlg.Insert(TButton.Create(R, '~C~lose', cmCancel, bfDefault));
+
+    { Run dialog in a loop - OK opens popup, Cancel closes }
+    repeat
+      C := Desktop.ExecView(Dlg);
+      if C = cmOk then begin
+        { Calculate popup position below the input line }
+        AnchorX := Dlg.Origin.X + IL.Origin.X;
+        AnchorY := Dlg.Origin.Y + IL.Origin.Y + 1;
+        PM := TPopupMenu.Create(Items, AnchorX, AnchorY, 8);
+        PM.Title := 'Suggestions';
+        PM.Filter(IL.Data);
+        if Desktop.ExecView(PM) = cmOk then begin
+          Selected := PM.GetSelection;
+          IL.Data := Selected;
+          IL.SelectAll(True);
+          ResultLabel.Text := 'Selected: ' + Selected;
+        end;
+        PM.Free;
+      end;
+    until C = cmCancel;
+
+    Dlg.Free;
+  finally
+    Items.Free;
+  end;
 end;
 
 begin

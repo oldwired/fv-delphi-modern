@@ -365,7 +365,7 @@ end;
 procedure TInputLine.Draw;
 var
   Color, ArrowColor: Byte;
-  L, R: Integer;
+  I, L, R: Integer;
   B: TDrawBuffer;
   DataStr: string;
 begin
@@ -401,7 +401,15 @@ begin
     if L < 0 then L := 0;
     if R > Size.X - 2 then R := Size.X - 2;
     if L < R then
-      DrawChar(B, L + 1, #0, GetColor(3), R - L);
+    begin
+      { Change attribute only for selected range — preserve existing characters.
+        Classic FV used #0 to mean "keep char, change attr" but modern TDrawCell
+        stores Ch as a string, and #0 outputs as NUL to the terminal, causing
+        the entire screen row to shift left. }
+      for I := L to R - 1 do
+        if (I + 1 >= 0) and (I + 1 < Size.X) then
+          B[I + 1].Attr := GetColor(3);
+    end;
     SetCursor(ScreenCurPos - FirstPos + 1, 0);
   end;
   WriteLine(0, 0, Size.X, Size.Y, B);

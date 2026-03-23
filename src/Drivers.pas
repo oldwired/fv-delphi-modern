@@ -205,6 +205,8 @@ procedure DrawRGBCell(var Buf: TDrawBuffer; Pos: Integer;
 procedure DrawCharEx(var Buf: TDrawBuffer; Pos: Integer; Ch: Char; Attr: Byte; ExtAttrs: Byte; Count: Integer);
 procedure DrawStrEx(var Buf: TDrawBuffer; Pos: Integer; const S: string; Attr: Byte; ExtAttrs: Byte);
 procedure DrawHyperlink(var Buf: TDrawBuffer; Pos: Integer; const Text: string; Attr: Byte; const URL: string);
+procedure DrawStrRGBEx(var Buf: TDrawBuffer; Pos: Integer; const S: string;
+  FG_RGB, BG_RGB, UL_RGB: Cardinal; ExtAttrs: Byte);
 
 { String measurement }
 function StrWidth(const S: string): Integer;
@@ -446,6 +448,7 @@ begin
     Buf[Pos].FG_RGB := 0;
     Buf[Pos].BG_RGB := 0;
     Buf[Pos].ExtAttrs := 0;
+    Buf[Pos].UL_RGB := 0;
     Buf[Pos].HyperlinkURL := '';
   end;
 end;
@@ -464,6 +467,7 @@ begin
       Buf[Pos + I].FG_RGB := 0;
       Buf[Pos + I].BG_RGB := 0;
       Buf[Pos + I].ExtAttrs := 0;
+      Buf[Pos + I].UL_RGB := 0;
       Buf[Pos + I].HyperlinkURL := '';
     end;
   end;
@@ -496,6 +500,7 @@ begin
         Buf[Pos + Col].FG_RGB := 0;
         Buf[Pos + Col].BG_RGB := 0;
         Buf[Pos + Col].ExtAttrs := 0;
+        Buf[Pos + Col].UL_RGB := 0;
         Buf[Pos + Col].HyperlinkURL := '';
       end;
       { Fill continuation cell for wide chars }
@@ -506,6 +511,7 @@ begin
         Buf[Pos + Col + 1].FG_RGB := 0;
         Buf[Pos + Col + 1].BG_RGB := 0;
         Buf[Pos + Col + 1].ExtAttrs := 0;
+        Buf[Pos + Col + 1].UL_RGB := 0;
         Buf[Pos + Col + 1].HyperlinkURL := '';
       end;
       Inc(Col, W);
@@ -521,6 +527,7 @@ begin
         Buf[Pos + Col].FG_RGB := 0;
         Buf[Pos + Col].BG_RGB := 0;
         Buf[Pos + Col].ExtAttrs := 0;
+        Buf[Pos + Col].UL_RGB := 0;
         Buf[Pos + Col].HyperlinkURL := '';
       end;
       { Fill continuation cell for wide BMP chars (CJK) }
@@ -531,6 +538,7 @@ begin
         Buf[Pos + Col + 1].FG_RGB := 0;
         Buf[Pos + Col + 1].BG_RGB := 0;
         Buf[Pos + Col + 1].ExtAttrs := 0;
+        Buf[Pos + Col + 1].UL_RGB := 0;
         Buf[Pos + Col + 1].HyperlinkURL := '';
       end;
       Inc(Col, W);
@@ -636,6 +644,7 @@ begin
     Buf[Pos].FG_RGB := FG_RGB;
     Buf[Pos].BG_RGB := BG_RGB;
     Buf[Pos].ExtAttrs := 0;
+    Buf[Pos].UL_RGB := 0;
     Buf[Pos].HyperlinkURL := '';
   end;
 end;
@@ -684,6 +693,24 @@ begin
     Col := Pos + I;
     if (Col >= 0) and (Col < MaxViewWidth) then
       Buf[Col].HyperlinkURL := URL;
+  end;
+end;
+
+procedure DrawStrRGBEx(var Buf: TDrawBuffer; Pos: Integer; const S: string;
+  FG_RGB, BG_RGB, UL_RGB: Cardinal; ExtAttrs: Byte);
+var
+  I, Len, Col: Integer;
+begin
+  DrawStr(Buf, Pos, S, 0);
+  Len := StringDisplayWidth(S);
+  for I := 0 to Len - 1 do begin
+    Col := Pos + I;
+    if (Col >= 0) and (Col < MaxViewWidth) then begin
+      Buf[Col].FG_RGB := FG_RGB;
+      Buf[Col].BG_RGB := BG_RGB;
+      Buf[Col].UL_RGB := UL_RGB;
+      Buf[Col].ExtAttrs := ExtAttrs;
+    end;
   end;
 end;
 

@@ -125,6 +125,7 @@ type
     procedure SetCellRGB(X, Y: Integer; FG_RGB, BG_RGB: Cardinal);
     procedure SetCellExtAttrs(X, Y: Integer; ExtAttrs: Byte);
     procedure SetCellHyperlink(X, Y: Integer; const URL: string);
+    procedure SetCellULRGB(X, Y: Integer; AUL_RGB: Cardinal);
     function GetCell(X, Y: Integer): TScreenCell;
 
     { Rendering }
@@ -185,6 +186,8 @@ var
   ExtAttrsBuf: array of Byte;
   { Hyperlink URL buffer - parallel to VideoBuf for OSC 8 links }
   HyperlinkBuf: array of string;
+  { Underline color buffer - parallel to VideoBuf for SGR 58 }
+  ULRGBBuf: array of Cardinal;
 
 { Legacy API - calls through to Screen object }
 procedure InitVideo;
@@ -424,8 +427,11 @@ begin
             (FCells[Y, X].Italic <> FOldCells[Y, X].Italic) or
             (FCells[Y, X].Strikethrough <> FOldCells[Y, X].Strikethrough) or
             (FCells[Y, X].UnderlineStyle <> FOldCells[Y, X].UnderlineStyle) or
+            (FCells[Y, X].Dim <> FOldCells[Y, X].Dim) or
+            (FCells[Y, X].Overline <> FOldCells[Y, X].Overline) or
             (FCells[Y, X].FG_RGB <> FOldCells[Y, X].FG_RGB) or
             (FCells[Y, X].BG_RGB <> FOldCells[Y, X].BG_RGB) or
+            (FCells[Y, X].UL_RGB <> FOldCells[Y, X].UL_RGB) or
             (FCells[Y, X].HyperlinkURL <> FOldCells[Y, X].HyperlinkURL);
 end;
 
@@ -449,6 +455,8 @@ begin
 
   if Cell.Bold then
     Result := Result + ';1';
+  if Cell.Dim then
+    Result := Result + ';2';
   if Cell.Italic then
     Result := Result + ';3';
   case Cell.UnderlineStyle of
@@ -465,6 +473,8 @@ begin
     Result := Result + ';7';
   if Cell.Strikethrough then
     Result := Result + ';9';
+  if Cell.Overline then
+    Result := Result + ';53';
 
   { Foreground: 24-bit RGB if available, else 256-color palette }
   if Cell.FG_RGB <> 0 then
@@ -483,6 +493,13 @@ begin
       IntToStr(Cell.BG_RGB and $FF)
   else
     Result := Result + ';48;5;' + IntToStr(BGIndex);
+
+  { Underline color: 24-bit RGB }
+  if Cell.UL_RGB <> 0 then
+    Result := Result + ';58;2;' +
+      IntToStr((Cell.UL_RGB shr 16) and $FF) + ';' +
+      IntToStr((Cell.UL_RGB shr 8) and $FF) + ';' +
+      IntToStr(Cell.UL_RGB and $FF);
 
   Result := Result + 'm';
 end;
@@ -572,6 +589,8 @@ begin
   FCells[Y, X].Strikethrough := (ExtAttrs and eaStrikethrough) <> 0;
   FCells[Y, X].UnderlineStyle := (ExtAttrs and eaUnderMask) shr eaUnderShift;
   FCells[Y, X].Underline := FCells[Y, X].UnderlineStyle > 0;
+  FCells[Y, X].Dim := (ExtAttrs and eaDim) <> 0;
+  FCells[Y, X].Overline := (ExtAttrs and eaOverline) <> 0;
 end;
 
 procedure TScreenBuffer.SetCellHyperlink(X, Y: Integer; const URL: string);
@@ -579,6 +598,13 @@ begin
   if not FInitialized then Exit;
   if (X < 0) or (X >= FWidth) or (Y < 0) or (Y >= FHeight) then Exit;
   FCells[Y, X].HyperlinkURL := URL;
+end;
+
+procedure TScreenBuffer.SetCellULRGB(X, Y: Integer; AUL_RGB: Cardinal);
+begin
+  if not FInitialized then Exit;
+  if (X < 0) or (X >= FWidth) or (Y < 0) or (Y >= FHeight) then Exit;
+  FCells[Y, X].UL_RGB := AUL_RGB;
 end;
 
 function TScreenBuffer.GetCell(X, Y: Integer): TScreenCell;
@@ -601,7 +627,9 @@ var
   PrevFGIdx, PrevBGIdx: Byte;
   PrevBold, PrevUnder, PrevInv: Boolean;
   PrevItalic, PrevStrike: Boolean;
+  PrevDim, PrevOverline: Boolean;
   PrevUnderStyle: Byte;
+  PrevUL_RGB: Cardinal;
   PrevHyperlink: string;
   CurFG_RGB, CurBG_RGB: Cardinal;
   CurFGIdx, CurBGIdx: Byte;
@@ -634,7 +662,10 @@ begin
   PrevInv := False;
   PrevItalic := False;
   PrevStrike := False;
+  PrevDim := False;
+  PrevOverline := False;
   PrevUnderStyle := 0;
+  PrevUL_RGB := 0;
   PrevHyperlink := '';
 
   for Y := 0 to FHeight - 1 do begin
@@ -675,17 +706,21 @@ begin
           turned off individually without a reset }
         NeedReset := (PrevFG_RGB = $FFFFFFFF) or
           (FCells[Y, X].Bold <> PrevBold) or
+          (FCells[Y, X].Dim <> PrevDim) or
           (FCells[Y, X].Italic <> PrevItalic) or
           (FCells[Y, X].Strikethrough <> PrevStrike) or
           (FCells[Y, X].UnderlineStyle <> PrevUnderStyle) or
           (FCells[Y, X].Underline <> PrevUnder) or
-          (FCells[Y, X].Inverse <> PrevInv);
+          (FCells[Y, X].Inverse <> PrevInv) or
+          (FCells[Y, X].Overline <> PrevOverline) or
+          (FCells[Y, X].UL_RGB <> PrevUL_RGB);
 
         if NeedReset then begin
           { Full SGR: reset + all attributes + both colors }
           FOutputBuffer.Append(VT_CSI);
           FOutputBuffer.Append('0');
           if FCells[Y, X].Bold then FOutputBuffer.Append(';1');
+          if FCells[Y, X].Dim then FOutputBuffer.Append(';2');
           if FCells[Y, X].Italic then FOutputBuffer.Append(';3');
           case FCells[Y, X].UnderlineStyle of
             1: FOutputBuffer.Append(';4');
@@ -698,6 +733,7 @@ begin
           end;
           if FCells[Y, X].Inverse then FOutputBuffer.Append(';7');
           if FCells[Y, X].Strikethrough then FOutputBuffer.Append(';9');
+          if FCells[Y, X].Overline then FOutputBuffer.Append(';53');
 
           if CurFG_RGB <> 0 then begin
             FOutputBuffer.Append(';38;2;');
@@ -723,13 +759,26 @@ begin
             FOutputBuffer.Append(FByteStr[CurBGIdx]);
           end;
 
+          { Underline color (SGR 58;2;R;G;B) }
+          if FCells[Y, X].UL_RGB <> 0 then begin
+            FOutputBuffer.Append(';58;2;');
+            FOutputBuffer.Append(FByteStr[(FCells[Y, X].UL_RGB shr 16) and $FF]);
+            FOutputBuffer.Append(';');
+            FOutputBuffer.Append(FByteStr[(FCells[Y, X].UL_RGB shr 8) and $FF]);
+            FOutputBuffer.Append(';');
+            FOutputBuffer.Append(FByteStr[FCells[Y, X].UL_RGB and $FF]);
+          end;
+
           FOutputBuffer.Append('m');
           PrevBold := FCells[Y, X].Bold;
           PrevUnder := FCells[Y, X].Underline;
           PrevInv := FCells[Y, X].Inverse;
           PrevItalic := FCells[Y, X].Italic;
           PrevStrike := FCells[Y, X].Strikethrough;
+          PrevDim := FCells[Y, X].Dim;
+          PrevOverline := FCells[Y, X].Overline;
           PrevUnderStyle := FCells[Y, X].UnderlineStyle;
+          PrevUL_RGB := FCells[Y, X].UL_RGB;
         end
         else begin
           { Differential SGR: only emit color components that changed }
@@ -1253,6 +1302,7 @@ begin
   SetLength(BGRGBBuf, BufSize);
   SetLength(ExtAttrsBuf, BufSize);
   SetLength(HyperlinkBuf, BufSize);
+  SetLength(ULRGBBuf, BufSize);
   for var I := 0 to BufSize - 1 do begin
     VideoBuf^[I] := $0720;
     UnicodeCharBuf[I] := ' ';
@@ -1260,6 +1310,7 @@ begin
     BGRGBBuf[I] := 0;
     ExtAttrsBuf[I] := 0;
     HyperlinkBuf[I] := '';
+    ULRGBBuf[I] := 0;
   end;
   VideoBufDirty := True;
 end;
@@ -1307,6 +1358,8 @@ begin
         { Transfer hyperlink URLs }
         if I < Length(HyperlinkBuf) then
           Screen.SetCellHyperlink(X, Y, HyperlinkBuf[I]);
+        if I < Length(ULRGBBuf) then
+          Screen.SetCellULRGB(X, Y, ULRGBBuf[I]);
       end;
     end;
   end;
@@ -1431,6 +1484,7 @@ begin
     SetLength(BGRGBBuf, BufSize);
     SetLength(ExtAttrsBuf, BufSize);
     SetLength(HyperlinkBuf, BufSize);
+    SetLength(ULRGBBuf, BufSize);
     for var I := 0 to BufSize - 1 do begin
       VideoBuf^[I] := $0720;
       UnicodeCharBuf[I] := ' ';
@@ -1438,6 +1492,7 @@ begin
       BGRGBBuf[I] := 0;
       ExtAttrsBuf[I] := 0;
       HyperlinkBuf[I] := '';
+      ULRGBBuf[I] := 0;
     end;
     VideoBufDirty := True;
   end;

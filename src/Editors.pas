@@ -17,7 +17,8 @@ unit Editors;
 interface
 
 uses
-  Objects, Drivers, Views, Dialogs, FVCommon, FVConsts, FVBoxChars, FVUTF8;
+  Objects, Drivers, Views, Dialogs, FVCommon, FVConsts, FVBoxChars, FVUTF8,
+  SyntaxHighlight;
 
 const
   { Length constants. }
@@ -155,6 +156,9 @@ type
     FUpdateFlags       : Byte;
     FPlace_Marker      : array[1..10] of Sw_Word;
     FSearch_Replace    : Boolean;
+    FHighlighter       : ISyntaxHighlighter;
+    FColorTheme        : TSyntaxColorTheme;
+    FUseHighlighter    : Boolean;
 
     procedure  Center_Text(Select_Mode: Byte);
     function   CharPos(P, Target: Sw_Word): Sw_Integer;
@@ -272,6 +276,9 @@ type
     property BlankLine: Sw_Word read FBlankLine write FBlankLine;
     property Word_Wrap: Boolean read FWord_Wrap write FWord_Wrap;
     property Right_Margin: Sw_Integer read FRight_Margin write FRight_Margin;
+    property Highlighter: ISyntaxHighlighter read FHighlighter write FHighlighter;
+    property ColorTheme: TSyntaxColorTheme read FColorTheme write FColorTheme;
+    property UseHighlighter: Boolean read FUseHighlighter write FUseHighlighter;
   end;
 
   TMemoData = record
@@ -1827,6 +1834,7 @@ var
   CurColor: Byte;
 begin
   Buf := @DrawBuf;
+  var OrigLinePtr: Sw_Word := LinePtr;
   X := 0;
   OutPos := 0;
   Color := Lo(Colors);
@@ -1918,6 +1926,45 @@ begin
       Inc(OutPos);
     end;
     Inc(X);
+  end;
+
+  { Syntax highlighting pass: apply token colors to the rendered buffer }
+  if FUseHighlighter and (FHighlighter <> nil) then begin
+    var LineText: string := '';
+    var TempPtr: Sw_Word;
+    TempPtr := OrigLinePtr;
+    while TempPtr < BufLen do begin
+      var TC := BufChar(TempPtr);
+      if (TC = #10) or (TC = #13) then Break;
+      LineText := LineText + BufCharStr(TempPtr);
+      Inc(TempPtr, BufCharLen(TempPtr));
+    end;
+
+    FHighlighter.SetLine(LineText, -1);
+    var Token: TSyntaxToken;
+    while FHighlighter.NextToken(Token) do begin
+      var ThemeColor := FColorTheme.Colors[Token.Kind];
+      if ThemeColor.FG_RGB = 0 then Continue; { Skip unthemed tokens }
+      { Map token char positions to buffer positions }
+      { Token.StartPos is 1-based in LineText; need to subtract FDelta.X }
+      var BufStart := Token.StartPos - 1 - FDelta.X;
+      var BufEnd := BufStart + Token.Length;
+      if BufStart < 0 then BufStart := 0;
+      if BufEnd > OutPos then BufEnd := OutPos;
+      for var J := BufStart to BufEnd - 1 do begin
+        if (J >= 0) and (J < MaxViewWidth) then begin
+          { Don't override selection colors }
+          var SrcX := J + FDelta.X;
+          if (SrcX >= SelS) and (SrcX < SelE) then Continue;
+          if ThemeColor.FG_RGB <> 0 then
+            Buf^[J].FG_RGB := ThemeColor.FG_RGB;
+          if ThemeColor.BG_RGB <> 0 then
+            Buf^[J].BG_RGB := ThemeColor.BG_RGB;
+          Buf^[J].ExtAttrs := ThemeColor.ExtAttrs;
+          Buf^[J].UL_RGB := ThemeColor.UL_RGB;
+        end;
+      end;
+    end;
   end;
 end;
 
