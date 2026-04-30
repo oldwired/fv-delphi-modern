@@ -10,6 +10,8 @@ uses
   Objects in 'src\Objects.pas',
   FVScreen in 'src\FVScreen.pas',
   FVBoxChars in 'src\FVBoxChars.pas',
+  FVUnicodeWidth in 'src\FVUnicodeWidth.pas',
+  FVProfile in 'src\FVProfile.pas',
   FVUTF8 in 'src\FVUTF8.pas',
   Drivers in 'src\Drivers.pas',
   Views in 'src\Views.pas',
@@ -62,6 +64,9 @@ uses
   Accordion in 'src\Accordion.pas',
   EditorGutter in 'src\EditorGutter.pas',
   Notification in 'src\Notification.pas',
+  SpinnerView in 'src\SpinnerView.pas',
+  TaskProgress in 'src\TaskProgress.pas',
+  CheckListBox in 'src\CheckListBox.pas',
   FVClipboard in 'src\FVClipboard.pas',
   SixelEncoder in 'src\SixelEncoder.pas',
   SixelView in 'src\SixelView.pas',
@@ -145,6 +150,13 @@ const
   cmTestSyntaxHL          = 1072;
   cmTestMarkdownView      = 1073;
   cmTestPopupAutoComplete = 1074;
+  cmTestSpinnerGallery    = 1075;
+  cmTestMultiProgress     = 1076;
+  cmTestCheckList         = 1077;
+  cmTestHyperlink         = 1078;
+  cmTestProfileDump       = 1079;
+  cmTestCapabilityShowcase = 1080;
+  cmTestColorModes        = 1081;
 
   { Local commands for CommandSet demo - must be 0..255 to work with TCommandSet }
   cmDemoSave    = 60;
@@ -281,6 +293,13 @@ type
     procedure TestSyntaxHL;
     procedure TestMarkdownView;
     procedure TestPopupAutoComplete;
+    procedure TestSpinnerGallery;
+    procedure TestMultiProgress;
+    procedure TestCheckList;
+    procedure TestHyperlink;
+    procedure TestProfileDump;
+    procedure TestCapabilityShowcase;
+    procedure TestColorModes;
     property CalendarDateLabel: TStaticText read FCalendarDateLabel write FCalendarDateLabel;
   end;
 
@@ -429,6 +448,30 @@ type
     procedure Draw; override;
   end;
 
+  { Visual capability showcase: lists every FVProfile flag with status
+    and an inline example wherever one fits. Designed for a Window large
+    enough to hold ~24 rows of content. }
+  TCapabilityShowcaseView = class(TView)
+  public
+    procedure Draw; override;
+  end;
+
+  { Live OSC 8 hyperlink demo. TStaticText doesn't populate HyperlinkURL
+    on cells, so we draw with DrawHyperlink directly to exercise the
+    actual OSC 8 emit path in TScreenBuffer.UpdateScreen. }
+  THyperlinkDemoView = class(TView)
+  public
+    procedure Draw; override;
+  end;
+
+  { Cookbook demo: how to drive each colour mode FV supports - 16-colour
+    via attribute byte, xterm-256 palette samples via RGB cells, 24-bit RGB
+    via FG_RGB / BG_RGB, plus a note that FVProfile downsamples per host. }
+  TColorModesView = class(TView)
+  public
+    procedure Draw; override;
+  end;
+
   { Custom scroller that displays numbered lines }
   TTextScroller = class(TScroller)
   public
@@ -501,6 +544,12 @@ var
   WindowCount: Integer;
   Phase2Dialog: TPhase2DemoDialog = nil;
   SystemInfoDialog: TSystemInfoDialog = nil;
+  SpinnerGalleryDialog: TDialog = nil;
+  SpinnerGalleryViews: array of TSpinnerView;
+  MultiProgressDialog: TDialog = nil;
+  MultiProgressView: TTaskProgress = nil;
+  MultiProgressTaskIds: array[0..2] of Integer;
+  MultiProgressLastTickMs: UInt64 = 0;
 
 const
   TwoPi = 6.2831853071795864769;
@@ -1961,7 +2010,14 @@ begin
         NewItem('SIXEL ~S~pectrometer', '', kbNoKey, cmTestSixelSpectrometer, hcNoContext,
         NewItem('SIXEL ~A~nimated Sine', '', kbNoKey, cmTestSixelSine, hcNoContext,
         NewItem('Command~S~et Demo', '', kbNoKey, cmTestCommandSet, hcNoContext,
-        nil)))))))))))))),
+        NewItem('Spinner ~G~allery', '', kbNoKey, cmTestSpinnerGallery, hcNoContext,
+        NewItem('Multi-Task Pro~g~ress', '', kbNoKey, cmTestMultiProgress, hcNoContext,
+        NewItem('Check-~L~ist Selection', '', kbNoKey, cmTestCheckList, hcNoContext,
+        NewItem('~H~yperlink Test', '', kbNoKey, cmTestHyperlink, hcNoContext,
+        NewItem('Capa~b~ility Dump', '', kbNoKey, cmTestProfileDump, hcNoContext,
+        NewItem('Capability ~S~howcase', '', kbNoKey, cmTestCapabilityShowcase, hcNoContext,
+        NewItem('Color ~M~odes', '', kbNoKey, cmTestColorModes, hcNoContext,
+        nil))))))))))))))))))))),
       NewSubMenu('~A~dvanced', hcNoContext, NewMenu(
         NewItem('~K~ey Up/Down', '', kbNoKey, cmTestKeyUpDown, hcNoContext,
         NewItem('Console ~F~ocus', '', kbNoKey, cmTestConsoleFocus, hcNoContext,
@@ -2092,6 +2148,13 @@ begin
         cmTestSyntaxHL: TestSyntaxHL;
         cmTestMarkdownView: TestMarkdownView;
         cmTestPopupAutoComplete: TestPopupAutoComplete;
+        cmTestSpinnerGallery: TestSpinnerGallery;
+        cmTestMultiProgress: TestMultiProgress;
+        cmTestCheckList: TestCheckList;
+        cmTestHyperlink: TestHyperlink;
+        cmTestProfileDump: TestProfileDump;
+        cmTestCapabilityShowcase: TestCapabilityShowcase;
+        cmTestColorModes: TestColorModes;
       else
         Exit;
       end;
@@ -2123,6 +2186,32 @@ begin
     if Phase2Dialog <> nil then Phase2Dialog.UpdateGadgets;
     if SystemInfoDialog <> nil then SystemInfoDialog.UpdateWidgets;
     UpdateSixelDemoWindows;
+
+    { Drive spinner gallery animation. TSpinnerView.Update is self-paced
+      via elapsed-time check, so calling on every Idle is safe. }
+    if SpinnerGalleryDialog <> nil then
+    begin
+      var SpI: Integer;
+      for SpI := 0 to High(SpinnerGalleryViews) do
+        if SpinnerGalleryViews[SpI] <> nil then
+          SpinnerGalleryViews[SpI].Update;
+    end;
+
+    { Multi-task progress demo: drive 3 simulated tasks at different rates. }
+    if (MultiProgressView <> nil) and (MultiProgressDialog <> nil) then
+    begin
+      var Now64: UInt64;
+      Now64 := GetTickCount64;
+      if Now64 - MultiProgressLastTickMs >= 60 then
+      begin
+        MultiProgressLastTickMs := Now64;
+        MultiProgressView.IncrementTask(MultiProgressTaskIds[0], 2);
+        if Random(2) = 0 then
+          MultiProgressView.IncrementTask(MultiProgressTaskIds[1], 1);
+        if MultiProgressView.IsFinished(MultiProgressTaskIds[1]) then
+          MultiProgressView.IncrementTask(MultiProgressTaskIds[2], 3);
+      end;
+    end;
 
     { Update tooltips based on focus changes }
     TTooltip.PollFocus;
@@ -5099,6 +5188,814 @@ begin
     Dlg.Free;
   finally
     Items.Free;
+  end;
+end;
+
+{ TCapabilityShowcaseView }
+
+procedure TCapabilityShowcaseView.Draw;
+const
+  Bg = $17;     { white on blue }
+  Hdr = $1F;    { bright white on blue }
+  Lbl = $1E;    { yellow on blue }
+  ValYes = $1A; { bright green on blue }
+  ValNo = $1C;  { bright red on blue }
+
+  function YN(B: Boolean): string;
+  begin
+    if B then Result := 'Yes' else Result := 'No';
+  end;
+
+  function YNAttr(B: Boolean): Byte;
+  begin
+    if B then Result := ValYes else Result := ValNo;
+  end;
+
+  function CSName(C: TFVColorSystem): string;
+  begin
+    case C of
+      fvcsNoColors:  Result := 'NoColors (suppressed)';
+      fvcsLegacy:    Result := 'Legacy (16 colors)';
+      fvcsEightBit:  Result := '8-bit (256 colors)';
+      fvcsTrueColor: Result := 'TrueColor (24-bit RGB)';
+    else
+      Result := '?';
+    end;
+  end;
+
+var
+  B: TDrawBuffer;
+  W, Y, I, X: Integer;
+  P: TFVProfile;
+  S: string;
+  R, G, BCol: Byte;
+  Hue: Integer;
+begin
+  W := Size.X;
+  P := GetFVProfile;
+
+  { Header }
+  Y := 0;
+  DrawChar(B, 0, ' ', Hdr, W);
+  DrawStr(B, 1, 'FV terminal capability showcase', Hdr);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 1, 'Each row: detected status + (when sensible) live example.', Bg);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+  DrawChar(B, 0, #$2500, Bg, W);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  { ANSI Support }
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 1, 'ANSI VT support  : ', Lbl);
+  DrawStr(B, 20, YN(P.AnsiSupported), YNAttr(P.AnsiSupported));
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  { Interactive }
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 1, 'Interactive (TTY): ', Lbl);
+  DrawStr(B, 20, YN(P.Interactive), YNAttr(P.Interactive));
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  { Legacy console }
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 1, 'Legacy console   : ', Lbl);
+  DrawStr(B, 20, YN(P.LegacyConsole), YNAttr(not P.LegacyConsole));
+  DrawStr(B, 26, '(no VT - colour/sequences off)', Bg);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  { Is CI }
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 1, 'Running under CI : ', Lbl);
+  DrawStr(B, 20, YN(P.IsCI), YNAttr(not P.IsCI));
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  { Unicode }
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 1, 'Unicode output   : ', Lbl);
+  DrawStr(B, 20, YN(P.Unicode), YNAttr(P.Unicode));
+  S := 'Box ' + #$2554 + #$2550 + #$2557 + '  CJK ' + #$65E5 + #$672C + #$8A9E +
+       '  Emoji ' + #$D83C + #$DF89;
+  DrawStr(B, 26, S, Bg);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  { Hyperlinks (OSC 8) }
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 1, 'OSC 8 hyperlinks : ', Lbl);
+  DrawStr(B, 20, YN(P.HyperlinkSupport), YNAttr(P.HyperlinkSupport));
+  DrawHyperlink(B, 26, 'example.com', $1B, 'https://example.com');
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  { Sixel }
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 1, 'Sixel graphics   : ', Lbl);
+  DrawStr(B, 20, YN(P.SixelSupport), YNAttr(P.SixelSupport));
+  DrawStr(B, 26, '(see Test -> SIXEL Spectrometer for live demo)', Bg);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  { Colour system + samples }
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 1, 'Colour system    : ', Lbl);
+  DrawStr(B, 20, CSName(P.ColorSystem), Hdr);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  { 16-colour swatches: paint 16 cells with each Attr value (FG=index on dark BG) }
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 3, '16-colour    :', Bg);
+  for I := 0 to 15 do
+  begin
+    X := 18 + I * 2;
+    if X + 1 < W then
+    begin
+      B[X].Ch := #$2588;        { full block }
+      B[X].Attr := Byte(I) or $00;
+      B[X].FG_RGB := 0;
+      B[X].BG_RGB := 0;
+      B[X].ExtAttrs := 0;
+      B[X + 1] := B[X];
+    end;
+  end;
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  { 256-colour cube row: pick 32 indices spanning the 16-231 cube }
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 3, '256-colour   :', Bg);
+  for I := 0 to 31 do
+  begin
+    X := 18 + I;
+    if X >= W then Break;
+    B[X].Ch := #$2588;
+    B[X].Attr := Byte(16 + (I * (231 - 16)) div 31);
+    B[X].FG_RGB := 0;
+    B[X].BG_RGB := 0;
+    B[X].ExtAttrs := 0;
+  end;
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  { 24-bit RGB gradient: HSV-style hue sweep }
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 3, '24-bit RGB   :', Bg);
+  for I := 0 to 39 do
+  begin
+    X := 18 + I;
+    if X >= W then Break;
+    Hue := (I * 360) div 40;
+    case (Hue div 60) mod 6 of
+      0: begin R := 255; G := Byte((Hue mod 60) * 255 div 60); BCol := 0; end;
+      1: begin R := Byte(255 - (Hue mod 60) * 255 div 60); G := 255; BCol := 0; end;
+      2: begin R := 0; G := 255; BCol := Byte((Hue mod 60) * 255 div 60); end;
+      3: begin R := 0; G := Byte(255 - (Hue mod 60) * 255 div 60); BCol := 255; end;
+      4: begin R := Byte((Hue mod 60) * 255 div 60); G := 0; BCol := 255; end;
+    else
+      begin R := 255; G := 0; BCol := Byte(255 - (Hue mod 60) * 255 div 60); end;
+    end;
+    B[X].Ch := #$2588;
+    B[X].Attr := $07;
+    B[X].FG_RGB := (Cardinal(R) shl 16) or (Cardinal(G) shl 8) or Cardinal(BCol);
+    B[X].BG_RGB := 0;
+    B[X].ExtAttrs := 0;
+  end;
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  { Console size (from screen buffer dimensions) }
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 1, 'Console size     : ', Lbl);
+  DrawStr(B, 20, IntToStr(ScreenWidth) + ' x ' + IntToStr(ScreenHeight) + ' cells', Hdr);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  { Separator + text attribute samples }
+  DrawChar(B, 0, #$2500, Bg, W);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 1, 'Text attributes :', Lbl);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 3, 'Bold         : ', Bg);
+  DrawStr(B, 18, 'sample (bright FG = bold)', $1F);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 3, 'Dim          : ', Bg);
+  DrawStrEx(B, 18, 'sample (faint)', Bg, eaDim);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 3, 'Italic       : ', Bg);
+  DrawStrEx(B, 18, 'sample (slant)', Bg, eaItalic);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 3, 'Underline    : ', Bg);
+  DrawStrEx(B, 18, 'sample (single)', Bg, 1 shl eaUnderShift);
+  DrawStrEx(B, 36, 'curly', Bg, 3 shl eaUnderShift);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 3, 'Strikethrough: ', Bg);
+  DrawStrEx(B, 18, 'sample (strike)', Bg, eaStrikethrough);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 3, 'Inverse      : ', Bg);
+  { Inverse via swapped FG/BG palette: BG=white, FG=blue }
+  DrawStr(B, 18, 'sample (swap)', $71);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 3, 'Overline     : ', Bg);
+  DrawStrEx(B, 18, 'sample (line above)', Bg, eaOverline);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  { Fill remaining rows with background so we don't show garbage. }
+  while Y < Size.Y do
+  begin
+    DrawChar(B, 0, ' ', Bg, W);
+    WriteLine(0, Y, W, 1, B);
+    Inc(Y);
+  end;
+end;
+
+procedure TMyApp.TestCapabilityShowcase;
+var
+  R: TRect;
+  W: TWindow;
+  V: TCapabilityShowcaseView;
+begin
+  R.Assign(2, 1, 78, 27);
+  W := TWindow.Create(R, 'Capability Showcase', wnNoNumber);
+  W.GetExtent(R);
+  R.Grow(-1, -1);
+  V := TCapabilityShowcaseView.Create(R);
+  V.GrowMode := gfGrowHiX or gfGrowHiY;
+  W.Insert(V);
+  Inc(WindowCount);
+  Desktop.Insert(W);
+end;
+
+{ TColorModesView }
+
+procedure TColorModesView.Draw;
+const
+  Bg = $17;     { white on blue - dialog body }
+  Hdr = $1F;    { bright white on blue }
+  Lbl = $1E;    { yellow on blue - section labels }
+  Code = $1B;   { bright cyan on blue - code lines }
+  Note = $18;   { dim grey on blue - notes }
+
+  function CSName(C: TFVColorSystem): string;
+  begin
+    case C of
+      fvcsNoColors:  Result := 'NoColors';
+      fvcsLegacy:    Result := 'Legacy (16)';
+      fvcsEightBit:  Result := '8-bit (256)';
+      fvcsTrueColor: Result := 'TrueColor (24-bit)';
+    else
+      Result := '?';
+    end;
+  end;
+
+var
+  B: TDrawBuffer;
+  W, Y, I, X: Integer;
+  R, G, BCol: Byte;
+  Hue: Integer;
+
+  function XTerm256RGB(Index: Byte): Cardinal;
+  const
+    Axis: array[0..5] of Byte = (0, 95, 135, 175, 215, 255);
+  var
+    N, RLevel, GLevel, BLevel, Gray: Integer;
+  begin
+    if Index < 16 then
+      Exit(0);
+    if Index <= 231 then
+    begin
+      N := Index - 16;
+      RLevel := N div 36;
+      GLevel := (N div 6) mod 6;
+      BLevel := N mod 6;
+      Result := (Cardinal(Axis[RLevel]) shl 16) or
+                (Cardinal(Axis[GLevel]) shl 8) or
+                 Cardinal(Axis[BLevel]);
+    end
+    else
+    begin
+      Gray := 8 + (Index - 232) * 10;
+      Result := (Cardinal(Gray) shl 16) or
+                (Cardinal(Gray) shl 8) or
+                 Cardinal(Gray);
+    end;
+  end;
+
+  procedure BlankRow;
+  begin
+    DrawChar(B, 0, ' ', Bg, W);
+    WriteLine(0, Y, W, 1, B);
+    Inc(Y);
+  end;
+begin
+  W := Size.X;
+  Y := 0;
+
+  { Header }
+  DrawChar(B, 0, ' ', Hdr, W);
+  DrawStr(B, 1, 'Colour Modes - cookbook for FV drawing code', Hdr);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 1, 'Active profile: ' + CSName(GetFVProfile.ColorSystem) +
+    '  (RGB cells get downsampled per profile)', Bg);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, #$2500, Bg, W);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  { ===== Section 1: 16-colour attribute byte ===== }
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 1, '1. Legacy 16 colours - attribute byte (hi nibble = BG, lo = FG):', Lbl);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 3, 'DrawChar(B, X, '' '', $1F, n);  // White on Blue', Code);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  { 16 swatches - white text on each of the 16 BG colours }
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 3, '16 BG swatches:', Bg);
+  for I := 0 to 15 do
+  begin
+    X := 21 + I * 3;
+    if X + 2 < W then
+    begin
+      { Build attr byte: BG nibble in high, FG=white(15) in low. The
+        renderer maps both halves through ColorMap. }
+      DrawChar(B, X, ' ',     Byte((I shl 4) or $0F), 1);
+      DrawChar(B, X + 1, ' ', Byte((I shl 4) or $0F), 1);
+      DrawChar(B, X + 2, ' ', Bg, 1);
+    end;
+  end;
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  { 16 FG samples - each shows a glyph in that FG colour on default BG }
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 3, '16 FG glyphs:  ', Bg);
+  for I := 0 to 15 do
+  begin
+    X := 21 + I * 3;
+    if X < W then
+      DrawChar(B, X, #$2588, Byte((Hi(Bg) shl 4) or I), 1);
+  end;
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+  BlankRow;
+
+  { ===== Section 2: 256-colour ===== }
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 1, '2. 256-colour palette - xterm indices 16..255 as RGB samples:', Lbl);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 3, 'DrawRGBCell(B, X, #$2588, XTerm256RGB(N), 0);  // 8-bit emits 38;5', Code);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  { 6x6x6 cube row - sample 36 indices spanning 16..231 }
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 3, '6x6x6 cube  : ', Bg);
+  for I := 0 to 35 do
+  begin
+    X := 18 + I;
+    if X >= W then Break;
+    DrawRGBCell(B, X, #$2588, XTerm256RGB(Byte(16 + (I * (231 - 16)) div 35)), 0);
+  end;
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  { Greyscale 232..255 (24 cells) }
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 3, 'Greyscale   : ', Bg);
+  for I := 0 to 23 do
+  begin
+    X := 18 + I;
+    if X >= W then Break;
+    DrawRGBCell(B, X, #$2588, XTerm256RGB(Byte(232 + I)), 0);
+  end;
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+  BlankRow;
+
+  { ===== Section 3: 24-bit RGB ===== }
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 1, '3. 24-bit RGB - set FG_RGB / BG_RGB to $00RRGGBB:', Lbl);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 3, 'DrawRGBCell(B, X, ''#'', $FF8800, $202020);  // orange on dark grey', Code);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  { HSV gradient row (40 cells) }
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 3, 'HSV gradient: ', Bg);
+  for I := 0 to 39 do
+  begin
+    X := 18 + I;
+    if X >= W then Break;
+    Hue := (I * 360) div 40;
+    case (Hue div 60) mod 6 of
+      0: begin R := 255; G := Byte((Hue mod 60) * 255 div 60); BCol := 0; end;
+      1: begin R := Byte(255 - (Hue mod 60) * 255 div 60); G := 255; BCol := 0; end;
+      2: begin R := 0; G := 255; BCol := Byte((Hue mod 60) * 255 div 60); end;
+      3: begin R := 0; G := Byte(255 - (Hue mod 60) * 255 div 60); BCol := 255; end;
+      4: begin R := Byte((Hue mod 60) * 255 div 60); G := 0; BCol := 255; end;
+    else
+      begin R := 255; G := 0; BCol := Byte(255 - (Hue mod 60) * 255 div 60); end;
+    end;
+    DrawRGBCell(B, X, #$2588,
+      (Cardinal(R) shl 16) or (Cardinal(G) shl 8) or Cardinal(BCol), 0);
+  end;
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  { Named hex colours - text rendered with brand-style backgrounds }
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 3, 'Brand demo  : ', Bg);
+  DrawStrRGBEx(B, 18, ' Anthropic ', $FFFFFF, $D97757, 0, 0);
+  DrawStrRGBEx(B, 30, ' Embarcadero ', $FFFFFF, $E62D2D, 0, 0);
+  DrawStrRGBEx(B, 44, ' Spectre ', $FFFFFF, $005FB8, 0, 0);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+  BlankRow;
+
+  { ===== Section 4: Profile downsampling note ===== }
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 1, '4. Profile-aware downsampling (FVScreen.UpdateScreen):', Lbl);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 3, 'TrueColor : 24-bit emit unchanged   (38;2;R;G;B / 48;2;R;G;B)', Note);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 3, '8-bit     : RGB quantised to 6x6x6 cube  (38;5;N / 48;5;N)', Note);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 3, 'Legacy    : RGB to nearest of 16  (30-37/40-47, 90-97/100-107)', Note);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 3, 'NoColors  : all FG/BG/UL colour codes suppressed', Note);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 3, 'Env vars  : NO_COLOR=1 forces NoColors (still allows OSC 8/Sixel);', Note);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 13, 'CLICOLOR_FORCE=1 keeps colour when stdout is redirected;', Note);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 13, 'COLORTERM=truecolor pins TrueColor; TERM=*-256color pins 8-bit.', Note);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  { Fill remaining rows. }
+  while Y < Size.Y do
+  begin
+    DrawChar(B, 0, ' ', Bg, W);
+    WriteLine(0, Y, W, 1, B);
+    Inc(Y);
+  end;
+end;
+
+procedure TMyApp.TestColorModes;
+var
+  R: TRect;
+  W: TWindow;
+  V: TColorModesView;
+begin
+  R.Assign(2, 1, 78, 27);
+  W := TWindow.Create(R, 'Color Modes Cookbook', wnNoNumber);
+  W.GetExtent(R);
+  R.Grow(-1, -1);
+  V := TColorModesView.Create(R);
+  V.GrowMode := gfGrowHiX or gfGrowHiY;
+  W.Insert(V);
+  Inc(WindowCount);
+  Desktop.Insert(W);
+end;
+
+procedure TMyApp.TestSpinnerGallery;
+const
+  Kinds: array[0..7] of TSpinnerKind = (
+    skDots, skDots2, skLine, skArc, skBouncingBar, skBoxBounce, skPipe, skTriangle);
+  Captions: array[0..7] of string = (
+    'Dots', 'Dots2', 'Line', 'Arc', 'BouncingBar', 'BoxBounce', 'Pipe', 'Triangle');
+var
+  Dlg: TDialog;
+  R: TRect;
+  I: Integer;
+  SV: TSpinnerView;
+begin
+  R.Assign(8, 3, 60, 17);
+  Dlg := TDialog.Create(R, 'Spinner Gallery');
+
+  R.Assign(3, 1, 50, 2);
+  Dlg.Insert(TStaticText.Create(R, 'Curated subset of cli-spinners frame sets:'));
+
+  SetLength(SpinnerGalleryViews, Length(Kinds));
+  for I := 0 to High(Kinds) do
+  begin
+    R.Assign(3, 3 + I, 50, 4 + I);
+    SV := TSpinnerView.Create(R, Kinds[I], Captions[I]);
+    Dlg.Insert(SV);
+    SpinnerGalleryViews[I] := SV;
+  end;
+
+  R.Assign(20, 12, 32, 14);
+  Dlg.Insert(TButton.Create(R, '~O~K', cmOK, bfDefault));
+
+  SpinnerGalleryDialog := Dlg;
+  try
+    Desktop.ExecView(Dlg);
+  finally
+    SpinnerGalleryDialog := nil;
+    SetLength(SpinnerGalleryViews, 0);
+  end;
+  Dlg.Free;
+end;
+
+procedure TMyApp.TestMultiProgress;
+var
+  Dlg: TDialog;
+  R: TRect;
+  TP: TTaskProgress;
+begin
+  R.Assign(6, 4, 74, 14);
+  Dlg := TDialog.Create(R, 'Multi-Task Progress');
+
+  R.Assign(2, 1, 66, 2);
+  Dlg.Insert(TStaticText.Create(R, 'Three concurrent tasks driven from the Idle loop:'));
+
+  R.Assign(2, 2, 66, 6);
+  TP := TTaskProgress.Create(R);
+  Dlg.Insert(TP);
+
+  MultiProgressTaskIds[0] := TP.AddTask('Downloading', 100);
+  MultiProgressTaskIds[1] := TP.AddTask('Verifying',   100);
+  MultiProgressTaskIds[2] := TP.AddTask('Installing',  100);
+
+  R.Assign(28, 7, 40, 9);
+  Dlg.Insert(TButton.Create(R, '~O~K', cmOK, bfDefault));
+
+  MultiProgressView       := TP;
+  MultiProgressDialog     := Dlg;
+  MultiProgressLastTickMs := GetTickCount64;
+  try
+    Desktop.ExecView(Dlg);
+  finally
+    MultiProgressView   := nil;
+    MultiProgressDialog := nil;
+  end;
+  Dlg.Free;
+end;
+
+procedure TMyApp.TestCheckList;
+var
+  Dlg: TDialog;
+  R: TRect;
+  CL: TCheckListBox;
+  Lst: TStringList;
+  I: Integer;
+  Picked: TStringList;
+  Msg: string;
+begin
+  R.Assign(15, 3, 65, 18);
+  Dlg := TDialog.Create(R, 'Check-List Selection');
+
+  R.Assign(2, 1, 48, 2);
+  Dlg.Insert(TStaticText.Create(R, 'Space toggles, Enter accepts:'));
+
+  R.Assign(2, 2, 48, 11);
+  CL := TCheckListBox.Create(R, 1, nil);
+  Dlg.Insert(CL);
+
+  Lst := TStringList.Create;
+  for I := 1 to 15 do
+    Lst.Add('Sample item #' + IntToStr(I));
+  CL.NewList(Lst);
+
+  R.Assign(8, 12, 20, 14);
+  Dlg.Insert(TButton.Create(R, '~O~K', cmOK, bfDefault));
+  R.Assign(28, 12, 40, 14);
+  Dlg.Insert(TButton.Create(R, '~C~ancel', cmCancel, bfNormal));
+
+  if Desktop.ExecView(Dlg) = cmOK then
+  begin
+    Picked := CL.CheckedItems;
+    try
+      if Picked.Count = 0 then
+        Msg := 'Nothing selected.'
+      else
+        Msg := 'Selected: ' + IntToStr(Picked.Count) + #13#10 + Picked.Text;
+      MessageBox(Msg, mfInformation + mfOKButton);
+    finally
+      Picked.Free;
+    end;
+  end;
+  Dlg.Free;
+end;
+
+{ THyperlinkDemoView }
+
+procedure THyperlinkDemoView.Draw;
+const
+  Bg = $17;
+  Lbl = $1F;
+  Linky = $1B;  { bright cyan on blue }
+var
+  B: TDrawBuffer;
+  W, Y: Integer;
+begin
+  W := Size.X;
+  Y := 0;
+
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 1, 'OSC 8 hyperlink test - hover or Ctrl+click below:', Lbl);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, ' ', Bg, W);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  { A long, multi-cell link. After the A1 fix the whole string should
+    light up as one continuous link region on hover; before, each cell
+    fragmented into its own micro-link. }
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 1, 'Visit: ', Bg);
+  DrawHyperlink(B, 8, 'https://example.com (long underlined link)', Linky,
+    'https://example.com');
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, ' ', Bg, W);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 1, 'Two more, side by side - each should hover as a single', Bg);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 1, 'region (id= keeps cells in the same logical link):', Bg);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawHyperlink(B, 3, 'one.example.com', Linky, 'https://one.example.com');
+  DrawHyperlink(B, 22, 'two.example.com', Linky, 'https://two.example.com');
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, ' ', Bg, W);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 1, '(Requires a terminal with OSC 8 support - Windows Terminal,', Bg);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+  DrawChar(B, 0, ' ', Bg, W);
+  DrawStr(B, 1, ' iTerm2, WezTerm, etc. See "Capability Showcase" for status.)', Bg);
+  WriteLine(0, Y, W, 1, B);
+  Inc(Y);
+
+  while Y < Size.Y do
+  begin
+    DrawChar(B, 0, ' ', Bg, W);
+    WriteLine(0, Y, W, 1, B);
+    Inc(Y);
+  end;
+end;
+
+procedure TMyApp.TestHyperlink;
+var
+  R: TRect;
+  W: TWindow;
+  V: THyperlinkDemoView;
+begin
+  R.Assign(5, 3, 75, 16);
+  W := TWindow.Create(R, 'OSC 8 Hyperlink Test', wnNoNumber);
+  W.GetExtent(R);
+  R.Grow(-1, -1);
+  V := THyperlinkDemoView.Create(R);
+  V.GrowMode := gfGrowHiX or gfGrowHiY;
+  W.Insert(V);
+  Inc(WindowCount);
+  Desktop.Insert(W);
+end;
+
+procedure TMyApp.TestProfileDump;
+var
+  Dlg: TDialog;
+  R: TRect;
+  P: TFVProfile;
+  Lines: TStringList;
+  ST: TStaticText;
+  Y: Integer;
+
+  function CSName(C: TFVColorSystem): string;
+  begin
+    case C of
+      fvcsNoColors:  Result := 'NoColors';
+      fvcsLegacy:    Result := 'Legacy (16)';
+      fvcsEightBit:  Result := '8-bit (256)';
+      fvcsTrueColor: Result := 'TrueColor (24-bit)';
+    else
+      Result := '?';
+    end;
+  end;
+
+  function YN(B: Boolean): string;
+  begin
+    if B then Result := 'yes' else Result := 'no';
+  end;
+
+begin
+  P := GetFVProfile;
+  Lines := TStringList.Create;
+  try
+    Lines.Add('AnsiSupported    : ' + YN(P.AnsiSupported));
+    Lines.Add('Interactive      : ' + YN(P.Interactive));
+    Lines.Add('LegacyConsole    : ' + YN(P.LegacyConsole));
+    Lines.Add('Unicode          : ' + YN(P.Unicode));
+    Lines.Add('HyperlinkSupport : ' + YN(P.HyperlinkSupport));
+    Lines.Add('SixelSupport     : ' + YN(P.SixelSupport));
+    Lines.Add('IsCI             : ' + YN(P.IsCI));
+    Lines.Add('ColorSystem      : ' + CSName(P.ColorSystem));
+
+    R.Assign(10, 4, 64, 6 + Lines.Count + 4);
+    Dlg := TDialog.Create(R, 'Capability Dump (FVProfile)');
+
+    R.Assign(2, 1, 50, 2);
+    Dlg.Insert(TStaticText.Create(R, 'Detected at startup; consult before drawing.'));
+
+    for Y := 0 to Lines.Count - 1 do
+    begin
+      R.Assign(3, 3 + Y, 50, 4 + Y);
+      ST := TStaticText.Create(R, Lines[Y]);
+      Dlg.Insert(ST);
+    end;
+
+    R.Assign(20, Lines.Count + 4, 32, Lines.Count + 6);
+    Dlg.Insert(TButton.Create(R, '~O~K', cmOK, bfDefault));
+    Desktop.ExecView(Dlg);
+    Dlg.Free;
+  finally
+    Lines.Free;
   end;
 end;
 

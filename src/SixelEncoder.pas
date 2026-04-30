@@ -102,6 +102,9 @@ type
 
 implementation
 
+uses
+  FVProfile;
+
 const
   MaxRegisters = 256;
 
@@ -131,7 +134,7 @@ class function TSixelEncoder.IsSixelSupported: Boolean;
 begin
   if FCachedSupported < 0 then
   begin
-    if GetEnvironmentVariable('WT_SESSION') <> '' then
+    if GetFVProfile.SixelSupport then
       FCachedSupported := 1
     else
       FCachedSupported := 0;

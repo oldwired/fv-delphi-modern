@@ -96,6 +96,8 @@
         <DCCReference Include="src\Objects.pas"/>
         <DCCReference Include="src\FVScreen.pas"/>
         <DCCReference Include="src\FVBoxChars.pas"/>
+        <DCCReference Include="src\FVUnicodeWidth.pas"/>
+        <DCCReference Include="src\FVProfile.pas"/>
         <DCCReference Include="src\FVUTF8.pas"/>
         <DCCReference Include="src\Drivers.pas"/>
         <DCCReference Include="src\Views.pas"/>
@@ -148,6 +150,9 @@
         <DCCReference Include="src\Accordion.pas"/>
         <DCCReference Include="src\EditorGutter.pas"/>
         <DCCReference Include="src\Notification.pas"/>
+        <DCCReference Include="src\SpinnerView.pas"/>
+        <DCCReference Include="src\TaskProgress.pas"/>
+        <DCCReference Include="src\CheckListBox.pas"/>
         <DCCReference Include="src\FVClipboard.pas"/>
         <DCCReference Include="src\SixelEncoder.pas"/>
         <DCCReference Include="src\SixelView.pas"/>

@@ -478,10 +478,18 @@ var
   I, Len, Col, W: Integer;
   CP: Cardinal;
   CellStr: string;
+  LastCellIdx: Integer;    { last real cell index written; -1 = none yet }
+  LastCellWidth: Integer;  { width of that cell so VS16 promotion knows
+                             whether to expand it from 1 to 2 }
+  JoinNext: Boolean;       { previous code point was ZWJ, so append next
+                             visible code point to the same grapheme cell }
 begin
   Len := Length(S);
   I := 1;
   Col := 0;
+  LastCellIdx := -1;
+  LastCellWidth := 0;
+  JoinNext := False;
   while I <= Len do
   begin
     if Pos + Col >= MaxViewWidth then Break;
@@ -493,57 +501,93 @@ begin
       CP := $10000 + Cardinal((Ord(S[I]) - $D800) shl 10) + Cardinal(Ord(S[I+1]) - $DC00);
       W := CodePointCharWidth(CP);
       CellStr := S[I] + S[I+1]; { Full surrogate pair }
-      if Pos + Col >= 0 then
-      begin
-        Buf[Pos + Col].Ch := CellStr;
-        Buf[Pos + Col].Attr := Attr;
-        Buf[Pos + Col].FG_RGB := 0;
-        Buf[Pos + Col].BG_RGB := 0;
-        Buf[Pos + Col].ExtAttrs := 0;
-        Buf[Pos + Col].UL_RGB := 0;
-        Buf[Pos + Col].HyperlinkURL := '';
-      end;
-      { Fill continuation cell for wide chars }
-      if (W = 2) and (Pos + Col + 1 >= 0) and (Pos + Col + 1 < MaxViewWidth) then
-      begin
-        Buf[Pos + Col + 1].Ch := '';
-        Buf[Pos + Col + 1].Attr := Attr;
-        Buf[Pos + Col + 1].FG_RGB := 0;
-        Buf[Pos + Col + 1].BG_RGB := 0;
-        Buf[Pos + Col + 1].ExtAttrs := 0;
-        Buf[Pos + Col + 1].UL_RGB := 0;
-        Buf[Pos + Col + 1].HyperlinkURL := '';
-      end;
-      Inc(Col, W);
       Inc(I, 2);
     end
     else
     begin
-      W := CodePointCharWidth(Ord(S[I]));
-      if Pos + Col >= 0 then
-      begin
-        Buf[Pos + Col].Ch := S[I];
-        Buf[Pos + Col].Attr := Attr;
-        Buf[Pos + Col].FG_RGB := 0;
-        Buf[Pos + Col].BG_RGB := 0;
-        Buf[Pos + Col].ExtAttrs := 0;
-        Buf[Pos + Col].UL_RGB := 0;
-        Buf[Pos + Col].HyperlinkURL := '';
-      end;
-      { Fill continuation cell for wide BMP chars (CJK) }
-      if (W = 2) and (Pos + Col + 1 >= 0) and (Pos + Col + 1 < MaxViewWidth) then
-      begin
-        Buf[Pos + Col + 1].Ch := '';
-        Buf[Pos + Col + 1].Attr := Attr;
-        Buf[Pos + Col + 1].FG_RGB := 0;
-        Buf[Pos + Col + 1].BG_RGB := 0;
-        Buf[Pos + Col + 1].ExtAttrs := 0;
-        Buf[Pos + Col + 1].UL_RGB := 0;
-        Buf[Pos + Col + 1].HyperlinkURL := '';
-      end;
-      Inc(Col, W);
+      CP := Ord(S[I]);
+      W := CodePointCharWidth(CP);
+      CellStr := S[I];
       Inc(I);
     end;
+
+    if W = 0 then
+    begin
+      { Zero-width: combining mark, variation selector, ZWJ, etc.
+        Append onto the most recent real cell so the grapheme cluster
+        renders as one. Drop silently if no cell has been written yet. }
+      if (LastCellIdx >= 0) and (LastCellIdx < MaxViewWidth) then
+      begin
+        Buf[LastCellIdx].Ch := Buf[LastCellIdx].Ch + CellStr;
+        { VS16 (U+FE0F) forces emoji presentation, which terminals render
+          as 2 cells. If the base was width 1, promote it now: write a
+          continuation cell at Pos+Col and advance Col by one. }
+        if (CP = $FE0F) and (LastCellWidth = 1) and
+           (Pos + Col >= 0) and (Pos + Col < MaxViewWidth) then
+        begin
+          Buf[Pos + Col].Ch := '';
+          Buf[Pos + Col].Attr := Buf[LastCellIdx].Attr;
+          Buf[Pos + Col].FG_RGB := 0;
+          Buf[Pos + Col].BG_RGB := 0;
+          Buf[Pos + Col].ExtAttrs := 0;
+          Buf[Pos + Col].UL_RGB := 0;
+          Buf[Pos + Col].HyperlinkURL := '';
+          Inc(Col);
+          LastCellWidth := 2;
+        end;
+        if CP = $200D then
+          JoinNext := True;
+      end;
+      Continue;
+    end;
+
+    if JoinNext and (LastCellIdx >= 0) and (LastCellIdx < MaxViewWidth) then
+    begin
+      Buf[LastCellIdx].Ch := Buf[LastCellIdx].Ch + CellStr;
+      if W > LastCellWidth then
+      begin
+        if (Pos + Col >= 0) and (Pos + Col < MaxViewWidth) then
+        begin
+          Buf[Pos + Col].Ch := '';
+          Buf[Pos + Col].Attr := Buf[LastCellIdx].Attr;
+          Buf[Pos + Col].FG_RGB := 0;
+          Buf[Pos + Col].BG_RGB := 0;
+          Buf[Pos + Col].ExtAttrs := 0;
+          Buf[Pos + Col].UL_RGB := 0;
+          Buf[Pos + Col].HyperlinkURL := '';
+        end;
+        Inc(Col, W - LastCellWidth);
+        LastCellWidth := W;
+      end;
+      JoinNext := False;
+      Continue;
+    end;
+
+    JoinNext := False;
+    if Pos + Col >= 0 then
+    begin
+      Buf[Pos + Col].Ch := CellStr;
+      Buf[Pos + Col].Attr := Attr;
+      Buf[Pos + Col].FG_RGB := 0;
+      Buf[Pos + Col].BG_RGB := 0;
+      Buf[Pos + Col].ExtAttrs := 0;
+      Buf[Pos + Col].UL_RGB := 0;
+      Buf[Pos + Col].HyperlinkURL := '';
+      LastCellIdx := Pos + Col;
+      LastCellWidth := W;
+    end;
+    { Fill continuation cell for wide chars }
+    if (W = 2) and (Pos + Col + 1 >= 0) and (Pos + Col + 1 < MaxViewWidth) then
+    begin
+      Buf[Pos + Col + 1].Ch := '';
+      Buf[Pos + Col + 1].Attr := Attr;
+      Buf[Pos + Col + 1].FG_RGB := 0;
+      Buf[Pos + Col + 1].BG_RGB := 0;
+      Buf[Pos + Col + 1].ExtAttrs := 0;
+      Buf[Pos + Col + 1].UL_RGB := 0;
+      Buf[Pos + Col + 1].HyperlinkURL := '';
+    end;
+    Inc(Col, W);
   end;
 end;
 
@@ -554,11 +598,17 @@ var
   Attr: Byte;
   CP: Cardinal;
   CellStr: string;
+  LastCellIdx: Integer;
+  LastCellWidth: Integer;
+  JoinNext: Boolean;
 begin
   Len := Length(S);
   Attr := Lo(Attrs);
   Col := 0;
   I := 1;
+  LastCellIdx := -1;
+  LastCellWidth := 0;
+  JoinNext := False;
   while I <= Len do
   begin
     if S[I] = '~' then
@@ -568,56 +618,89 @@ begin
       Attrs := (Lo(Attrs) shl 8) or B;
       Attr := Lo(Attrs);
       Inc(I);
+      Continue;
+    end;
+
+    if Pos + Col >= MaxViewWidth then Break;
+    { Check for surrogate pair }
+    if (I < Len) and
+       (Ord(S[I]) >= $D800) and (Ord(S[I]) <= $DBFF) and
+       (Ord(S[I+1]) >= $DC00) and (Ord(S[I+1]) <= $DFFF) then
+    begin
+      CP := $10000 + Cardinal((Ord(S[I]) - $D800) shl 10) + Cardinal(Ord(S[I+1]) - $DC00);
+      W := CodePointCharWidth(CP);
+      CellStr := S[I] + S[I+1];
+      Inc(I, 2);
     end
     else
     begin
-      if Pos + Col >= MaxViewWidth then Break;
-      { Check for surrogate pair }
-      if (I < Len) and
-         (Ord(S[I]) >= $D800) and (Ord(S[I]) <= $DBFF) and
-         (Ord(S[I+1]) >= $DC00) and (Ord(S[I+1]) <= $DFFF) then
-      begin
-        CP := $10000 + Cardinal((Ord(S[I]) - $D800) shl 10) + Cardinal(Ord(S[I+1]) - $DC00);
-        W := CodePointCharWidth(CP);
-        CellStr := S[I] + S[I+1];
-        if Pos + Col >= 0 then
-        begin
-          Buf[Pos + Col].Ch := CellStr;
-          Buf[Pos + Col].Attr := Attr;
-          Buf[Pos + Col].FG_RGB := 0;
-          Buf[Pos + Col].BG_RGB := 0;
-        end;
-        if (W = 2) and (Pos + Col + 1 >= 0) and (Pos + Col + 1 < MaxViewWidth) then
-        begin
-          Buf[Pos + Col + 1].Ch := '';
-          Buf[Pos + Col + 1].Attr := Attr;
-          Buf[Pos + Col + 1].FG_RGB := 0;
-          Buf[Pos + Col + 1].BG_RGB := 0;
-        end;
-        Inc(Col, W);
-        Inc(I, 2);
-      end
-      else
-      begin
-        W := CodePointCharWidth(Ord(S[I]));
-        if Pos + Col >= 0 then
-        begin
-          Buf[Pos + Col].Ch := S[I];
-          Buf[Pos + Col].Attr := Attr;
-          Buf[Pos + Col].FG_RGB := 0;
-          Buf[Pos + Col].BG_RGB := 0;
-        end;
-        if (W = 2) and (Pos + Col + 1 >= 0) and (Pos + Col + 1 < MaxViewWidth) then
-        begin
-          Buf[Pos + Col + 1].Ch := '';
-          Buf[Pos + Col + 1].Attr := Attr;
-          Buf[Pos + Col + 1].FG_RGB := 0;
-          Buf[Pos + Col + 1].BG_RGB := 0;
-        end;
-        Inc(Col, W);
-        Inc(I);
-      end;
+      CP := Ord(S[I]);
+      W := CodePointCharWidth(CP);
+      CellStr := S[I];
+      Inc(I);
     end;
+
+    if W = 0 then
+    begin
+      { Zero-width: append onto previous real cell so the grapheme cluster
+        stays together. Drop silently if no cell has been written yet. }
+      if (LastCellIdx >= 0) and (LastCellIdx < MaxViewWidth) then
+      begin
+        Buf[LastCellIdx].Ch := Buf[LastCellIdx].Ch + CellStr;
+        { VS16 promotes width-1 base to width 2 (emoji presentation). }
+        if (CP = $FE0F) and (LastCellWidth = 1) and
+           (Pos + Col >= 0) and (Pos + Col < MaxViewWidth) then
+        begin
+          Buf[Pos + Col].Ch := '';
+          Buf[Pos + Col].Attr := Buf[LastCellIdx].Attr;
+          Buf[Pos + Col].FG_RGB := 0;
+          Buf[Pos + Col].BG_RGB := 0;
+          Inc(Col);
+          LastCellWidth := 2;
+        end;
+        if CP = $200D then
+          JoinNext := True;
+      end;
+      Continue;
+    end;
+
+    if JoinNext and (LastCellIdx >= 0) and (LastCellIdx < MaxViewWidth) then
+    begin
+      Buf[LastCellIdx].Ch := Buf[LastCellIdx].Ch + CellStr;
+      if W > LastCellWidth then
+      begin
+        if (Pos + Col >= 0) and (Pos + Col < MaxViewWidth) then
+        begin
+          Buf[Pos + Col].Ch := '';
+          Buf[Pos + Col].Attr := Buf[LastCellIdx].Attr;
+          Buf[Pos + Col].FG_RGB := 0;
+          Buf[Pos + Col].BG_RGB := 0;
+        end;
+        Inc(Col, W - LastCellWidth);
+        LastCellWidth := W;
+      end;
+      JoinNext := False;
+      Continue;
+    end;
+
+    JoinNext := False;
+    if Pos + Col >= 0 then
+    begin
+      Buf[Pos + Col].Ch := CellStr;
+      Buf[Pos + Col].Attr := Attr;
+      Buf[Pos + Col].FG_RGB := 0;
+      Buf[Pos + Col].BG_RGB := 0;
+      LastCellIdx := Pos + Col;
+      LastCellWidth := W;
+    end;
+    if (W = 2) and (Pos + Col + 1 >= 0) and (Pos + Col + 1 < MaxViewWidth) then
+    begin
+      Buf[Pos + Col + 1].Ch := '';
+      Buf[Pos + Col + 1].Attr := Attr;
+      Buf[Pos + Col + 1].FG_RGB := 0;
+      Buf[Pos + Col + 1].BG_RGB := 0;
+    end;
+    Inc(Col, W);
   end;
 end;
 

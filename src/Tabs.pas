@@ -31,6 +31,7 @@ type
     Items: PTabItem;
     DefItem: TView;
     ShortCut: Char;
+    Visible: Boolean;
   end;
 
   TTab = class(TGroup)
@@ -40,14 +41,20 @@ type
     FDefCount: Word;
     FInDraw: Boolean;
     FContentBorder: Boolean;
+    FFillBackground: Boolean;
     FSkipRedrawInDraw: Boolean;
     function FirstSelectable: TView;
     function LastSelectable: TView;
+    function NextVisibleTab(FromIndex: SmallInt): SmallInt;
+    function PrevVisibleTab(FromIndex: SmallInt): SmallInt;
+    function NearestVisibleTab(FromIndex: SmallInt): SmallInt;
   public
+    function IsTabVisible(Index: SmallInt): Boolean;
     constructor Create(var Bounds: TRect; ATabDef: PTabDef); reintroduce; virtual;
     constructor Load(var S: TFVStream); override;
     function AtTab(Index: SmallInt): PTabDef; virtual;
     procedure SelectTab(Index: SmallInt); virtual;
+    procedure SetTabVisible(Index: SmallInt; AVisible: Boolean); virtual;
     { Delphi port extensions - not in original FPC Free Vision }
     procedure AddTab(ATabDef: PTabDef); virtual;
     procedure RemoveTab(Index: SmallInt); virtual;
@@ -68,6 +75,7 @@ type
     property ActiveDef: SmallInt read FActiveDef write FActiveDef;
     property DefCount: Word read FDefCount write FDefCount;
     property ContentBorder: Boolean read FContentBorder write FContentBorder;
+    property FillBackground: Boolean read FFillBackground write FFillBackground;
     property SkipRedrawInDraw: Boolean read FSkipRedrawInDraw write FSkipRedrawInDraw;
   end;
 
@@ -99,6 +107,7 @@ begin
   Options := Options or ofSelectable or ofFirstClick or ofPreProcess or ofPostProcess;
   GrowMode := gfGrowHiX + gfGrowHiY + gfGrowRel;
   FContentBorder := True;
+  FFillBackground := True;
   FTabDefs := ATabDef;
   FActiveDef := -1;
   SelectTab(0);
@@ -153,6 +162,7 @@ constructor TTab.Load(var S: TFVStream);
         Last := @Cur^.Next;
         Cur^.Name := S.ReadStr;
         S.Read(Cur^.ShortCut, SizeOf(Cur^.ShortCut));
+        Cur^.Visible := True;  { Visible not yet serialized - default to True }
         S.Read(ActItem, SizeOf(ActItem));
         Cur^.Items := DoLoadTabItems(Cur^.DefItem, ActItem);
       end;
@@ -164,6 +174,8 @@ constructor TTab.Load(var S: TFVStream);
 
 begin
   inherited Load(S);
+  FFillBackground := True;
+  FContentBorder := True;
   S.Read(FDefCount, SizeOf(FDefCount));
   S.Read(FActiveDef, SizeOf(FActiveDef));
   FTabDefs := DoLoadTabDefs;
@@ -203,6 +215,7 @@ procedure TTab.Store(var S: TFVStream);
     begin
       S.WriteStr(Cur^.Name);
       S.Write(Cur^.ShortCut, SizeOf(Cur^.ShortCut));
+      { Visible not yet serialized - deferred to serialization overhaul }
       DoStoreTabItems(Cur^.Items, Cur^.DefItem);
       Cur := Cur^.Next;
     end;
@@ -256,6 +269,13 @@ var
   V: TView;
   TabDef: PTabDef;
 begin
+  { If requested tab is hidden, find nearest visible }
+  if (Index >= 0) and (Index < FDefCount) and not IsTabVisible(Index) then
+  begin
+    Index := NearestVisibleTab(Index);
+    if Index = -1 then
+      Exit;
+  end;
   if FActiveDef <> Index then
   begin
     if Owner <> nil then Owner.Lock;
@@ -338,19 +358,37 @@ end;
 { RemoveTab - Delphi port extension, not in original FPC Free Vision }
 procedure TTab.RemoveTab(Index: SmallInt);
 var
-  PrevDef, ToRemove: PTabDef;
+  PrevDef, ToRemove, TabDef: PTabDef;
   Item, NextItem: PTabItem;
   I: SmallInt;
 begin
   if (Index < 0) or (Index >= FDefCount) or (FDefCount <= 1) then
     Exit;
 
-  { If removing active tab, switch to another first }
+  { If removing active tab, switch to another first.
+    Mark the tab as hidden so SelectTab won't resolve back to it. }
   if Index = FActiveDef then begin
+    AtTab(Index)^.Visible := False;
     if Index > 0 then
       SelectTab(Index - 1)
     else
       SelectTab(Index + 1);
+    { If no visible fallback was found, manually remove the views }
+    if FActiveDef = Index then
+    begin
+      TabDef := AtTab(Index);
+      if TabDef <> nil then
+      begin
+        Item := TabDef^.Items;
+        while Item <> nil do
+        begin
+          if Item^.View <> nil then
+            Delete(Item^.View);
+          Item := Item^.Next;
+        end;
+      end;
+      FActiveDef := -1;
+    end;
   end;
 
   { Find and unlink the tab def }
@@ -383,6 +421,118 @@ begin
     end;
     { Name is now a managed string - Dispose will finalize it }
     Dispose(ToRemove);
+  end;
+
+  DrawView;
+end;
+
+function TTab.NextVisibleTab(FromIndex: SmallInt): SmallInt;
+var
+  I: SmallInt;
+  P: PTabDef;
+begin
+  for I := FromIndex + 1 to FDefCount - 1 do
+  begin
+    P := AtTab(I);
+    if (P <> nil) and P^.Visible then
+    begin
+      Result := I;
+      Exit;
+    end;
+  end;
+  Result := -1;
+end;
+
+function TTab.PrevVisibleTab(FromIndex: SmallInt): SmallInt;
+var
+  I: SmallInt;
+  P: PTabDef;
+begin
+  for I := FromIndex - 1 downto 0 do
+  begin
+    P := AtTab(I);
+    if (P <> nil) and P^.Visible then
+    begin
+      Result := I;
+      Exit;
+    end;
+  end;
+  Result := -1;
+end;
+
+function TTab.NearestVisibleTab(FromIndex: SmallInt): SmallInt;
+var
+  Fwd, Bwd: SmallInt;
+begin
+  Fwd := NextVisibleTab(FromIndex);
+  Bwd := PrevVisibleTab(FromIndex);
+  if (Fwd = -1) and (Bwd = -1) then
+    Result := -1
+  else if Fwd = -1 then
+    Result := Bwd
+  else if Bwd = -1 then
+    Result := Fwd
+  else if (FromIndex - Bwd) <= (Fwd - FromIndex) then
+    Result := Bwd  { prefer earlier tab when equidistant }
+  else
+    Result := Fwd;
+end;
+
+function TTab.IsTabVisible(Index: SmallInt): Boolean;
+var
+  P: PTabDef;
+begin
+  P := AtTab(Index);
+  Result := (P <> nil) and P^.Visible;
+end;
+
+procedure TTab.SetTabVisible(Index: SmallInt; AVisible: Boolean);
+var
+  TabDef: PTabDef;
+  NewActive: SmallInt;
+  P: PTabItem;
+begin
+  if (Index < 0) or (Index >= FDefCount) then Exit;
+  TabDef := AtTab(Index);
+  if TabDef = nil then Exit;
+  if TabDef^.Visible = AVisible then Exit;
+
+  TabDef^.Visible := AVisible;
+
+  if (not AVisible) and (Index = FActiveDef) then
+  begin
+    { Active tab is being hidden - find nearest visible tab }
+    NewActive := NearestVisibleTab(Index);
+    if NewActive <> -1 then
+      SelectTab(NewActive)
+    else
+    begin
+      { No visible tabs remain - remove current views }
+      if Owner <> nil then Owner.Lock;
+      Lock;
+      TabDef := AtTab(FActiveDef);
+      if TabDef <> nil then
+      begin
+        P := TabDef^.Items;
+        while P <> nil do
+        begin
+          if P^.View <> nil then
+            Delete(P^.View);
+          P := P^.Next;
+        end;
+      end;
+      FActiveDef := -1;
+      ReDraw;
+      UnLock;
+      if Owner <> nil then Owner.UnLock;
+    end;
+  end
+  else if AVisible and (FActiveDef = -1) then
+  begin
+    { No tab was active (last visible was hidden earlier and the views were
+      torn down). Showing this one again must re-select it, otherwise the
+      tab control stays empty until the user clicks a tab manually. }
+    SelectTab(Index);
   end;
 
   DrawView;
@@ -451,6 +601,7 @@ var
   CallOrig: Boolean;
   LastV: TView;
   FirstV: TView;
+  TabDef: PTabDef;
 begin
   if (Event.What and evMouseDown) <> 0 then
   begin
@@ -461,7 +612,10 @@ begin
       X := 1;
       for I := 0 to FDefCount - 1 do
       begin
-        Len := CStrLen(AtTab(I)^.Name);
+        TabDef := AtTab(I);
+        if (TabDef = nil) or (not TabDef^.Visible) then
+          Continue;
+        Len := CStrLen(TabDef^.Name);
         if (P.X >= X) and (P.X <= X + Len + 1) then
           Index := I;
         X := X + Len + 3;
@@ -500,25 +654,27 @@ begin
         end;
       kbCtrlPgUp:
         begin
-          if FActiveDef > 0 then
-            Index := Pred(FActiveDef)
-          else
-            Index := Pred(FDefCount);
-          ClearEvent(Event);
+          Index := PrevVisibleTab(FActiveDef);
+          if Index = -1 then
+            Index := PrevVisibleTab(FDefCount);  { wrap from end }
+          if Index <> -1 then
+            ClearEvent(Event);
         end;
       kbCtrlPgDn:
         begin
-          if FActiveDef < Pred(FDefCount) then
-            Index := Succ(FActiveDef)
-          else
-            Index := 0;
-          ClearEvent(Event);
+          Index := NextVisibleTab(FActiveDef);
+          if Index = -1 then
+            Index := NextVisibleTab(-1);  { wrap from beginning }
+          if Index <> -1 then
+            ClearEvent(Event);
         end;
     else
       for I := 0 to FDefCount - 1 do
       begin
-        if (AtTab(I)^.ShortCut <> #0) and
-           (UpCase(GetAltChar(Event.KeyCode)) = AtTab(I)^.ShortCut) then
+        TabDef := AtTab(I);
+        if (TabDef <> nil) and TabDef^.Visible and
+           (TabDef^.ShortCut <> #0) and
+           (UpCase(GetAltChar(Event.KeyCode)) = TabDef^.ShortCut) then
         begin
           Index := I;
           ClearEvent(Event);
@@ -545,6 +701,34 @@ begin
   end;
   if CallOrig then
     inherited HandleEvent(Event);
+
+  { Handle Left/Right arrow for tab switching after children had a chance to consume }
+  if (Event.What = evKeyDown) and GetState(sfFocused) then
+  begin
+    Index := -1;
+    case Event.KeyCode of
+      kbLeft:
+        begin
+          Index := PrevVisibleTab(FActiveDef);
+          if Index = -1 then
+            Index := PrevVisibleTab(FDefCount);
+        end;
+      kbRight:
+        begin
+          Index := NextVisibleTab(FActiveDef);
+          if Index = -1 then
+            Index := NextVisibleTab(-1);
+        end;
+    end;
+    if Index <> -1 then
+    begin
+      Select;
+      SelectTab(Index);
+      V := AtTab(FActiveDef)^.DefItem;
+      if V <> nil then V.Focus;
+      ClearEvent(Event);
+    end;
+  end;
 end;
 
 function TTab.GetPalette: PPalette;
@@ -576,6 +760,9 @@ var
   ActiveVPos: SmallInt;
   FC: Char;
   TabDef: PTabDef;
+  FirstVisibleIdx: SmallInt;
+  LastVisibleIdx: SmallInt;
+  IsLastVisible: Boolean;
 
   procedure SWriteBuf(AX, AY, W, H: SmallInt; var Buf);
   begin
@@ -600,10 +787,28 @@ begin
   C2 := (GetColor(7) and $F0 or $08) + GetColor(9) * 256;
   C3 := GetColor(8) + GetColor(8) * 256;
 
-  { Calculate the size of the headers }
+  { Determine first and last visible tab indices }
+  FirstVisibleIdx := -1;
+  LastVisibleIdx := -1;
+  for I := 0 to FDefCount - 1 do
+  begin
+    TabDef := AtTab(I);
+    if (TabDef <> nil) and TabDef^.Visible then
+    begin
+      if FirstVisibleIdx = -1 then
+        FirstVisibleIdx := I;
+      LastVisibleIdx := I;
+    end;
+  end;
+
+  { Calculate the size of the headers (visible tabs only) }
   HeaderLen := 0;
   for I := 0 to FDefCount - 1 do
-    HeaderLen := HeaderLen + CStrLen(AtTab(I)^.Name) + 3;
+  begin
+    TabDef := AtTab(I);
+    if (TabDef <> nil) and TabDef^.Visible then
+      HeaderLen := HeaderLen + CStrLen(TabDef^.Name) + 3;
+  end;
   Dec(HeaderLen);
   if HeaderLen > Size.X - 2 then
     HeaderLen := Size.X - 2;
@@ -618,7 +823,7 @@ begin
   for I := 0 to FDefCount - 1 do
   begin
     TabDef := AtTab(I);
-    if TabDef = nil then
+    if (TabDef = nil) or (not TabDef^.Visible) then
       Continue;
     Name := TabDef^.Name;
     if Name = '' then
@@ -647,13 +852,17 @@ begin
   X := 1;
   for I := 0 to FDefCount - 1 do
   begin
+    TabDef := AtTab(I);
+    if (TabDef = nil) or (not TabDef^.Visible) then
+      Continue;
     if I < FActiveDef then
       FC := CharTopLeft
     else
       FC := CharTopRight;
-    X2 := CStrLen(AtTab(I)^.Name) + 2;
+    X2 := CStrLen(TabDef^.Name) + 2;
+    IsLastVisible := (I = LastVisibleIdx);
     DrawChar(B, X + X2, FC, C1, 1);
-    if I = FDefCount - 1 then
+    if IsLastVisible then
       X2 := X2 + 1;
     if X2 > 0 then
       DrawChar(B, X, CharHoriz, C1, X2);
@@ -670,7 +879,7 @@ begin
     DrawChar(B, HeaderLen + 2, CharHoriz, C1, Size.X - HeaderLen - 3);
   DrawChar(B, HeaderLen + 1, CharHorizUp, C1, 1);
   DrawChar(B, ActiveKPos, CharBottomRight, C1, 1);
-  if ActiveDef = 0 then
+  if FActiveDef = FirstVisibleIdx then
     DrawChar(B, 0, CharVert, C1, 1)
   else
     DrawChar(B, 0, CharVertRight, C1, 1);
@@ -679,20 +888,31 @@ begin
   DrawChar(B, ActiveVPos, CharBottomLeft, C1, 1);
   if HeaderLen + 1 < Size.X - 1 then
     DrawChar(B, Size.X - 1, CharTopRight, C1, 1)
-  else if FActiveDef = FDefCount - 1 then
+  else if FActiveDef = LastVisibleIdx then
     DrawChar(B, Size.X - 1, CharVert, C1, 1)
   else
     DrawChar(B, Size.X - 1, CharVertLeft, C1, 1);
   SWriteBuf(0, 2, Size.X, 1, B);
 
-  { Remaining rows - draw only the side borders, not the content area.
-    Children will fill the content area when Redraw is called. }
+  { Content area rows }
   if FContentBorder then
     for I := 3 to Size.Y - 2 do begin
-      DrawChar(B, 0, CharVert, C1, 1);  { Left border only }
-      SWriteBuf(0, I, 1, 1, B);
-      DrawChar(B, 0, CharVert, C1, 1);  { Right border only }
-      SWriteBuf(Size.X - 1, I, 1, 1, B);
+      if FFillBackground then begin
+        ClearBuf;
+        DrawChar(B, 0, CharVert, C1, 1);
+        DrawChar(B, Size.X - 1, CharVert, C1, 1);
+        SWriteBuf(0, I, Size.X, 1, B);
+      end else begin
+        DrawChar(B, 0, CharVert, C1, 1);
+        SWriteBuf(0, I, 1, 1, B);
+        DrawChar(B, 0, CharVert, C1, 1);
+        SWriteBuf(Size.X - 1, I, 1, 1, B);
+      end;
+    end
+  else if FFillBackground then
+    for I := 3 to Size.Y - 2 do begin
+      ClearBuf;
+      SWriteBuf(0, I, Size.X, 1, B);
     end;
 
   { Bottom row }
@@ -918,6 +1138,7 @@ begin
   else
     P^.ShortCut := #0;
   P^.DefItem := ADefItem;
+  P^.Visible := True;
   Result := P;
 end;
 

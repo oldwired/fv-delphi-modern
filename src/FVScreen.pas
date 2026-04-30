@@ -105,7 +105,6 @@ type
     function CellsDiffer(X, Y: Integer): Boolean;
     procedure WriteVT(const S: string);
     procedure FlushVT;
-    function BuildSGR(const Cell: TScreenCell): string;
     function BuildSGRFromAttr(Attr: Word): string;
     procedure MoveCursorVT(X, Y: Integer);
   public
@@ -212,7 +211,8 @@ implementation
 
 uses
   System.Math,
-  FVUTF8;
+  FVUTF8,
+  FVProfile;
 
 const
   { VT Escape sequences }
@@ -270,20 +270,27 @@ procedure TScreenBuffer.EnableVTMode;
 var
   Mode: DWORD;
 begin
-  { Enable VT processing on stdout }
+  { Enable VT processing on stdout. Capability probe lives in FVProfile —
+    if the probe couldn't get the VT bit to stick we still leave the
+    handle valid but skip the optional DISABLE_NEWLINE_AUTO_RETURN tweak
+    so we don't accumulate flags on a host that ignores them. }
   FConsoleOutput := GetStdHandle(STD_OUTPUT_HANDLE);
   FConsoleInput := GetStdHandle(STD_INPUT_HANDLE);
 
   if FConsoleOutput <> INVALID_HANDLE_VALUE then begin
     GetConsoleMode(FConsoleOutput, FOriginalOutputMode);
-    Mode := FOriginalOutputMode or ENABLE_VIRTUAL_TERMINAL_PROCESSING;
-    { Try to disable newline auto-return for cleaner positioning }
-    Mode := Mode or DISABLE_NEWLINE_AUTO_RETURN;
-    if not SetConsoleMode(FConsoleOutput, Mode) then begin
-      { Fall back without DISABLE_NEWLINE_AUTO_RETURN }
-      Mode := FOriginalOutputMode or ENABLE_VIRTUAL_TERMINAL_PROCESSING;
-      SetConsoleMode(FConsoleOutput, Mode);
+    if ProbeVirtualTerminal(FConsoleOutput) then begin
+      Mode := FOriginalOutputMode or ENABLE_VIRTUAL_TERMINAL_PROCESSING
+                                  or DISABLE_NEWLINE_AUTO_RETURN;
+      if not SetConsoleMode(FConsoleOutput, Mode) then begin
+        Mode := FOriginalOutputMode or ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+        SetConsoleMode(FConsoleOutput, Mode);
+      end;
     end;
+    { Populate the singleton profile after the probe so the rest of FV
+      (color-system downsampling, hyperlink/Sixel detection, CI awareness)
+      sees the post-probe state. }
+    InitFVProfile;
   end;
 
   { Note: We do NOT enable ENABLE_VIRTUAL_TERMINAL_INPUT because Drivers.pas
@@ -435,75 +442,6 @@ begin
             (FCells[Y, X].HyperlinkURL <> FOldCells[Y, X].HyperlinkURL);
 end;
 
-function TScreenBuffer.BuildSGR(const Cell: TScreenCell): string;
-var
-  FGIndex, BGIndex: Byte;
-begin
-  { Map 4-bit colors to 256-color palette }
-  if Cell.FG < 16 then
-    FGIndex := ColorMap[Cell.FG]
-  else
-    FGIndex := Cell.FG;
-
-  if Cell.BG < 16 then
-    BGIndex := ColorMap[Cell.BG]
-  else
-    BGIndex := Cell.BG;
-
-  { Build SGR sequence }
-  Result := VT_CSI + '0';  // Reset first
-
-  if Cell.Bold then
-    Result := Result + ';1';
-  if Cell.Dim then
-    Result := Result + ';2';
-  if Cell.Italic then
-    Result := Result + ';3';
-  case Cell.UnderlineStyle of
-    1: Result := Result + ';4';
-    2: Result := Result + ';21';
-    3: Result := Result + ';4:3';
-    4: Result := Result + ';4:4';
-    5: Result := Result + ';4:5';
-  else
-    if Cell.Underline then
-      Result := Result + ';4';
-  end;
-  if Cell.Inverse then
-    Result := Result + ';7';
-  if Cell.Strikethrough then
-    Result := Result + ';9';
-  if Cell.Overline then
-    Result := Result + ';53';
-
-  { Foreground: 24-bit RGB if available, else 256-color palette }
-  if Cell.FG_RGB <> 0 then
-    Result := Result + ';38;2;' +
-      IntToStr((Cell.FG_RGB shr 16) and $FF) + ';' +
-      IntToStr((Cell.FG_RGB shr 8) and $FF) + ';' +
-      IntToStr(Cell.FG_RGB and $FF)
-  else
-    Result := Result + ';38;5;' + IntToStr(FGIndex);
-
-  { Background: 24-bit RGB if available, else 256-color palette }
-  if Cell.BG_RGB <> 0 then
-    Result := Result + ';48;2;' +
-      IntToStr((Cell.BG_RGB shr 16) and $FF) + ';' +
-      IntToStr((Cell.BG_RGB shr 8) and $FF) + ';' +
-      IntToStr(Cell.BG_RGB and $FF)
-  else
-    Result := Result + ';48;5;' + IntToStr(BGIndex);
-
-  { Underline color: 24-bit RGB }
-  if Cell.UL_RGB <> 0 then
-    Result := Result + ';58;2;' +
-      IntToStr((Cell.UL_RGB shr 16) and $FF) + ';' +
-      IntToStr((Cell.UL_RGB shr 8) and $FF) + ';' +
-      IntToStr(Cell.UL_RGB and $FF);
-
-  Result := Result + 'm';
-end;
-
 function TScreenBuffer.BuildSGRFromAttr(Attr: Word): string;
 var
   FG, BG: Byte;
@@ -631,17 +569,94 @@ var
   PrevUnderStyle: Byte;
   PrevUL_RGB: Cardinal;
   PrevHyperlink: string;
+  HyperlinkId: Cardinal;
   CurFG_RGB, CurBG_RGB: Cardinal;
   CurFGIdx, CurBGIdx: Byte;
   NeedReset, NeedFG, NeedBG, SGRStarted: Boolean;
+  FGDownsampled, BGDownsampled: Boolean;
+  ColorSys: TFVColorSystem;
+  NoColors: Boolean;
+  Legacy16: Boolean;
+  CurRegion, PrevRegion: TSixelRegion;
+  RegionIdx: Integer;
+  FoundRegion: Boolean;
+
+  function QuantizeRGBTo256(RGB: Cardinal): Byte;
+  const
+    AXIS: array[0..5] of Byte = (0, 95, 135, 175, 215, 255);
+    function Level(C: Byte): Byte;
+    var I, BestIdx, BestD, D: Integer;
+    begin
+      BestIdx := 0; BestD := 256;
+      for I := 0 to 5 do
+      begin
+        D := Abs(Integer(C) - Integer(AXIS[I]));
+        if D < BestD then begin BestD := D; BestIdx := I; end;
+      end;
+      Result := BestIdx;
+    end;
+  var
+    R, G, B, Lr, Lg, Lb: Byte;
+  begin
+    R := (RGB shr 16) and $FF;
+    G := (RGB shr 8) and $FF;
+    B := RGB and $FF;
+    Lr := Level(R); Lg := Level(G); Lb := Level(B);
+    Result := 16 + 36 * Lr + 6 * Lg + Lb;
+  end;
+
+  function QuantizeRGBTo16(RGB: Cardinal): Byte;
+  const
+    PALETTE: array[0..15, 0..2] of Byte = (
+      (  0,   0,   0),  ( 128,   0,   0),  (   0, 128,   0),  ( 128, 128,   0),
+      (  0,   0, 128),  ( 128,   0, 128),  (   0, 128, 128),  ( 192, 192, 192),
+      (128, 128, 128),  ( 255,   0,   0),  (   0, 255,   0),  ( 255, 255,   0),
+      (  0,   0, 255),  ( 255,   0, 255),  (   0, 255, 255),  ( 255, 255, 255)
+    );
+  var
+    R, G, B: Integer;
+    I, BestIdx, BestD, DR, DG, DB, D: Integer;
+  begin
+    R := (RGB shr 16) and $FF;
+    G := (RGB shr 8) and $FF;
+    B := RGB and $FF;
+    BestIdx := 7; BestD := MaxInt;
+    for I := 0 to 15 do
+    begin
+      DR := R - PALETTE[I, 0];
+      DG := G - PALETTE[I, 1];
+      DB := B - PALETTE[I, 2];
+      D := DR * DR + DG * DG + DB * DB;
+      if D < BestD then begin BestD := D; BestIdx := I; end;
+    end;
+    { PALETTE is in standard ANSI 16-colour order (Black, Red, Green,
+      Yellow, Blue, Magenta, Cyan, White, then 8 bright). The xterm-256
+      indices 0..15 use the same order, and SGR 30-37 / 90-97 also match,
+      so BestIdx directly serves both emit paths. (The earlier
+      ColorMap[BestIdx] was wrong - that table is keyed by FV's own
+      colour codes, which is a different ordering.) }
+    Result := BestIdx;
+  end;
+
 begin
   if not FInitialized then Exit;
+  HyperlinkId := 0;
+  { Cache the profile once per frame: GetFVProfile returns a record value,
+    re-evaluating per cell would be wasteful. NoColors=True suppresses both
+    the 38;5/48;5 color emits AND the palette-index fallback below, so a
+    NO_COLOR profile produces text without any FG/BG colour codes. }
+  ColorSys := GetFVProfile.ColorSystem;
+  NoColors := ColorSys = fvcsNoColors;
+  Legacy16 := ColorSys = fvcsLegacy;
 
   { Begin synchronized output (DEC mode 2026): the terminal buffers all
     changes and applies them atomically when the end sequence arrives.
     This prevents flicker when sixel pixel data and overlapping text cells
-    (e.g., dialog over sixel view) are emitted in the same frame. }
+    (e.g., dialog over sixel view) are emitted in the same frame. The
+    matching disable sequence runs in the finally block so a mid-frame
+    exception doesn't leave the terminal stuck in synchronized mode. }
   WriteVT(VT_CSI + '?2026h');
+  try
 
   { Phase 0: Erase any previous Sixel regions that moved or disappeared }
   if FSixelPrevRegions.Count > 0 then
@@ -685,16 +700,60 @@ begin
         if not (CursorKnown and (X = ExpectX) and (Y = ExpectY)) then
           MoveCursorVT(X, Y);
 
-        { Determine current cell's color state }
+        { Determine current cell's color state. Capability-aware
+          downsampling collapses 24-bit RGB to a 256/16 palette index when
+          the host terminal can't handle truecolor. }
         CurFG_RGB := FCells[Y, X].FG_RGB;
         CurBG_RGB := FCells[Y, X].BG_RGB;
-        if CurFG_RGB = 0 then begin
+        FGDownsampled := False;
+        BGDownsampled := False;
+
+        case ColorSys of
+          fvcsNoColors:
+            begin
+              { Skip the palette fallback entirely - emitter checks NoColors
+                and won't write 38;5/48;5 sequences. }
+              CurFG_RGB := 0;
+              CurBG_RGB := 0;
+              FGDownsampled := True;
+              BGDownsampled := True;
+            end;
+          fvcsEightBit:
+            begin
+              if CurFG_RGB <> 0 then begin
+                CurFGIdx := QuantizeRGBTo256(CurFG_RGB);
+                CurFG_RGB := 0;
+                FGDownsampled := True;
+              end;
+              if CurBG_RGB <> 0 then begin
+                CurBGIdx := QuantizeRGBTo256(CurBG_RGB);
+                CurBG_RGB := 0;
+                BGDownsampled := True;
+              end;
+            end;
+          fvcsLegacy:
+            begin
+              if CurFG_RGB <> 0 then begin
+                CurFGIdx := QuantizeRGBTo16(CurFG_RGB);
+                CurFG_RGB := 0;
+                FGDownsampled := True;
+              end;
+              if CurBG_RGB <> 0 then begin
+                CurBGIdx := QuantizeRGBTo16(CurBG_RGB);
+                CurBG_RGB := 0;
+                BGDownsampled := True;
+              end;
+            end;
+          fvcsTrueColor: ;  { Pass through }
+        end;
+
+        if (CurFG_RGB = 0) and not FGDownsampled then begin
           if FCells[Y, X].FG < 16 then
             CurFGIdx := ColorMap[FCells[Y, X].FG]
           else
             CurFGIdx := FCells[Y, X].FG;
         end;
-        if CurBG_RGB = 0 then begin
+        if (CurBG_RGB = 0) and not BGDownsampled then begin
           if FCells[Y, X].BG < 16 then
             CurBGIdx := ColorMap[FCells[Y, X].BG]
           else
@@ -735,38 +794,58 @@ begin
           if FCells[Y, X].Strikethrough then FOutputBuffer.Append(';9');
           if FCells[Y, X].Overline then FOutputBuffer.Append(';53');
 
-          if CurFG_RGB <> 0 then begin
-            FOutputBuffer.Append(';38;2;');
-            FOutputBuffer.Append(FByteStr[(CurFG_RGB shr 16) and $FF]);
-            FOutputBuffer.Append(';');
-            FOutputBuffer.Append(FByteStr[(CurFG_RGB shr 8) and $FF]);
-            FOutputBuffer.Append(';');
-            FOutputBuffer.Append(FByteStr[CurFG_RGB and $FF]);
-          end else begin
-            FOutputBuffer.Append(';38;5;');
-            FOutputBuffer.Append(FByteStr[CurFGIdx]);
-          end;
+          if not NoColors then begin
+            if CurFG_RGB <> 0 then begin
+              FOutputBuffer.Append(';38;2;');
+              FOutputBuffer.Append(FByteStr[(CurFG_RGB shr 16) and $FF]);
+              FOutputBuffer.Append(';');
+              FOutputBuffer.Append(FByteStr[(CurFG_RGB shr 8) and $FF]);
+              FOutputBuffer.Append(';');
+              FOutputBuffer.Append(FByteStr[CurFG_RGB and $FF]);
+            end else if Legacy16 then begin
+              { Native 16-colour SGR: 30-37 dark, 90-97 bright. Clamp any
+                stray 256-palette index back into the 16-colour space. }
+              if CurFGIdx > 15 then CurFGIdx := 7;
+              FOutputBuffer.Append(';');
+              if CurFGIdx < 8 then
+                FOutputBuffer.Append(FByteStr[30 + CurFGIdx])
+              else
+                FOutputBuffer.Append(FByteStr[90 + CurFGIdx - 8]);
+            end else begin
+              FOutputBuffer.Append(';38;5;');
+              FOutputBuffer.Append(FByteStr[CurFGIdx]);
+            end;
 
-          if CurBG_RGB <> 0 then begin
-            FOutputBuffer.Append(';48;2;');
-            FOutputBuffer.Append(FByteStr[(CurBG_RGB shr 16) and $FF]);
-            FOutputBuffer.Append(';');
-            FOutputBuffer.Append(FByteStr[(CurBG_RGB shr 8) and $FF]);
-            FOutputBuffer.Append(';');
-            FOutputBuffer.Append(FByteStr[CurBG_RGB and $FF]);
-          end else begin
-            FOutputBuffer.Append(';48;5;');
-            FOutputBuffer.Append(FByteStr[CurBGIdx]);
-          end;
+            if CurBG_RGB <> 0 then begin
+              FOutputBuffer.Append(';48;2;');
+              FOutputBuffer.Append(FByteStr[(CurBG_RGB shr 16) and $FF]);
+              FOutputBuffer.Append(';');
+              FOutputBuffer.Append(FByteStr[(CurBG_RGB shr 8) and $FF]);
+              FOutputBuffer.Append(';');
+              FOutputBuffer.Append(FByteStr[CurBG_RGB and $FF]);
+            end else if Legacy16 then begin
+              if CurBGIdx > 15 then CurBGIdx := 0;
+              FOutputBuffer.Append(';');
+              if CurBGIdx < 8 then
+                FOutputBuffer.Append(FByteStr[40 + CurBGIdx])
+              else
+                FOutputBuffer.Append(FByteStr[100 + CurBGIdx - 8]);
+            end else begin
+              FOutputBuffer.Append(';48;5;');
+              FOutputBuffer.Append(FByteStr[CurBGIdx]);
+            end;
 
-          { Underline color (SGR 58;2;R;G;B) }
-          if FCells[Y, X].UL_RGB <> 0 then begin
-            FOutputBuffer.Append(';58;2;');
-            FOutputBuffer.Append(FByteStr[(FCells[Y, X].UL_RGB shr 16) and $FF]);
-            FOutputBuffer.Append(';');
-            FOutputBuffer.Append(FByteStr[(FCells[Y, X].UL_RGB shr 8) and $FF]);
-            FOutputBuffer.Append(';');
-            FOutputBuffer.Append(FByteStr[FCells[Y, X].UL_RGB and $FF]);
+            { Underline color (SGR 58;2;R;G;B) - only meaningful for
+              terminals that handle 24-bit; suppress in NoColors and skip
+              entirely in Legacy16 since SGR 58 has no 16-colour form. }
+            if (not Legacy16) and (FCells[Y, X].UL_RGB <> 0) then begin
+              FOutputBuffer.Append(';58;2;');
+              FOutputBuffer.Append(FByteStr[(FCells[Y, X].UL_RGB shr 16) and $FF]);
+              FOutputBuffer.Append(';');
+              FOutputBuffer.Append(FByteStr[(FCells[Y, X].UL_RGB shr 8) and $FF]);
+              FOutputBuffer.Append(';');
+              FOutputBuffer.Append(FByteStr[FCells[Y, X].UL_RGB and $FF]);
+            end;
           end;
 
           FOutputBuffer.Append('m');
@@ -781,20 +860,24 @@ begin
           PrevUL_RGB := FCells[Y, X].UL_RGB;
         end
         else begin
-          { Differential SGR: only emit color components that changed }
+          { Differential SGR: only emit color components that changed.
+            In NoColors profile we never emit colour at all - keep both
+            flags False so the diff block below is skipped. }
           NeedFG := False;
           NeedBG := False;
 
-          if CurFG_RGB <> 0 then begin
-            if CurFG_RGB <> PrevFG_RGB then NeedFG := True;
-          end else begin
-            if (PrevFG_RGB <> 0) or (CurFGIdx <> PrevFGIdx) then NeedFG := True;
-          end;
+          if not NoColors then begin
+            if CurFG_RGB <> 0 then begin
+              if CurFG_RGB <> PrevFG_RGB then NeedFG := True;
+            end else begin
+              if (PrevFG_RGB <> 0) or (CurFGIdx <> PrevFGIdx) then NeedFG := True;
+            end;
 
-          if CurBG_RGB <> 0 then begin
-            if CurBG_RGB <> PrevBG_RGB then NeedBG := True;
-          end else begin
-            if (PrevBG_RGB <> 0) or (CurBGIdx <> PrevBGIdx) then NeedBG := True;
+            if CurBG_RGB <> 0 then begin
+              if CurBG_RGB <> PrevBG_RGB then NeedBG := True;
+            end else begin
+              if (PrevBG_RGB <> 0) or (CurBGIdx <> PrevBGIdx) then NeedBG := True;
+            end;
           end;
 
           if NeedFG or NeedBG then begin
@@ -809,6 +892,12 @@ begin
                 FOutputBuffer.Append(FByteStr[(CurFG_RGB shr 8) and $FF]);
                 FOutputBuffer.Append(';');
                 FOutputBuffer.Append(FByteStr[CurFG_RGB and $FF]);
+              end else if Legacy16 then begin
+                if CurFGIdx > 15 then CurFGIdx := 7;
+                if CurFGIdx < 8 then
+                  FOutputBuffer.Append(FByteStr[30 + CurFGIdx])
+                else
+                  FOutputBuffer.Append(FByteStr[90 + CurFGIdx - 8]);
               end else begin
                 FOutputBuffer.Append('38;5;');
                 FOutputBuffer.Append(FByteStr[CurFGIdx]);
@@ -825,6 +914,12 @@ begin
                 FOutputBuffer.Append(FByteStr[(CurBG_RGB shr 8) and $FF]);
                 FOutputBuffer.Append(';');
                 FOutputBuffer.Append(FByteStr[CurBG_RGB and $FF]);
+              end else if Legacy16 then begin
+                if CurBGIdx > 15 then CurBGIdx := 0;
+                if CurBGIdx < 8 then
+                  FOutputBuffer.Append(FByteStr[40 + CurBGIdx])
+                else
+                  FOutputBuffer.Append(FByteStr[100 + CurBGIdx - 8]);
               end else begin
                 FOutputBuffer.Append('48;5;');
                 FOutputBuffer.Append(FByteStr[CurBGIdx]);
@@ -841,12 +936,18 @@ begin
         PrevFGIdx := CurFGIdx;
         PrevBGIdx := CurBGIdx;
 
-        { OSC 8 hyperlink: emit open/close when URL changes }
+        { OSC 8 hyperlink: emit open/close when URL changes. The id=N
+          parameter keeps multi-cell text wrapped as a single clickable
+          region in Windows Terminal, iTerm2, and others - without it,
+          each cell becomes its own micro-link and hover/click fragments. }
         if FCells[Y, X].HyperlinkURL <> PrevHyperlink then begin
           if PrevHyperlink <> '' then
             FOutputBuffer.Append(VT_ESC + ']8;;' + VT_ESC + '\');
-          if FCells[Y, X].HyperlinkURL <> '' then
-            FOutputBuffer.Append(VT_ESC + ']8;;' + FCells[Y, X].HyperlinkURL + VT_ESC + '\');
+          if FCells[Y, X].HyperlinkURL <> '' then begin
+            Inc(HyperlinkId);
+            FOutputBuffer.Append(VT_ESC + ']8;id=' + IntToStr(HyperlinkId) + ';' +
+              FCells[Y, X].HyperlinkURL + VT_ESC + '\');
+          end;
           PrevHyperlink := FCells[Y, X].HyperlinkURL;
         end;
 
@@ -876,12 +977,29 @@ begin
   end;
 
   { Phase 3: Save current Sixel regions for stale detection, then clear.
-    Only update prev if new regions were registered this frame - otherwise
-    keep prev so stale detection works on idle frames when Draw isn't called. }
+    Merge instead of replacing: a partial redraw may register only one Sixel
+    view while other visible Sixel regions should remain active. }
   if FSixelRegions.Count > 0 then
   begin
-    FSixelPrevRegions.Clear;
-    FSixelPrevRegions.AddRange(FSixelRegions);
+    for CurRegion in FSixelRegions do
+    begin
+      FoundRegion := False;
+      for RegionIdx := 0 to FSixelPrevRegions.Count - 1 do
+      begin
+        PrevRegion := FSixelPrevRegions[RegionIdx];
+        if (PrevRegion.ScreenX = CurRegion.ScreenX) and
+           (PrevRegion.ScreenY = CurRegion.ScreenY) and
+           (PrevRegion.CellW = CurRegion.CellW) and
+           (PrevRegion.CellH = CurRegion.CellH) then
+        begin
+          FSixelPrevRegions[RegionIdx] := CurRegion;
+          FoundRegion := True;
+          Break;
+        end;
+      end;
+      if not FoundRegion then
+        FSixelPrevRegions.Add(CurRegion);
+    end;
   end;
   FSixelRegions.Clear;
 
@@ -896,10 +1014,13 @@ begin
     WriteVT(VT_CSI + '?25h');
   end;
 
-  { End synchronized output: terminal renders all buffered changes now }
-  WriteVT(VT_CSI + '?2026l');
-
-  FlushVT;
+  finally
+    { End synchronized output: always emit the disable sequence even when
+      the body raises, so a mid-frame exception can't leave the terminal
+      stuck in synchronized mode (frozen display until the next disable). }
+    WriteVT(VT_CSI + '?2026l');
+    FlushVT;
+  end;
 end;
 
 procedure TScreenBuffer.ClearScreen;
@@ -985,7 +1106,10 @@ end;
 
 procedure TScreenBuffer.DetectSixelSupport;
 begin
-  FSixelSupported := GetEnvironmentVariable('WT_SESSION') <> '';
+  { Delegate to FVProfile so the answer matches what the Capability Showcase
+    advertises. FVProfile widens beyond the bare WT_SESSION check to include
+    WezTerm, mintty, and xterm-kitty / mlterm via TERM. }
+  FSixelSupported := GetFVProfile.SixelSupport;
 end;
 
 procedure TScreenBuffer.DetectCellPixelSize;
@@ -1155,12 +1279,29 @@ var
   StartX, ClampedW: Integer;
   IsStale: Boolean;
   StillActive: Boolean;
+  OverlapsCurrent: Boolean;
   Cur: TSixelRegion;
   ErasedIndices: TList<Integer>;
+
+  function SameRegion(const A, B: TSixelRegion): Boolean;
+  begin
+    Result := (A.ScreenX = B.ScreenX) and (A.ScreenY = B.ScreenY) and
+      (A.CellW = B.CellW) and (A.CellH = B.CellH);
+  end;
+
+  function RegionsOverlap(const A, B: TSixelRegion): Boolean;
+  begin
+    Result := (A.ScreenX < B.ScreenX + B.CellW) and
+      (A.ScreenX + A.CellW > B.ScreenX) and
+      (A.ScreenY < B.ScreenY + B.CellH) and
+      (A.ScreenY + A.CellH > B.ScreenY);
+  end;
 begin
   { For each previous Sixel region, check if it's still covered by a current
     region at the same position. If not, the cells at the old position need
-    to be force-redrawn so Phase 2 overwrites the stale Sixel pixels.
+    to be force-redrawn so Phase 2 overwrites the stale Sixel pixels. Partial
+    redraws may register only the changed Sixel view; unchanged sibling
+    regions are preserved while their placeholder cells are still present.
     Erased regions are removed from FSixelPrevRegions so they are not
     re-erased on subsequent frames (which causes visible flicker). }
   ErasedIndices := TList<Integer>.Create;
@@ -1171,8 +1312,7 @@ begin
       IsStale := True;
       for Cur in FSixelRegions do
       begin
-        if (Cur.ScreenX = Prev.ScreenX) and (Cur.ScreenY = Prev.ScreenY) and
-           (Cur.CellW = Prev.CellW) and (Cur.CellH = Prev.CellH) then
+        if SameRegion(Cur, Prev) then
         begin
           IsStale := False;
           Break;
@@ -1181,11 +1321,20 @@ begin
 
       if IsStale then
       begin
-        { On idle frames (no new regions registered), the old region may still
-          be active - Draw just wasn't called. Check if ANY cell in the region
-          still has a placeholder. Previously only checked the top-left cell,
-          which failed when a menu/window occluded that corner. }
-        if (FSixelRegions.Count = 0) then
+        { If no current region overlaps the old one, it may still be active -
+          Draw just wasn't called for it during this partial redraw. Check if
+          ANY cell in the region still has a placeholder. Previously this was
+          only done on idle frames, so redrawing one Sixel view erased other
+          still-visible Sixel views. }
+        OverlapsCurrent := False;
+        for Cur in FSixelRegions do
+          if RegionsOverlap(Prev, Cur) then
+          begin
+            OverlapsCurrent := True;
+            Break;
+          end;
+
+        if not OverlapsCurrent then
         begin
           StillActive := False;
           for Y := Prev.ScreenY to Prev.ScreenY + Prev.CellH - 1 do

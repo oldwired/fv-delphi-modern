@@ -125,7 +125,11 @@ All views implement these interfaces (with reference counting disabled):
 - **TimedDlg.pas** - Auto-closing dialogs
 - **ColorTxt.pas, InpLong.pas, AsciiTab.pas** - Specialized widgets
 
-### New Components (8 additional widgets)
+### Capability / Width Infrastructure
+- **FVUnicodeWidth.pas** - Unicode 15.1 cell-width tables (wide / zero ranges) consumed by `FVUTF8.CodePointCharWidth`. Adapted from VSoft.AnsiConsole (MIT) - see Acknowledgments in `README.md`.
+- **FVProfile.pas** - Singleton terminal-capability profile (`TFVColorSystem`, ANSI/VT probe, NO_COLOR / CLICOLOR_FORCE, CI sniff, hyperlink + Sixel detection). `FVScreen.UpdateScreen` consults `GetFVProfile.ColorSystem` to downsample 24-bit RGB to 256-cube / nearest-of-16 / suppressed.
+
+### New Components (11 additional widgets)
 - **ProgressBar.pas** - `TProgressBar` single-line visual indicator
 - **Breadcrumb.pas** - `TBreadcrumb` clickable path navigation
 - **ToolBar.pas** - `TToolBar` horizontal button bar (`TStatusLine` linked-list pattern)
@@ -134,6 +138,9 @@ All views implement these interfaces (with reference counting disabled):
 - **Accordion.pas** - `TAccordion` collapsible sections with `TAccordionHeader`
 - **EditorGutter.pas** - `TEditorGutter` with pluggable providers (`TLineNumberProvider`, `TBookmarkProvider`, `TBreakpointProvider`, `TDiffProvider`)
 - **Notification.pas** - `TNotification` non-modal auto-dismissing toast popup
+- **SpinnerView.pas** - `TSpinnerView` animated spinner (12 named frame sets - dots, line, arc, bouncing-bar, etc.). Self-paced via `GetTickCount64`; drive `Update` from your idle loop.
+- **TaskProgress.pas** - `TTaskProgress` multi-task progress widget (caption | spinner | bar | percent | ETA per row). Coexists with `TProgressBar`; not a replacement.
+- **CheckListBox.pas** - `TCheckListBox` descends from `TStringListBox`, adds per-row Boolean state with `[ ]/[x]` prefix. Space toggles, Enter accepts, `CheckedItems` returns the picked rows.
 
 ## Code Conventions
 
@@ -166,8 +173,3 @@ Core port is complete. All widgets functional and tested via FVTest.exe.
 1. OBJECT to CLASS syntax conversion
 2. FreeAndNil replacement, P-alias removal
 3. Interface system, RTL generics, JSON serialization infrastructure
-
-## Known Issues
-
-- Corruption in ASCII Table display
-- Corruption in TStringGrid with wide Unicode characters

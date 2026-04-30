@@ -12,7 +12,8 @@ unit FVUTF8;
 interface
 
 uses
-  System.SysUtils;
+  System.SysUtils,
+  FVUnicodeWidth;
 
 type
   TFileEncoding = (
@@ -379,96 +380,24 @@ begin
   end;
 end;
 
-{ Unicode display width - equivalent to wcwidth().
-  Returns True for characters that occupy 2 terminal columns. }
+{ Unicode display width - delegates to FVUnicodeWidth (Unicode 15.1 tables
+  ported from spectreconsole/wcwidth via VSoft.AnsiConsole). }
 
 function IsWideCodePoint(CodePoint: Cardinal): Boolean;
 begin
-  Result :=
-    { East Asian Wide and Fullwidth characters (BMP) }
-    ((CodePoint >= $1100) and (CodePoint <= $115F)) or   { Hangul Jamo }
-    ((CodePoint >= $231A) and (CodePoint <= $231B)) or   { Watch, Hourglass }
-    ((CodePoint >= $2329) and (CodePoint <= $232A)) or   { Angle brackets }
-    ((CodePoint >= $23E9) and (CodePoint <= $23F3)) or   { Various symbols }
-    ((CodePoint >= $23F8) and (CodePoint <= $23FA)) or   { Play/pause buttons }
-    ((CodePoint >= $25FD) and (CodePoint <= $25FE)) or   { Medium squares }
-    ((CodePoint >= $2614) and (CodePoint <= $2615)) or   { Umbrella, hot beverage }
-    ((CodePoint >= $2648) and (CodePoint <= $2653)) or   { Zodiac signs }
-    (CodePoint = $267F) or                                { Wheelchair }
-    (CodePoint = $2693) or                                { Anchor }
-    (CodePoint = $26A1) or                                { High voltage }
-    ((CodePoint >= $26AA) and (CodePoint <= $26AB)) or   { Circles }
-    ((CodePoint >= $26BD) and (CodePoint <= $26BE)) or   { Sports }
-    ((CodePoint >= $26C4) and (CodePoint <= $26C5)) or   { Snowman, sun }
-    (CodePoint = $26CE) or                                { Ophiuchus }
-    (CodePoint = $26D4) or                                { No entry }
-    (CodePoint = $26EA) or                                { Church }
-    ((CodePoint >= $26F2) and (CodePoint <= $26F3)) or   { Fountain, golf }
-    (CodePoint = $26F5) or                                { Sailboat }
-    (CodePoint = $26FA) or                                { Tent }
-    (CodePoint = $26FD) or                                { Fuel pump }
-    (CodePoint = $2702) or                                { Scissors }
-    (CodePoint = $2705) or                                { Check mark }
-    ((CodePoint >= $2708) and (CodePoint <= $270D)) or   { Airplane..writing hand }
-    (CodePoint = $270F) or                                { Pencil }
-    ((CodePoint >= $2753) and (CodePoint <= $2755)) or   { Question marks }
-    (CodePoint = $2757) or                                { Exclamation mark }
-    ((CodePoint >= $2795) and (CodePoint <= $2797)) or   { Math symbols }
-    (CodePoint = $27B0) or                                { Curly loop }
-    (CodePoint = $27BF) or                                { Double curly loop }
-    ((CodePoint >= $2934) and (CodePoint <= $2935)) or   { Arrows }
-    ((CodePoint >= $2B05) and (CodePoint <= $2B07)) or   { Arrows }
-    ((CodePoint >= $2B1B) and (CodePoint <= $2B1C)) or   { Squares }
-    (CodePoint = $2B50) or                                { Star }
-    (CodePoint = $2B55) or                                { Circle }
-    ((CodePoint >= $2E80) and (CodePoint <= $9FFF)) or   { CJK and related blocks }
-    ((CodePoint >= $AC00) and (CodePoint <= $D7AF)) or   { Hangul Syllables }
-    ((CodePoint >= $F900) and (CodePoint <= $FAFF)) or   { CJK Compatibility Ideographs }
-    ((CodePoint >= $FE10) and (CodePoint <= $FE1F)) or   { Vertical Forms }
-    ((CodePoint >= $FE30) and (CodePoint <= $FE6F)) or   { CJK Compatibility Forms }
-    ((CodePoint >= $FF00) and (CodePoint <= $FF60)) or   { Fullwidth Forms }
-    ((CodePoint >= $FFE0) and (CodePoint <= $FFE6)) or   { Fullwidth currency }
-    { Supplementary planes - emoji and other wide chars }
-    ((CodePoint >= $1F000) and (CodePoint <= $1F02F)) or { Mahjong, Domino }
-    ((CodePoint >= $1F0A0) and (CodePoint <= $1F0FF)) or { Playing cards }
-    ((CodePoint >= $1F100) and (CodePoint <= $1F1FF)) or { Enclosed alphanumerics, flags }
-    ((CodePoint >= $1F200) and (CodePoint <= $1F2FF)) or { Enclosed ideographic }
-    ((CodePoint >= $1F300) and (CodePoint <= $1F9FF)) or { Misc symbols, emoticons, transport, etc. }
-    ((CodePoint >= $1FA00) and (CodePoint <= $1FAFF)) or { Chess, extended symbols }
-    ((CodePoint >= $20000) and (CodePoint <= $2FFFF)) or { CJK Unified Ideographs Extension B+ }
-    ((CodePoint >= $30000) and (CodePoint <= $3FFFF));   { CJK Extension G+ }
+  Result := FVIsWideCodePoint(CodePoint);
 end;
-
-{ Returns display width of a code point: 0 for controls, 2 for wide, 1 otherwise }
 
 function CodePointCharWidth(CodePoint: Cardinal): Integer;
 begin
-  if CodePoint < 32 then
-    Result := 0
-  else if IsWideCodePoint(CodePoint) then
-    Result := 2
-  else
-    Result := 1;
+  Result := FVCellWidth(CodePoint);
 end;
 
 { String-level width helpers }
 
 function IsWideString(const S: string): Boolean;
-var
-  CP: Cardinal;
 begin
-  Result := False;
-  if Length(S) = 0 then Exit;
-  if (Length(S) >= 2) and
-     (Ord(S[1]) >= $D800) and (Ord(S[1]) <= $DBFF) and
-     (Ord(S[2]) >= $DC00) and (Ord(S[2]) <= $DFFF) then
-  begin
-    { Surrogate pair - decode to code point }
-    CP := $10000 + Cardinal((Ord(S[1]) - $D800) shl 10) + Cardinal(Ord(S[2]) - $DC00);
-    Result := IsWideCodePoint(CP);
-  end
-  else
-    Result := IsWideCodePoint(Ord(S[1]));
+  Result := StringDisplayWidth(S) > 1;
 end;
 
 { StringDisplayWidth - returns display column count for a Delphi UTF-16 string,
@@ -476,62 +405,147 @@ end;
 
 function StringDisplayWidth(const S: string): Integer;
 var
-  I, Len: Integer;
+  I, Len, W, ClusterWidth: Integer;
   CP: Cardinal;
+  HaveCluster, JoinNext: Boolean;
+
+  procedure FlushCluster;
+  begin
+    if HaveCluster then
+    begin
+      Inc(Result, ClusterWidth);
+      HaveCluster := False;
+      ClusterWidth := 0;
+    end;
+  end;
+
 begin
   Result := 0;
   Len := Length(S);
   I := 1;
+  ClusterWidth := 0;
+  HaveCluster := False;
+  JoinNext := False;
   while I <= Len do
   begin
     if (I < Len) and
        (Ord(S[I]) >= $D800) and (Ord(S[I]) <= $DBFF) and
        (Ord(S[I+1]) >= $DC00) and (Ord(S[I+1]) <= $DFFF) then
     begin
-      { Surrogate pair - decode to code point }
       CP := $10000 + Cardinal((Ord(S[I]) - $D800) shl 10) + Cardinal(Ord(S[I+1]) - $DC00);
-      Inc(Result, CodePointCharWidth(CP));
       Inc(I, 2);
     end
     else
     begin
-      Inc(Result, CodePointCharWidth(Ord(S[I])));
+      CP := Ord(S[I]);
       Inc(I);
     end;
+    W := CodePointCharWidth(CP);
+
+    if W = 0 then
+    begin
+      if HaveCluster then
+      begin
+        { VS16 (U+FE0F) promotes a width-1 base character to width 2
+          (emoji presentation), matching what DrawStr will lay out. }
+        if (CP = $FE0F) and (ClusterWidth = 1) then
+          ClusterWidth := 2;
+        if CP = $200D then
+          JoinNext := True;
+      end;
+      Continue;
+    end;
+
+    if HaveCluster and JoinNext then
+    begin
+      if W > ClusterWidth then
+        ClusterWidth := W;
+      JoinNext := False;
+    end
+    else
+    begin
+      FlushCluster;
+      HaveCluster := True;
+      ClusterWidth := W;
+      JoinNext := False;
+    end;
   end;
+  FlushCluster;
 end;
 
 { CStrDisplayWidth - same as StringDisplayWidth but skips ~ hotkey markers }
 
 function CStrDisplayWidth(const S: string): Integer;
 var
-  I, Len: Integer;
+  I, Len, W, ClusterWidth: Integer;
   CP: Cardinal;
+  HaveCluster, JoinNext: Boolean;
+
+  procedure FlushCluster;
+  begin
+    if HaveCluster then
+    begin
+      Inc(Result, ClusterWidth);
+      HaveCluster := False;
+      ClusterWidth := 0;
+    end;
+  end;
+
 begin
   Result := 0;
   Len := Length(S);
   I := 1;
+  ClusterWidth := 0;
+  HaveCluster := False;
+  JoinNext := False;
   while I <= Len do
   begin
     if S[I] = '~' then
     begin
       Inc(I); { Skip tilde marker }
+      Continue;
     end
     else if (I < Len) and
             (Ord(S[I]) >= $D800) and (Ord(S[I]) <= $DBFF) and
             (Ord(S[I+1]) >= $DC00) and (Ord(S[I+1]) <= $DFFF) then
     begin
-      { Surrogate pair - decode to code point }
       CP := $10000 + Cardinal((Ord(S[I]) - $D800) shl 10) + Cardinal(Ord(S[I+1]) - $DC00);
-      Inc(Result, CodePointCharWidth(CP));
       Inc(I, 2);
     end
     else
     begin
-      Inc(Result, CodePointCharWidth(Ord(S[I])));
+      CP := Ord(S[I]);
       Inc(I);
     end;
+    W := CodePointCharWidth(CP);
+
+    if W = 0 then
+    begin
+      if HaveCluster then
+      begin
+        if (CP = $FE0F) and (ClusterWidth = 1) then
+          ClusterWidth := 2;
+        if CP = $200D then
+          JoinNext := True;
+      end;
+      Continue;
+    end;
+
+    if HaveCluster and JoinNext then
+    begin
+      if W > ClusterWidth then
+        ClusterWidth := W;
+      JoinNext := False;
+    end
+    else
+    begin
+      FlushCluster;
+      HaveCluster := True;
+      ClusterWidth := W;
+      JoinNext := False;
+    end;
   end;
+  FlushCluster;
 end;
 
 { Conversion to UTF-8 }

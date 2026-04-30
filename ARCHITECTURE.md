@@ -39,20 +39,25 @@ Free Vision Modern is a text-mode UI framework that provides a complete widget t
 |    Menus.pas: TMenuBar, TMenuBox, TStatusLine                    |
 |    Editors.pas, ColorSel.pas, Outline.pas, Tabs.pas              |
 |    ProgressBar, Breadcrumb, ToolBar, ComboBox, Splitter,         |
-|    Accordion, EditorGutter, Notification, SIXEL/ImageView         |
+|    Accordion, EditorGutter, Notification, SIXEL/ImageView,        |
+|    SpinnerView, TaskProgress, CheckListBox                        |
 +------------------------------------------------------------------+
 |                      View Layer                                   |
 |         Views.pas: TView, TGroup, TWindow, TFrame                |
 +------------------------------------------------------------------+
 |                    Driver Layer                                   |
 |         Drivers.pas: Event queue, keyboard, mouse                |
-|         Video.pas: Console output (Windows Console API)          |
+|         FVScreen.pas: Console output, VT/SGR, Sixel              |
+|                       (consults FVProfile for downsampling)      |
 +------------------------------------------------------------------+
 |                   Foundation Layer                                |
 |         Objects.pas: TFVStream, string helpers                   |
 |         FVCommon.pas: Platform types                             |
 |         FVClipboard.pas: Windows clipboard bridge                |
 |         FVInterfaces.pas: Interface definitions                  |
+|         FVUnicodeWidth.pas: Unicode 15.1 cell-width tables       |
+|         FVUTF8.pas: UTF-8 codec + width (delegates to above)     |
+|         FVProfile.pas: Terminal capability profile               |
 +------------------------------------------------------------------+
 ```
 
@@ -780,6 +785,12 @@ src/
   Accordion.pas       Collapsible section stack
   EditorGutter.pas    Multi-column editor gutter with provider plugins
   Notification.pas    Auto-dismissing toast popups
+  SpinnerView.pas     Animated spinner (cli-spinners frame sets)
+  TaskProgress.pas    Multi-task progress (caption | spinner | bar | %% | ETA)
+  CheckListBox.pas    Multi-select list with [ ]/[x] prefix
+  FVUnicodeWidth.pas  Unicode 15.1 cell-width tables (wcwidth)
+  FVProfile.pas       Terminal capability profile (VT probe, ColorSystem,
+                      NO_COLOR, CI sniff, hyperlink + Sixel detection)
 ```
 
 ## Memory Management

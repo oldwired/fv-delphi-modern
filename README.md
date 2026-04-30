@@ -15,7 +15,9 @@ Free Vision is a classic console-based GUI toolkit originally derived from Borla
 - **Standard Dialogs**: Message boxes, file open/save dialogs, color selection, ASCII table
 - **Advanced Controls**: Tab controls, outline/tree views, progress gauges, timed dialogs
 - **Layout Components**: Splitter panels with draggable divider, accordion with collapsible sections
-- **Extended Widgets**: Toolbar, breadcrumb navigation, combo box dropdown, progress bar, editor gutter with pluggable providers, toast notifications
+- **Extended Widgets**: Toolbar, breadcrumb navigation, combo box dropdown, progress bar, editor gutter with pluggable providers, toast notifications, animated spinner, multi-task progress with ETA, checkbox list-box for multi-select
+- **Terminal Capability Profile**: `FVProfile` probes VT support, color depth (no-color / 16 / 256 / 24-bit), interactivity, CI environment, hyperlink + Sixel support; `NO_COLOR` and `CLICOLOR_FORCE` honored. `FVScreen.UpdateScreen` downsamples 24-bit RGB to the host's color system.
+- **Unicode 15.1 Width Tables**: `FVUnicodeWidth` provides correct wide / combining / zero-width measurement for emoji, CJK, ZWJ joiners, and variation selectors.
 - **SIXEL Graphics**: Adaptive 256-color SIXEL encoder, direct SIXEL canvas drawing, and BMP/SIXEL image viewer
 - **Input Validation**: Built-in validators for ranges, patterns, and lookups
 - **JSON Serialization**: Views implement `ISerializable` for state persistence
@@ -344,11 +346,6 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed class hierarchies and diagra
 
 - New **edge-cases**, **oversights** or **errors** may be introduced in this project
 
-## Known Issues
-
-- Corruption in ASCII Table display
-- Corruption in TStringGrid with wide Unicode characters
-
 ## License
 
 This library is distributed under the **GNU Lesser General Public License (LGPL)** with the following linking exception:
@@ -371,6 +368,19 @@ See `COPYING.TXT` for the complete license text.
 - Original Turbo Vision by Borland International
 - Free Vision by the Free Pascal Development Team
 - Delphi port by Claude Code (Anthropic)
+
+## Acknowledgments
+
+Several units in `src/` are adapted from third-party MIT-licensed projects.
+Upstream license texts live in `third_party/`.
+
+| Unit | Upstream | License |
+|---|---|---|
+| `src/FVUnicodeWidth.pas` | [VSoft.AnsiConsole](https://github.com/VSoftTechnologies/VSoft.AnsiConsole) (Vincent Parrett); tables originate from [spectreconsole/wcwidth](https://github.com/spectreconsole/wcwidth), Unicode 15.1 data from the Unicode Consortium | MIT |
+| `src/FVProfile.pas` | [VSoft.AnsiConsole](https://github.com/VSoftTechnologies/VSoft.AnsiConsole) — capability detection rules mirror [Spectre.Console](https://github.com/spectreconsole/spectre.console) (Patrik Svensson, Phil Scott, Nils Andresen) | MIT |
+| `src/SpinnerView.pas` | [VSoft.AnsiConsole](https://github.com/VSoftTechnologies/VSoft.AnsiConsole) frame data; spinner frames originate from [`cli-spinners`](https://github.com/sindresorhus/cli-spinners) by Sindre Sorhus | MIT |
+| `src/TaskProgress.pas` | Inspired by [VSoft.AnsiConsole](https://github.com/VSoftTechnologies/VSoft.AnsiConsole) `Live.Progress` / [Spectre.Console](https://github.com/spectreconsole/spectre.console) | MIT |
+| `src/CheckListBox.pas` | Inspired by [VSoft.AnsiConsole](https://github.com/VSoftTechnologies/VSoft.AnsiConsole) `Prompts.MultiSelect` | MIT |
 
 ## Contributing
 
