@@ -138,6 +138,25 @@ type
     { Terminal window title }
     procedure SetWindowTitle(const ATitle: string);
 
+    { Runtime palette manipulation (OSC 4 / 10 / 11 / 104).
+
+      The 16 / 256 colour palettes belong to the terminal, not FV - SGR
+      30-37, 90-97 and 38;5;N are abstract slot names whose RGB the
+      terminal decides. These helpers ask the terminal to redefine
+      individual slots for the lifetime of the session. Widely supported
+      (Windows Terminal, xterm, iTerm2, WezTerm, mintty, kitty); silently
+      ignored on conhost without VT and on the NoColors profile.
+
+      Pair every EmitPaletteEntry / EmitDefaultFg / EmitDefaultBg with a
+      ResetPalette before exiting, otherwise the user's themed palette
+      stays redefined until they close the terminal. }
+    procedure EmitPaletteEntry(Index: Byte; RGB: Cardinal);
+    procedure ResetPaletteEntry(Index: Byte);
+    procedure ResetPalette;
+    procedure EmitDefaultFg(RGB: Cardinal);
+    procedure EmitDefaultBg(RGB: Cardinal);
+    procedure ResetDefaultColors;
+
     { Cursor }
     procedure SetCursor(X, Y: Integer);
     procedure GetCursor(var X, Y: Integer);
@@ -421,6 +440,82 @@ begin
   S := FOutputBuffer.ToString;
   WriteConsoleW(FConsoleOutput, PChar(S), Length(S), Written, nil);
   FOutputBuffer.Clear;
+end;
+
+{ OSC palette helpers. All gated on AnsiSupported so they never spill
+  raw escape bytes onto a redirected stdout or a NoColors profile. The
+  format used here is the 2-hex-digit form ESC]4;N;rgb:RR/GG/BBESC\
+  which is accepted by every modern terminal we care about. }
+
+procedure TScreenBuffer.EmitPaletteEntry(Index: Byte; RGB: Cardinal);
+const
+  Hex: array[0..15] of Char =
+    ('0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F');
+var
+  R, G, B: Byte;
+  S: string;
+begin
+  if not GetFVProfile.AnsiSupported then Exit;
+  R := (RGB shr 16) and $FF;
+  G := (RGB shr 8) and $FF;
+  B := RGB and $FF;
+  S := VT_ESC + ']4;' + IntToStr(Index) + ';rgb:' +
+       Hex[R shr 4] + Hex[R and $F] + '/' +
+       Hex[G shr 4] + Hex[G and $F] + '/' +
+       Hex[B shr 4] + Hex[B and $F] + VT_ESC + '\';
+  WriteVT(S);
+  FlushVT;
+end;
+
+procedure TScreenBuffer.ResetPaletteEntry(Index: Byte);
+begin
+  if not GetFVProfile.AnsiSupported then Exit;
+  WriteVT(VT_ESC + ']104;' + IntToStr(Index) + VT_ESC + '\');
+  FlushVT;
+end;
+
+procedure TScreenBuffer.ResetPalette;
+begin
+  if not GetFVProfile.AnsiSupported then Exit;
+  WriteVT(VT_ESC + ']104' + VT_ESC + '\');
+  FlushVT;
+end;
+
+procedure TScreenBuffer.EmitDefaultFg(RGB: Cardinal);
+var
+  R, G, B: Byte;
+begin
+  if not GetFVProfile.AnsiSupported then Exit;
+  R := (RGB shr 16) and $FF;
+  G := (RGB shr 8) and $FF;
+  B := RGB and $FF;
+  WriteVT(VT_ESC + ']10;rgb:' +
+    IntToHex(R, 2) + '/' + IntToHex(G, 2) + '/' + IntToHex(B, 2) +
+    VT_ESC + '\');
+  FlushVT;
+end;
+
+procedure TScreenBuffer.EmitDefaultBg(RGB: Cardinal);
+var
+  R, G, B: Byte;
+begin
+  if not GetFVProfile.AnsiSupported then Exit;
+  R := (RGB shr 16) and $FF;
+  G := (RGB shr 8) and $FF;
+  B := RGB and $FF;
+  WriteVT(VT_ESC + ']11;rgb:' +
+    IntToHex(R, 2) + '/' + IntToHex(G, 2) + '/' + IntToHex(B, 2) +
+    VT_ESC + '\');
+  FlushVT;
+end;
+
+procedure TScreenBuffer.ResetDefaultColors;
+begin
+  if not GetFVProfile.AnsiSupported then Exit;
+  { OSC 110 / 111 reset default fg / bg respectively. }
+  WriteVT(VT_ESC + ']110' + VT_ESC + '\');
+  WriteVT(VT_ESC + ']111' + VT_ESC + '\');
+  FlushVT;
 end;
 
 function TScreenBuffer.CellsDiffer(X, Y: Integer): Boolean;

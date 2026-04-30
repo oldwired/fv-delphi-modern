@@ -158,6 +158,12 @@ const
   cmTestCapabilityShowcase = 1080;
   cmTestColorModes        = 1081;
 
+  { Local commands inside the Color Modes demo dialog. }
+  cmDemoPaletteSwap     = 70;  { Solarized Dark }
+  cmDemoPaletteReset    = 71;
+  cmDemoPaletteDracula  = 72;
+  cmDemoPaletteDork     = 73;
+
   { Local commands for CommandSet demo - must be 0..255 to work with TCommandSet }
   cmDemoSave    = 60;
   cmDemoPrint   = 61;
@@ -470,6 +476,22 @@ type
   TColorModesView = class(TView)
   public
     procedure Draw; override;
+  end;
+
+  { Wraps TColorModesView with two buttons that exercise FVScreen's
+    OSC 4 palette-swap helpers. Tracks whether a swap was emitted so we
+    can emit OSC 104 on close - leaves the user's themed palette intact. }
+  TColorModesDialog = class(TDialog)
+  private
+    FPaletteSwapped: Boolean;
+    procedure ApplyPalette(const Palette: array of Cardinal);
+    procedure ApplySolarizedDark;
+    procedure ApplyDracula;
+    procedure ApplyDork;
+  public
+    constructor Create; reintroduce;
+    procedure HandleEvent(var Event: TEvent); override;
+    procedure Close; override;
   end;
 
   { Custom scroller that displays numbered lines }
@@ -5662,42 +5684,26 @@ begin
   Inc(Y);
   BlankRow;
 
-  { ===== Section 4: Profile downsampling note ===== }
+  { ===== Section 4: Profile downsampling + runtime palette ===== }
   DrawChar(B, 0, ' ', Bg, W);
-  DrawStr(B, 1, '4. Profile-aware downsampling (FVScreen.UpdateScreen):', Lbl);
+  DrawStr(B, 1, '4. UpdateScreen downsamples per profile; buttons swap palette via OSC 4:', Lbl);
   WriteLine(0, Y, W, 1, B);
   Inc(Y);
 
   DrawChar(B, 0, ' ', Bg, W);
-  DrawStr(B, 3, 'TrueColor : 24-bit emit unchanged   (38;2;R;G;B / 48;2;R;G;B)', Note);
+  DrawStr(B, 3, 'TrueColor 38;2;R;G;B  ', Note);
+  DrawStr(B, 26, '|  EightBit 38;5;N   ', Note);
+  DrawStr(B, 47, '|  Legacy 30-37/90-97 ', Note);
   WriteLine(0, Y, W, 1, B);
   Inc(Y);
 
   DrawChar(B, 0, ' ', Bg, W);
-  DrawStr(B, 3, '8-bit     : RGB quantised to 6x6x6 cube  (38;5;N / 48;5;N)', Note);
+  DrawStr(B, 3, 'Screen.EmitPaletteEntry(N,$RRGGBB) / Screen.ResetPalette  (OSC 4 / 104)', Code);
   WriteLine(0, Y, W, 1, B);
   Inc(Y);
 
   DrawChar(B, 0, ' ', Bg, W);
-  DrawStr(B, 3, 'Legacy    : RGB to nearest of 16  (30-37/40-47, 90-97/100-107)', Note);
-  WriteLine(0, Y, W, 1, B);
-  Inc(Y);
-
-  DrawChar(B, 0, ' ', Bg, W);
-  DrawStr(B, 3, 'NoColors  : all FG/BG/UL colour codes suppressed', Note);
-  WriteLine(0, Y, W, 1, B);
-  Inc(Y);
-
-  DrawChar(B, 0, ' ', Bg, W);
-  DrawStr(B, 3, 'Env vars  : NO_COLOR=1 forces NoColors (still allows OSC 8/Sixel);', Note);
-  WriteLine(0, Y, W, 1, B);
-  Inc(Y);
-  DrawChar(B, 0, ' ', Bg, W);
-  DrawStr(B, 13, 'CLICOLOR_FORCE=1 keeps colour when stdout is redirected;', Note);
-  WriteLine(0, Y, W, 1, B);
-  Inc(Y);
-  DrawChar(B, 0, ' ', Bg, W);
-  DrawStr(B, 13, 'COLORTERM=truecolor pins TrueColor; TERM=*-256color pins 8-bit.', Note);
+  DrawStr(B, 3, 'NO_COLOR=1, CLICOLOR_FORCE=1, COLORTERM=truecolor, TERM=*-256color', Note);
   WriteLine(0, Y, W, 1, B);
   Inc(Y);
 
@@ -5710,21 +5716,164 @@ begin
   end;
 end;
 
-procedure TMyApp.TestColorModes;
+{ TColorModesDialog }
+
+constructor TColorModesDialog.Create;
 var
   R: TRect;
-  W: TWindow;
   V: TColorModesView;
 begin
   R.Assign(2, 1, 78, 27);
-  W := TWindow.Create(R, 'Color Modes Cookbook', wnNoNumber);
-  W.GetExtent(R);
+  inherited Create(R, 'Color Modes Cookbook');
+  Options := Options or ofTileable;
+  GrowMode := gfGrowHiX or gfGrowHiY;
+  FPaletteSwapped := False;
+
+  GetExtent(R);
   R.Grow(-1, -1);
+  R.B.Y := R.B.Y - 4;  { Reserve 4 rows at the bottom: 1 gap + 2 button + 1 margin }
   V := TColorModesView.Create(R);
   V.GrowMode := gfGrowHiX or gfGrowHiY;
-  W.Insert(V);
-  Inc(WindowCount);
-  Desktop.Insert(W);
+  Insert(V);
+
+  { Five buttons across the bottom. Y=22..24 → button height 2 rows
+    (sits on rows 22 and 23 inside the dialog frame). }
+  R.Assign(2, 22, 16, 24);
+  Insert(TButton.Create(R, '~S~olarized', cmDemoPaletteSwap, bfNormal));
+
+  R.Assign(17, 22, 30, 24);
+  Insert(TButton.Create(R, '~D~racula', cmDemoPaletteDracula, bfNormal));
+
+  R.Assign(31, 22, 46, 24);
+  Insert(TButton.Create(R, 'Dor~k~ Mode', cmDemoPaletteDork, bfNormal));
+
+  R.Assign(47, 22, 58, 24);
+  Insert(TButton.Create(R, '~R~eset', cmDemoPaletteReset, bfNormal));
+
+  R.Assign(62, 22, 73, 24);
+  Insert(TButton.Create(R, '~C~lose', cmCancel, bfDefault));
+end;
+
+procedure TColorModesDialog.ApplyPalette(const Palette: array of Cardinal);
+var
+  I: Integer;
+begin
+  for I := 0 to 15 do
+    Screen.EmitPaletteEntry(I, Palette[I]);
+  FPaletteSwapped := True;
+end;
+
+procedure TColorModesDialog.ApplySolarizedDark;
+const
+  { Solarized Dark base16 palette - https://ethanschoonover.com/solarized/.
+    Mapped onto the standard ANSI 16-slot order so SGR 30-37 / 90-97 hit
+    the recoloured slots. }
+  Solarized: array[0..15] of Cardinal = (
+    $002B36, $DC322F, $859900, $B58900, $268BD2, $D33682, $2AA198, $EEE8D5,
+    $073642, $CB4B16, $586E75, $657B83, $839496, $6C71C4, $93A1A1, $FDF6E3
+  );
+begin
+  ApplyPalette(Solarized);
+end;
+
+procedure TColorModesDialog.ApplyDracula;
+const
+  { Dracula - https://draculatheme.com/. Higher contrast dark theme,
+    visibly different from Solarized so the swap demo reads at a glance. }
+  Dracula: array[0..15] of Cardinal = (
+    $21222C, $FF5555, $50FA7B, $F1FA8C, $BD93F9, $FF79C6, $8BE9FD, $F8F8F2,
+    $6272A4, $FF6E6E, $69FF94, $FFFFA5, $D6ACFF, $FF92DF, $A4FFFF, $FFFFFF
+  );
+begin
+  ApplyPalette(Dracula);
+end;
+
+procedure TColorModesDialog.ApplyDork;
+const
+  { Dork mode: every slot recoloured to something that absolutely does
+    not match its name. Black is hot pink, Red is cyan, Green is orange.
+    The point is to demonstrate just how much the SGR codes lie - they
+    are slot names, the terminal decides the colour. Hit Reset when your
+    eyes start bleeding. }
+  Dork: array[0..15] of Cardinal = (
+    $FF1493,  { 0  "black"      - hot pink     }
+    $00E5FF,  { 1  "red"        - cyan         }
+    $FF8C00,  { 2  "green"      - dark orange  }
+    $4169E1,  { 3  "yellow"     - royal blue   }
+    $7CFC00,  { 4  "blue"       - lawn green   }
+    $FFD700,  { 5  "magenta"    - gold         }
+    $C71585,  { 6  "cyan"       - violet       }
+    $32CD32,  { 7  "white"      - lime green   }
+    $FF69B4,  { 8  "br black"   - pink         }
+    $00FA9A,  { 9  "br red"     - mint         }
+    $FF4500,  { 10 "br green"   - red-orange   }
+    $1E90FF,  { 11 "br yellow"  - dodger blue  }
+    $ADFF2F,  { 12 "br blue"    - greenyellow  }
+    $FF00FF,  { 13 "br magenta" - magenta      }
+    $9400D3,  { 14 "br cyan"    - dark violet  }
+    $FF6347   { 15 "br white"   - tomato       }
+  );
+begin
+  ApplyPalette(Dork);
+end;
+
+procedure TColorModesDialog.HandleEvent(var Event: TEvent);
+begin
+  if Event.What = evCommand then
+  begin
+    case Event.Command of
+      cmDemoPaletteSwap:
+        begin
+          ApplySolarizedDark;
+          if Owner <> nil then Owner.DrawView;
+          ClearEvent(Event);
+          Exit;
+        end;
+      cmDemoPaletteDracula:
+        begin
+          ApplyDracula;
+          if Owner <> nil then Owner.DrawView;
+          ClearEvent(Event);
+          Exit;
+        end;
+      cmDemoPaletteDork:
+        begin
+          ApplyDork;
+          if Owner <> nil then Owner.DrawView;
+          ClearEvent(Event);
+          Exit;
+        end;
+      cmDemoPaletteReset:
+        begin
+          Screen.ResetPalette;
+          FPaletteSwapped := False;
+          if Owner <> nil then Owner.DrawView;
+          ClearEvent(Event);
+          Exit;
+        end;
+    end;
+  end;
+  inherited HandleEvent(Event);
+end;
+
+procedure TColorModesDialog.Close;
+begin
+  { Don't leave the user's terminal recoloured after the demo closes. }
+  if FPaletteSwapped then
+  begin
+    Screen.ResetPalette;
+    FPaletteSwapped := False;
+  end;
+  inherited Close;
+end;
+
+procedure TMyApp.TestColorModes;
+var
+  Dlg: TColorModesDialog;
+begin
+  Dlg := TColorModesDialog.Create;
+  Desktop.ExecView(Dlg);
+  Dlg.Free;
 end;
 
 procedure TMyApp.TestSpinnerGallery;
