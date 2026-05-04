@@ -46,6 +46,7 @@ function CodePointCharWidth(CodePoint: Cardinal): Integer;
 function IsWideString(const S: string): Boolean;
 function StringDisplayWidth(const S: string): Integer;
 function CStrDisplayWidth(const S: string): Integer;
+function CopyDisplayCells(const S: string; StartCol, MaxWidth: Integer): string;
 
 { Conversion to UTF-8 }
 function ANSIBytesToUTF8(const Data: TBytes): TBytes;
@@ -541,6 +542,93 @@ begin
     begin
       FlushCluster;
       HaveCluster := True;
+      ClusterWidth := W;
+      JoinNext := False;
+    end;
+  end;
+  FlushCluster;
+end;
+
+{ CopyDisplayCells - returns whole grapheme clusters that fit within a
+  display-cell slice. StartCol is zero-based and MaxWidth is in terminal
+  cells; wide/emoji clusters are either included whole or omitted. }
+
+function CopyDisplayCells(const S: string; StartCol, MaxWidth: Integer): string;
+var
+  I, Len, W, Col, EndCol, ClusterWidth: Integer;
+  CP: Cardinal;
+  CellStr, ClusterText: string;
+  HaveCluster, JoinNext: Boolean;
+
+  procedure FlushCluster;
+  begin
+    if not HaveCluster then Exit;
+    if (Col >= StartCol) and (Col + ClusterWidth <= EndCol) then
+      Result := Result + ClusterText;
+    Inc(Col, ClusterWidth);
+    HaveCluster := False;
+    ClusterText := '';
+    ClusterWidth := 0;
+  end;
+
+begin
+  Result := '';
+  if StartCol < 0 then StartCol := 0;
+  if MaxWidth <= 0 then Exit;
+
+  EndCol := StartCol + MaxWidth;
+  Len := Length(S);
+  I := 1;
+  Col := 0;
+  ClusterWidth := 0;
+  ClusterText := '';
+  HaveCluster := False;
+  JoinNext := False;
+  while I <= Len do
+  begin
+    if (I < Len) and
+       (Ord(S[I]) >= $D800) and (Ord(S[I]) <= $DBFF) and
+       (Ord(S[I+1]) >= $DC00) and (Ord(S[I+1]) <= $DFFF) then
+    begin
+      CP := $10000 + Cardinal((Ord(S[I]) - $D800) shl 10) + Cardinal(Ord(S[I+1]) - $DC00);
+      CellStr := S[I] + S[I+1];
+      Inc(I, 2);
+    end
+    else
+    begin
+      CP := Ord(S[I]);
+      CellStr := S[I];
+      Inc(I);
+    end;
+
+    W := CodePointCharWidth(CP);
+    if W = 0 then
+    begin
+      if HaveCluster then
+      begin
+        ClusterText := ClusterText + CellStr;
+        if (CP = $FE0F) and (ClusterWidth = 1) then
+          ClusterWidth := 2;
+        if CP = $200D then
+          JoinNext := True;
+      end;
+      Continue;
+    end;
+
+    if HaveCluster and JoinNext then
+    begin
+      ClusterText := ClusterText + CellStr;
+      if W > ClusterWidth then
+        ClusterWidth := W;
+      JoinNext := False;
+    end
+    else
+    begin
+      FlushCluster;
+      if Col >= EndCol then
+        Break;
+      HaveCluster := True;
+      ClusterText := CellStr;
       ClusterWidth := W;
       JoinNext := False;
     end;

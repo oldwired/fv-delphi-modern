@@ -1214,7 +1214,7 @@ end;
 function TStringListBox.GetText(Item: Integer; MaxLen: Integer): string;
 begin
   if (Strings <> nil) and (Item < Strings.Count) then
-    Result := Copy(Strings[Item], 1, MaxLen)
+    Result := CopyDisplayCells(Strings[Item], 0, MaxLen)
   else
     Result := '';
 end;

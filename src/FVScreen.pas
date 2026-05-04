@@ -442,10 +442,19 @@ begin
   FOutputBuffer.Clear;
 end;
 
-{ OSC palette helpers. All gated on AnsiSupported so they never spill
-  raw escape bytes onto a redirected stdout or a NoColors profile. The
-  format used here is the 2-hex-digit form ESC]4;N;rgb:RR/GG/BBESC\
+{ OSC palette helpers. Gated on AnsiSupported AND a color-emitting profile.
+  When NO_COLOR=1 is set, AnsiSupported can still be True (so OSC 8 hyperlinks
+  and Sixel keep working), but ColorSystem becomes fvcsNoColors - in that
+  case we must not recolor the user's terminal via OSC 4 / 10 / 11 / 104.
+  The format used here is the 2-hex-digit form ESC]4;N;rgb:RR/GG/BBESC\
   which is accepted by every modern terminal we care about. }
+
+function PaletteEmitAllowed: Boolean;
+var P: TFVProfile;
+begin
+  P := GetFVProfile;
+  Result := P.AnsiSupported and (P.ColorSystem <> fvcsNoColors);
+end;
 
 procedure TScreenBuffer.EmitPaletteEntry(Index: Byte; RGB: Cardinal);
 const
@@ -455,7 +464,7 @@ var
   R, G, B: Byte;
   S: string;
 begin
-  if not GetFVProfile.AnsiSupported then Exit;
+  if not PaletteEmitAllowed then Exit;
   R := (RGB shr 16) and $FF;
   G := (RGB shr 8) and $FF;
   B := RGB and $FF;
@@ -469,14 +478,14 @@ end;
 
 procedure TScreenBuffer.ResetPaletteEntry(Index: Byte);
 begin
-  if not GetFVProfile.AnsiSupported then Exit;
+  if not PaletteEmitAllowed then Exit;
   WriteVT(VT_ESC + ']104;' + IntToStr(Index) + VT_ESC + '\');
   FlushVT;
 end;
 
 procedure TScreenBuffer.ResetPalette;
 begin
-  if not GetFVProfile.AnsiSupported then Exit;
+  if not PaletteEmitAllowed then Exit;
   WriteVT(VT_ESC + ']104' + VT_ESC + '\');
   FlushVT;
 end;
@@ -485,7 +494,7 @@ procedure TScreenBuffer.EmitDefaultFg(RGB: Cardinal);
 var
   R, G, B: Byte;
 begin
-  if not GetFVProfile.AnsiSupported then Exit;
+  if not PaletteEmitAllowed then Exit;
   R := (RGB shr 16) and $FF;
   G := (RGB shr 8) and $FF;
   B := RGB and $FF;
@@ -499,7 +508,7 @@ procedure TScreenBuffer.EmitDefaultBg(RGB: Cardinal);
 var
   R, G, B: Byte;
 begin
-  if not GetFVProfile.AnsiSupported then Exit;
+  if not PaletteEmitAllowed then Exit;
   R := (RGB shr 16) and $FF;
   G := (RGB shr 8) and $FF;
   B := RGB and $FF;
@@ -511,7 +520,7 @@ end;
 
 procedure TScreenBuffer.ResetDefaultColors;
 begin
-  if not GetFVProfile.AnsiSupported then Exit;
+  if not PaletteEmitAllowed then Exit;
   { OSC 110 / 111 reset default fg / bg respectively. }
   WriteVT(VT_ESC + ']110' + VT_ESC + '\');
   WriteVT(VT_ESC + ']111' + VT_ESC + '\');
@@ -1373,8 +1382,10 @@ var
   X, Y, I, J: Integer;
   StartX, ClampedW: Integer;
   IsStale: Boolean;
-  StillActive: Boolean;
   OverlapsCurrent: Boolean;
+  HasActivePlaceholders: Boolean;
+  ErasedAnyCell: Boolean;
+  SpanStart, SpanLen: Integer;
   Cur: TSixelRegion;
   ErasedIndices: TList<Integer>;
 
@@ -1390,6 +1401,23 @@ var
       (A.ScreenX + A.CellW > B.ScreenX) and
       (A.ScreenY < B.ScreenY + B.CellH) and
       (A.ScreenY + A.CellH > B.ScreenY);
+  end;
+
+  procedure EraseSpan(AY, AX, AWidth: Integer);
+  var
+    K: Integer;
+  begin
+    if (AWidth <= 0) or (AY < 0) or (AY >= FHeight) or
+       (AX < 0) or (AX >= FWidth) then
+      Exit;
+    if AX + AWidth > FWidth then
+      AWidth := FWidth - AX;
+    if AWidth <= 0 then Exit;
+
+    MoveCursorVT(AX, AY);
+    WriteVT(VT_CSI + IntToStr(AWidth) + 'X');
+    for K := AX to AX + AWidth - 1 do
+      FOldCells[AY, K].Ch := #0;
   end;
 begin
   { For each previous Sixel region, check if it's still covered by a current
@@ -1417,10 +1445,9 @@ begin
       if IsStale then
       begin
         { If no current region overlaps the old one, it may still be active -
-          Draw just wasn't called for it during this partial redraw. Check if
-          ANY cell in the region still has a placeholder. Previously this was
-          only done on idle frames, so redrawing one Sixel view erased other
-          still-visible Sixel views. }
+          Draw just wasn't called for it during this partial redraw. Preserve
+          placeholder cells, but erase cells that are now covered by normal
+          text/window content so stale Sixel pixels cannot bleed through. }
         OverlapsCurrent := False;
         for Cur in FSixelRegions do
           if RegionsOverlap(Prev, Cur) then
@@ -1431,19 +1458,52 @@ begin
 
         if not OverlapsCurrent then
         begin
-          StillActive := False;
+          HasActivePlaceholders := False;
+          ErasedAnyCell := False;
+          WriteVT(VT_CSI + '0m');
           for Y := Prev.ScreenY to Prev.ScreenY + Prev.CellH - 1 do
           begin
+            SpanStart := -1;
+            SpanLen := 0;
             for X := Prev.ScreenX to Prev.ScreenX + Prev.CellW - 1 do
-              if (Y >= 0) and (Y < FHeight) and (X >= 0) and (X < FWidth) and
-                 (FCells[Y, X].Ch = SixelPlaceholder) then
+            begin
+              if (Y < 0) or (Y >= FHeight) or (X < 0) or (X >= FWidth) then
+                Continue;
+              if FCells[Y, X].Ch = SixelPlaceholder then
               begin
-                StillActive := True;
-                Break;
+                HasActivePlaceholders := True;
+                if SpanStart <> -1 then
+                begin
+                  EraseSpan(Y, SpanStart, SpanLen);
+                  ErasedAnyCell := True;
+                  SpanStart := -1;
+                  SpanLen := 0;
+                end;
+              end
+              else
+              begin
+                if SpanStart = -1 then
+                begin
+                  SpanStart := X;
+                  SpanLen := 1;
+                end
+                else
+                  Inc(SpanLen);
               end;
-            if StillActive then Break;
+            end;
+            if SpanStart <> -1 then
+            begin
+              EraseSpan(Y, SpanStart, SpanLen);
+              ErasedAnyCell := True;
+            end;
           end;
-          if StillActive then Continue;
+          if HasActivePlaceholders then
+            Continue;
+          if ErasedAnyCell then
+          begin
+            ErasedIndices.Add(I);
+            Continue;
+          end;
         end;
 
         { Erase the old Sixel region with ECH so terminal clears pixel data.

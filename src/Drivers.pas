@@ -655,6 +655,9 @@ begin
           Buf[Pos + Col].Attr := Buf[LastCellIdx].Attr;
           Buf[Pos + Col].FG_RGB := 0;
           Buf[Pos + Col].BG_RGB := 0;
+          Buf[Pos + Col].ExtAttrs := 0;
+          Buf[Pos + Col].UL_RGB := 0;
+          Buf[Pos + Col].HyperlinkURL := '';
           Inc(Col);
           LastCellWidth := 2;
         end;
@@ -675,6 +678,9 @@ begin
           Buf[Pos + Col].Attr := Buf[LastCellIdx].Attr;
           Buf[Pos + Col].FG_RGB := 0;
           Buf[Pos + Col].BG_RGB := 0;
+          Buf[Pos + Col].ExtAttrs := 0;
+          Buf[Pos + Col].UL_RGB := 0;
+          Buf[Pos + Col].HyperlinkURL := '';
         end;
         Inc(Col, W - LastCellWidth);
         LastCellWidth := W;
@@ -690,6 +696,9 @@ begin
       Buf[Pos + Col].Attr := Attr;
       Buf[Pos + Col].FG_RGB := 0;
       Buf[Pos + Col].BG_RGB := 0;
+      Buf[Pos + Col].ExtAttrs := 0;
+      Buf[Pos + Col].UL_RGB := 0;
+      Buf[Pos + Col].HyperlinkURL := '';
       LastCellIdx := Pos + Col;
       LastCellWidth := W;
     end;
@@ -699,6 +708,9 @@ begin
       Buf[Pos + Col + 1].Attr := Attr;
       Buf[Pos + Col + 1].FG_RGB := 0;
       Buf[Pos + Col + 1].BG_RGB := 0;
+      Buf[Pos + Col + 1].ExtAttrs := 0;
+      Buf[Pos + Col + 1].UL_RGB := 0;
+      Buf[Pos + Col + 1].HyperlinkURL := '';
     end;
     Inc(Col, W);
   end;

@@ -1373,12 +1373,19 @@ end;
   BufPtr points to the full draw buffer, RowStart is the index of the first
   cell for this scanline row. }
 procedure TView.do_WriteView(x1, x2, y: Integer; BufPtr: PDrawBuffer; RowStart: Integer);
+var
+  OrigX1: Integer;
 begin
   if (y >= 0) and (y < Size.Y) then begin
+    { Capture original x1 before clipping. WVBufOffset must reflect the
+      caller's source X so that cells clipped off the left of the view
+      are skipped, not shifted into column 0. WriteSpanToVideoBuf reads
+      buffer index (J - WVBufOffset) for screen column J. }
+    OrigX1 := x1;
     if x1 < 0 then x1 := 0;
     if x2 > Size.X then x2 := Size.X;
     if x1 < x2 then begin
-      WVBufOffset := x1 - RowStart;
+      WVBufOffset := OrigX1 - RowStart;
       WVY := y;
       WVBuf := BufPtr;
       WVTarget := nil; { Will be set by do_writeViewRec2 }
@@ -2768,7 +2775,7 @@ end;
 
 procedure TListViewer.Draw;
 var
-  I, J, ColWidth, Item, Indent, CurCol: Integer;
+  I, J, ColWidth, Item, Indent, CurCol, TextWidth: Integer;
   Color: Word;
   SCOff: Byte;
   Text: string;  { Must be Unicode string to preserve box characters }
@@ -2798,9 +2805,15 @@ begin
 
       DrawChar(B, CurCol, ' ', Color, ColWidth);
       if Item < Range then begin
-        Text := GetText(Item, ColWidth + Indent);
-        Text := Copy(Text, Indent + 1, ColWidth);
-        DrawStr(B, CurCol + 1, Text, Color);
+        TextWidth := ColWidth - 2;
+        if CurCol + 1 + TextWidth > Size.X then
+          TextWidth := Size.X - CurCol - 1;
+        if TextWidth < 0 then
+          TextWidth := 0;
+        Text := GetText(Item, TextWidth + Indent);
+        Text := CopyDisplayCells(Text, Indent, TextWidth);
+        if TextWidth > 0 then
+          DrawStr(B, CurCol + 1, Text, Color);
         if ShowMarkers then begin
           { Use DrawChar for proper Unicode marker display }
           DrawChar(B, CurCol, SpecialChars[SCOff], Byte(Color), 1);
