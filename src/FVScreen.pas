@@ -226,12 +226,23 @@ procedure ResizeVideo(NewWidth, NewHeight: Word);
 { Sync legacy VideoBuf to Screen cells }
 procedure SyncVideoBufToScreen;
 
+{ Diagnostic: when ON, every cell is re-emitted each frame (CellsDiffer is
+  bypassed). Used by FVTerm to bisect "is the diff cache lying?" — see
+  TERMINAL_RENDERING_BUG.md, Phase 2a. Off by default. }
+procedure SetForceRedrawAll(Value: Boolean);
+function GetForceRedrawAll: Boolean;
+
+{ Diagnostic: monotonic frame counter advanced once per UpdateScreen call.
+  Used by Views.WriteSpanToVideoBuf to gate first-N-frames logging. }
+function GetFVFrameCounter: Cardinal;
+
 implementation
 
 uses
   System.Math,
   FVUTF8,
-  FVProfile;
+  FVProfile,
+  FVHeadless;
 
 const
   { VT Escape sequences }
@@ -248,6 +259,24 @@ var
   LegacyOldBufPtr: PVideoBuf;
   LegacyBufCells: Integer;
   VideoBufDirty: Boolean;
+  FForceRedrawAll: Boolean = False;
+  FFrameCounter: Cardinal = 0;
+
+procedure SetForceRedrawAll(Value: Boolean);
+begin
+  FForceRedrawAll := Value;
+  VideoBufDirty := True; { force a repaint so the toggle takes effect immediately }
+end;
+
+function GetForceRedrawAll: Boolean;
+begin
+  Result := FForceRedrawAll;
+end;
+
+function GetFVFrameCounter: Cardinal;
+begin
+  Result := FFrameCounter;
+end;
 
 { TScreenBuffer }
 
@@ -335,21 +364,26 @@ var
 begin
   if FInitialized then Exit;
 
-  FConsoleOutput := GetStdHandle(STD_OUTPUT_HANDLE);
-  if FConsoleOutput = INVALID_HANDLE_VALUE then begin
-    ErrorCode := vioError;
-    Exit;
-  end;
-
-  EnableVTMode;
-
-  { Get console dimensions }
-  if GetConsoleScreenBufferInfo(FConsoleOutput, Info) then begin
-    FWidth := Info.srWindow.Right - Info.srWindow.Left + 1;
-    FHeight := Info.srWindow.Bottom - Info.srWindow.Top + 1;
+  if FVHeadless.IsHeadless then begin
+    FConsoleOutput := INVALID_HANDLE_VALUE;
+    FVHeadless.GetRequestedSize(FWidth, FHeight);
   end else begin
-    FWidth := 80;
-    FHeight := 25;
+    FConsoleOutput := GetStdHandle(STD_OUTPUT_HANDLE);
+    if FConsoleOutput = INVALID_HANDLE_VALUE then begin
+      ErrorCode := vioError;
+      Exit;
+    end;
+
+    EnableVTMode;
+
+    { Get console dimensions }
+    if GetConsoleScreenBufferInfo(FConsoleOutput, Info) then begin
+      FWidth := Info.srWindow.Right - Info.srWindow.Left + 1;
+      FHeight := Info.srWindow.Bottom - Info.srWindow.Top + 1;
+    end else begin
+      FWidth := 80;
+      FHeight := 25;
+    end;
   end;
 
   { Allocate cell arrays }
@@ -370,32 +404,36 @@ begin
   FInitialized := True;
   ErrorCode := vioOk;
 
-  { Detect Sixel support and cell pixel size }
-  DetectSixelSupport;
-  DetectCellPixelSize;
-
   { Update legacy variables }
   ScreenWidth := FWidth;
   ScreenHeight := FHeight;
   VideoBufSize := FWidth * FHeight * SizeOf(Word);
 
-  { Use alternate screen buffer for clean UI }
-  WriteVT(VT_CSI + '?1049h');  // Enable alternate buffer
-  WriteVT(VT_CSI + '?25l');    // Hide cursor initially
-  FlushVT;
+  if not FVHeadless.IsHeadless then begin
+    { Detect Sixel support and cell pixel size (touches real console) }
+    DetectSixelSupport;
+    DetectCellPixelSize;
+
+    { Use alternate screen buffer for clean UI }
+    WriteVT(VT_CSI + '?1049h');  // Enable alternate buffer
+    WriteVT(VT_CSI + '?25l');    // Hide cursor initially
+    FlushVT;
+  end;
 end;
 
 procedure TScreenBuffer.Done;
 begin
   if not FInitialized then Exit;
 
-  { Restore main screen buffer }
-  WriteVT(VT_CSI + '?1049l');  // Disable alternate buffer
-  WriteVT(VT_CSI + '?25h');    // Show cursor
-  WriteVT(VT_CSI + '0m');      // Reset attributes
-  FlushVT;
+  if not FVHeadless.IsHeadless then begin
+    { Restore main screen buffer }
+    WriteVT(VT_CSI + '?1049l');  // Disable alternate buffer
+    WriteVT(VT_CSI + '?25h');    // Show cursor
+    WriteVT(VT_CSI + '0m');      // Reset attributes
+    FlushVT;
 
-  DisableVTMode;
+    DisableVTMode;
+  end;
 
   SetLength(FCells, 0, 0);
   SetLength(FOldCells, 0, 0);
@@ -438,7 +476,11 @@ var
 begin
   if FOutputBuffer.Length = 0 then Exit;
   S := FOutputBuffer.ToString;
-  WriteConsoleW(FConsoleOutput, PChar(S), Length(S), Written, nil);
+  if FVHeadless.IsHeadless then begin
+    if FVHeadless.CaptureVTEnabled then
+      FVHeadless.AppendCapture(S);
+  end else
+    WriteConsoleW(FConsoleOutput, PChar(S), Length(S), Written, nil);
   FOutputBuffer.Clear;
 end;
 
@@ -790,7 +832,7 @@ begin
   for Y := 0 to FHeight - 1 do begin
     X := 0;
     while X < FWidth do begin
-      if Force or CellsDiffer(X, Y) then begin
+      if Force or FForceRedrawAll or CellsDiffer(X, Y) then begin
         { Skip Sixel placeholder cells - they are covered by Sixel pixel data }
         if FCells[Y, X].Ch = SixelPlaceholder then begin
           FOldCells[Y, X] := FCells[Y, X];
@@ -1064,8 +1106,23 @@ begin
         { Update old buffer }
         FOldCells[Y, X] := FCells[Y, X];
 
-        { Track cursor for sequential detection + handle wide characters }
-        IsWide := IsWideString(FCells[Y, X].Ch);
+        { Track cursor for sequential detection + handle wide characters.
+          Skip-the-continuation is only valid when this cell holds a complete
+          wide glyph: either a multi-codepoint cluster, or a single BMP wide
+          codepoint. An isolated surrogate half (which TTerminalBuffer.WriteGlyph
+          stores per-cell when it splits a supplementary-plane char) used to
+          satisfy IsWideString and silently swallow the next cell from the
+          output stream — leaving stale terminal content visible because that
+          column never received a write. }
+        IsWide := False;
+        if Length(FCells[Y, X].Ch) >= 2 then
+          IsWide := IsWideString(FCells[Y, X].Ch)
+        else if Length(FCells[Y, X].Ch) = 1 then
+        begin
+          var W := Ord(FCells[Y, X].Ch[1]);
+          if (W < $D800) or (W > $DFFF) then
+            IsWide := IsWideString(FCells[Y, X].Ch);
+        end;
         if IsWide and (X + 1 < FWidth) then begin
           FOldCells[Y, X + 1] := FCells[Y, X + 1];
           Inc(X);  { Skip the continuation cell }
@@ -1124,6 +1181,7 @@ begin
       stuck in synchronized mode (frozen display until the next disable). }
     WriteVT(VT_CSI + '?2026l');
     FlushVT;
+    Inc(FFrameCounter);
   end;
 end;
 
@@ -1676,7 +1734,7 @@ end;
 
 procedure UpdateScreen(Force: Boolean);
 begin
-  if (not Force) and (not VideoBufDirty) then
+  if (not Force) and (not VideoBufDirty) and (not FForceRedrawAll) then
     Exit;
 
   { Sync legacy buffer to new screen cells }

@@ -12,6 +12,8 @@ uses
   FVBoxChars in 'src\FVBoxChars.pas',
   FVUnicodeWidth in 'src\FVUnicodeWidth.pas',
   FVProfile in 'src\FVProfile.pas',
+  FVClock in 'src\FVClock.pas',
+  FVHeadless in 'src\FVHeadless.pas',
   FVUTF8 in 'src\FVUTF8.pas',
   Drivers in 'src\Drivers.pas',
   Views in 'src\Views.pas',

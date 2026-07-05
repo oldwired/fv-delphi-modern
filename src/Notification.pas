@@ -1,4 +1,4 @@
-{*********************************************************}
+﻿{*********************************************************}
 {                                                         }
 {       Free Vision - Notification Component              }
 {                                                         }
@@ -13,7 +13,7 @@ unit Notification;
 interface
 
 uses
-  Winapi.Windows,
+  Winapi.Windows, FVClock,
   System.SysUtils,
   FVCommon, Drivers, Views, Dialogs, FVConsts, FVBoxChars, App;
 
@@ -72,7 +72,7 @@ begin
   FNotifType := AType;
   FTimeoutMs := ATimeoutMs;
   FPosition := APosition;
-  FCreatedAt := GetTickCount64;
+  FCreatedAt := FVClock.GetMonotonicMs;
   FDismissed := False;
 
   Flags := 0;  { No close/zoom/move buttons - frameless toast }
@@ -138,7 +138,7 @@ end;
 procedure TNotification.Update;
 begin
   if FDismissed then Exit;
-  if GetTickCount64 - FCreatedAt >= FTimeoutMs then
+  if FVClock.GetMonotonicMs - FCreatedAt >= FTimeoutMs then
     Dismiss;
 end;
 

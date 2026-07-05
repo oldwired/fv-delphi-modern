@@ -75,3 +75,10 @@ views_debug.log
 /nul
 /.claude
 apps/
+
+# Golden-file test artifacts produced on assertion failure
+Tests/golden/**/*.actual.*
+Tests/results.xml
+Tests/dunitx-results.xml
+Tests/Win32/
+Tests/Win64/

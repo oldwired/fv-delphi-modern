@@ -1,4 +1,4 @@
-{*******************************************************}
+﻿{*******************************************************}
 {       Free Vision - CPU Core View                    }
 {       Per-core CPU usage display widget              }
 {*******************************************************}
@@ -8,7 +8,7 @@ unit CPUCoreView;
 interface
 
 uses
-  Winapi.Windows,
+  Winapi.Windows, FVClock,
   FVConsts, Objects, Drivers, Views;
 
 type
@@ -141,7 +141,7 @@ var
 begin
   if not Assigned(NtQuerySystemInformation) then Exit;
 
-  CurrentTick := GetTickCount64;
+  CurrentTick := FVClock.GetMonotonicMs;
   if (CurrentTick - FLastUpdate) >= (UInt64(FRefreshInterval) * 1000) then begin
     FLastUpdate := CurrentTick;
 

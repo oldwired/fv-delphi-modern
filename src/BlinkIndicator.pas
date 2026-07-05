@@ -1,4 +1,4 @@
-{*******************************************************}
+﻿{*******************************************************}
 {       Free Vision - Blink Indicator                  }
 {       Blinking activity indicator dot                }
 {*******************************************************}
@@ -8,7 +8,7 @@ unit BlinkIndicator;
 interface
 
 uses
-  Winapi.Windows,
+  Winapi.Windows, FVClock,
   FVConsts, Objects, Drivers, Views, FVBoxChars;
 
 type
@@ -62,7 +62,7 @@ var
   CurrentTick: UInt64;
 begin
   if FState = bsBlinking then begin
-    CurrentTick := GetTickCount64;
+    CurrentTick := FVClock.GetMonotonicMs;
     if (CurrentTick - FLastToggle) >= FBlinkInterval then begin
       FBlinkOn := not FBlinkOn;
       FLastToggle := CurrentTick;
@@ -89,7 +89,7 @@ procedure TBlinkIndicator.Blink;
 begin
   FState := bsBlinking;
   FBlinkOn := True;
-  FLastToggle := GetTickCount64;
+  FLastToggle := FVClock.GetMonotonicMs;
   DrawView;
 end;
 

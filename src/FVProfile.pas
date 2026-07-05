@@ -58,6 +58,18 @@ function GetFVProfile: TFVProfile;
   Returns True only if the bit actually stuck. }
 function ProbeVirtualTerminal(Handle: THandle): Boolean;
 
+{ Pin the profile to a fixed configuration. Used by headless / golden-file
+  tests so the VT emission path is identical across hosts: no colors, no
+  Sixel, no hyperlinks, Unicode allowed, AnsiSupported=False (skip OSC),
+  Interactive=False, IsCI=True. While pinned, InitFVProfile is a no-op so the
+  probe can't overwrite the fixed values. Call UnpinFVProfile to release. }
+procedure ForceDeterministicProfile;
+
+{ Release a ForceDeterministicProfile pin and re-arm host detection, so the
+  next GetFVProfile / EnableVTMode probes the real terminal again. Called by
+  FVHeadless.LeaveHeadless on test teardown. }
+procedure UnpinFVProfile;
+
 implementation
 
 uses
@@ -69,6 +81,7 @@ const
 var
   GProfile: TFVProfile;
   GInitialized: Boolean = False;
+  GPinned: Boolean = False;  { ForceDeterministicProfile active — block re-probe }
 
 function EnvDefined(const Name: string): Boolean;
 begin
@@ -215,6 +228,10 @@ var
   H: THandle;
   VTOk: Boolean;
 begin
+  { Honor a deterministic pin: while pinned, never re-probe the host (this is
+    what makes ForceDeterministicProfile stick across an EnableVTMode call). }
+  if GPinned then Exit;
+
   H := GetStdHandle(STD_OUTPUT_HANDLE);
   VTOk := ProbeVirtualTerminal(H);
 
@@ -235,6 +252,27 @@ begin
   if not GInitialized then
     InitFVProfile;
   Result := GProfile;
+end;
+
+procedure ForceDeterministicProfile;
+begin
+  GProfile.IsCI             := True;
+  GProfile.LegacyConsole    := False;
+  GProfile.AnsiSupported    := False;
+  GProfile.Interactive      := False;
+  GProfile.Unicode          := True;
+  GProfile.HyperlinkSupport := False;
+  GProfile.SixelSupport     := False;
+  GProfile.ColorSystem      := fvcsNoColors;
+  GInitialized := True;
+  GPinned := True;
+end;
+
+procedure UnpinFVProfile;
+begin
+  { Release the pin and force re-detection on the next GetFVProfile. }
+  GPinned := False;
+  GInitialized := False;
 end;
 
 initialization

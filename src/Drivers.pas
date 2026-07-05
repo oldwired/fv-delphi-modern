@@ -11,7 +11,7 @@ uses
   Winapi.Windows,
   System.SysUtils,
   System.SyncObjs,
-  Objects, FVScreen, FVCommon, fvconsts, FVUTF8;
+  Objects, FVScreen, FVCommon, fvconsts, FVUTF8, FVHeadless;
 
 {***************************************************************************}
 {                              PUBLIC CONSTANTS                             }
@@ -255,6 +255,9 @@ procedure PrintStr(const S: String);
 { Queued event handler routines }
 function PutEventInQueue(var Event: TEvent): Boolean;
 procedure NextQueuedEvent(var Event: TEvent);
+{ Discard all pending queued events (used by the headless test rig between
+  tests so leftover posted-but-unpumped events don't leak into the next one). }
+procedure FlushEventQueue;
 
 procedure HideMouseCursor;
 procedure ShowMouseCursor;
@@ -758,6 +761,7 @@ begin
       Buf[Pos + I].FG_RGB := 0;
       Buf[Pos + I].BG_RGB := 0;
       Buf[Pos + I].ExtAttrs := ExtAttrs;
+      Buf[Pos + I].UL_RGB := 0;
       Buf[Pos + I].HyperlinkURL := '';
     end;
   end;
@@ -1549,29 +1553,41 @@ end;
 procedure InitEvents;
 begin
   if EventsInitialized then Exit;
-  ConsoleInput := GetStdHandle(STD_INPUT_HANDLE);
-  if ConsoleInput <> INVALID_HANDLE_VALUE then begin
-    { Must include ENABLE_WINDOW_INPUT to receive window resize events
-      and NOT include ENABLE_PROCESSED_INPUT so we get raw key events }
-    SetConsoleMode(ConsoleInput, ENABLE_MOUSE_INPUT or ENABLE_WINDOW_INPUT or ENABLE_EXTENDED_FLAGS);
+  if FVHeadless.IsHeadless then begin
+    ConsoleInput := INVALID_HANDLE_VALUE;
     ButtonCount := 2;
-    MouseEvents := True;
+    MouseEvents := False;
     LastButtons := 0;
     DownButtons := 0;
     MouseWhere.X := 0;
     MouseWhere.Y := 0;
     LastWhere := MouseWhere;
+  end else begin
+    ConsoleInput := GetStdHandle(STD_INPUT_HANDLE);
+    if ConsoleInput <> INVALID_HANDLE_VALUE then begin
+      { Must include ENABLE_WINDOW_INPUT to receive window resize events
+        and NOT include ENABLE_PROCESSED_INPUT so we get raw key events }
+      SetConsoleMode(ConsoleInput, ENABLE_MOUSE_INPUT or ENABLE_WINDOW_INPUT or ENABLE_EXTENDED_FLAGS);
+      ButtonCount := 2;
+      MouseEvents := True;
+      LastButtons := 0;
+      DownButtons := 0;
+      MouseWhere.X := 0;
+      MouseWhere.Y := 0;
+      LastWhere := MouseWhere;
+    end;
+    SetVTMouseTracking(True);
   end;
   VTPendingSeq := '';
   VTPendingTick := 0;
-  SetVTMouseTracking(True);
   EventsInitialized := True;
 end;
 
 procedure DoneEvents;
 begin
   if not EventsInitialized then Exit;
-  SetVTMouseTracking(False);
+  if not FVHeadless.IsHeadless then
+    SetVTMouseTracking(False);
   MouseEvents := False;
   EventsInitialized := False;
 end;
@@ -1581,6 +1597,8 @@ begin
   NextQueuedEvent(Event);
   if Event.What <> evNothing then
     Exit;
+  if FVHeadless.IsHeadless then
+    Exit;  { headless: only queued events ever exist }
   GetKeyEvent(Event);
   if Event.What <> evNothing then
     Exit;
@@ -1595,6 +1613,9 @@ begin
   PollEventSources(Event);
   if Event.What <> evNothing then
     Exit;
+
+  if FVHeadless.IsHeadless then
+    Exit;  { no waiting in headless — tests pump explicitly }
 
   { Prevent a hot idle spin: wait briefly for new console input (or APCs),
     then poll once more before returning evNothing to the app idle loop. }
@@ -1614,7 +1635,10 @@ end;
 procedure InitKeyboard;
 begin
   if KeyboardInitialized then Exit;
-  ConsoleInput := GetStdHandle(STD_INPUT_HANDLE);
+  if FVHeadless.IsHeadless then
+    ConsoleInput := INVALID_HANDLE_VALUE
+  else
+    ConsoleInput := GetStdHandle(STD_INPUT_HANDLE);
   KeyboardInitialized := True;
 end;
 
@@ -1736,6 +1760,20 @@ begin
       Dec(QueueCount);
     end else
       Event.What := evNothing;
+  finally
+    if QueueLock <> nil then
+      QueueLock.Leave;
+  end;
+end;
+
+procedure FlushEventQueue;
+begin
+  if QueueLock <> nil then
+    QueueLock.Enter;
+  try
+    QueueCount := 0;
+    QueueHead  := 0;
+    QueueTail  := 0;
   finally
     if QueueLock <> nil then
       QueueLock.Leave;

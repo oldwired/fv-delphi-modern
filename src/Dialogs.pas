@@ -140,6 +140,7 @@ type
     function FindSel(P: TPoint): Integer;
     function Row(Item: Integer): Integer;
     function Column(Item: Integer): Integer;
+    function ColXForItem(Item: Integer): Integer;
   end;
 
   TRadioButtons = class(TCluster)
@@ -900,21 +901,55 @@ begin
   Result := Item div Size.Y;
 end;
 
+{ Width in cells of the ' ( ) ' / ' [ ] ' button icon that DrawBox draws before
+  every label. All TCluster descendants (TRadioButtons, TCheckBoxes) use a
+  5-cell icon; FindSel and the cursor placement rely on this to reproduce the
+  exact per-row packing DrawBox lays down. }
+const
+  ClusterIconCells = 5;
+
+function TCluster.ColXForItem(Item: Integer): Integer;
+var
+  ItemRow, J, Idx: Integer;
+begin
+  { X of the cell holding Item, packing its row left-to-right exactly like
+    DrawBox: each preceding item in the same row advances by icon + label + 2. }
+  Result := 0;
+  if (Strings = nil) or (Size.Y <= 0) then Exit;
+  ItemRow := Item mod Size.Y;
+  J := 0;
+  while True do begin
+    Idx := J * Size.Y + ItemRow;
+    if Idx = Item then Exit;
+    if Idx >= Strings.Count then Exit;
+    Inc(Result, ClusterIconCells + CStrLen(Strings[Idx]) + 2);
+    Inc(J);
+  end;
+end;
+
 function TCluster.FindSel(P: TPoint): Integer;
 var
-  I, S, Col: Integer;
+  J, Cur, Col, ItemW: Integer;
 begin
+  { The columns DrawBox produces are ragged: every row packs its items
+    independently, so a column's X depends on the label lengths in that row.
+    Walk the clicked row the same way DrawBox draws it and return the item
+    whose cell contains P.X. The previous even-division guess only matched when
+    the click landed far to the right of the labels. }
   Result := -1;
   MakeLocal(P, P);
-  if (P.X >= 0) and (Strings <> nil) then begin
-    Col := P.X * (Strings.Count div Size.Y + 1) div Size.X;
-    S := Col * Size.Y;
-    for I := 0 to Size.Y - 1 do
-      if Row(S + I) = P.Y then begin
-        if S + I < Strings.Count then
-          Result := S + I;
-        Exit;
-      end;
+  if (Strings = nil) or (Size.Y <= 0) then Exit;
+  if (P.Y < 0) or (P.Y >= Size.Y) or (P.X < 0) then Exit;
+  Col := 0;
+  for J := 0 to (Strings.Count - 1) div Size.Y do begin
+    Cur := J * Size.Y + P.Y;
+    if Cur >= Strings.Count then Break;
+    ItemW := ClusterIconCells + CStrLen(Strings[Cur]) + 2;
+    if (P.X >= Col) and (P.X < Col + ItemW) then begin
+      Result := Cur;
+      Exit;
+    end;
+    Inc(Col, ItemW);
   end;
 end;
 
@@ -974,7 +1009,7 @@ begin
     WriteLine(0, I, Size.X, 1, B);
   end;
   if StringCount > 0 then
-    SetCursor(Column(Sel) * (Size.X div ((StringCount - 1) div Size.Y + 1)) + 2, Row(Sel));
+    SetCursor(ColXForItem(Sel) + 2, Row(Sel));
 end;
 
 procedure TCluster.DrawMultiBox(const Icon, Marker: string);
@@ -1551,7 +1586,7 @@ end;
 procedure TDialog.ChangeTitle(ANewTitle: TTitleStr);
 begin
   Title := ANewTitle;
-  Frame.DrawView;
+  DrawView;
 end;
 
 procedure TDialog.FreeSubView(ASubView: TView);

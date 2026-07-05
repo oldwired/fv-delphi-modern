@@ -1643,15 +1643,32 @@ end;
 
 procedure TTerminalParser.ProcessData(const Data: TBytes);
 var
+  Buf: TBytes;
   I: Integer;
   B: Byte;
   CharLen: Integer;
+  Expected: Integer;
   DecodedStr: string;
 begin
-  I := 0;
-  while I < Length(Data) do
+  { A multi-byte UTF-8 sequence can be split across PTY read chunks.
+    Prepend the stashed tail of the previous chunk so the decoder always
+    sees complete sequences (TBytes assignment below is a reference copy,
+    so the common no-stash case copies nothing). }
+  if FUTF8BufferLen > 0 then
   begin
-    B := Data[I];
+    SetLength(Buf, FUTF8BufferLen + Length(Data));
+    Move(FUTF8Buffer[0], Buf[0], FUTF8BufferLen);
+    if Length(Data) > 0 then
+      Move(Data[0], Buf[FUTF8BufferLen], Length(Data));
+    FUTF8BufferLen := 0;
+  end
+  else
+    Buf := Data;
+
+  I := 0;
+  while I < Length(Buf) do
+  begin
+    B := Buf[I];
 
     { Escape sequences remain byte-based }
     if FState <> psNormal then
@@ -1686,7 +1703,24 @@ begin
     else
     begin
       { Multi-byte UTF-8 - preserve non-BMP code points (emoji, etc.) }
-      DecodedStr := DecodeUTF8ToString(@Data[I], Length(Data) - I, CharLen);
+      { If the sequence runs past this chunk, stash the tail (at most 3
+        bytes) and finish it when the next chunk arrives. }
+      if (B and $E0) = $C0 then
+        Expected := 2
+      else if (B and $F0) = $E0 then
+        Expected := 3
+      else if (B and $F8) = $F0 then
+        Expected := 4
+      else
+        Expected := 1;  { invalid lead byte - let the decoder reject it }
+      if I + Expected > Length(Buf) then
+      begin
+        FUTF8BufferLen := Length(Buf) - I;
+        Move(Buf[I], FUTF8Buffer[0], FUTF8BufferLen);
+        Break;
+      end;
+
+      DecodedStr := DecodeUTF8ToString(@Buf[I], Length(Buf) - I, CharLen);
       if CharLen > 0 then
       begin
         if DecodedStr <> '' then
@@ -1886,6 +1920,8 @@ var
   SemiPos: Integer;
   OSCType: Integer;
   OSCData: string;
+  Bytes: TBytes;
+  I: Integer;
 begin
   { OSC format: Ps ; Pt ST
     Ps = OSC type number
@@ -1901,7 +1937,13 @@ begin
     case OSCType of
       0, 1, 2:  { 0=icon+title, 1=icon, 2=title - we treat all as title }
         begin
-          FTitle := OSCData;
+          { OSC bytes were collected raw (each byte cast to Char). Decode
+            the payload as UTF-8 so multi-byte glyphs (e.g. emoji) in titles
+            don't appear as Latin-1 mojibake. }
+          SetLength(Bytes, Length(OSCData));
+          for I := 1 to Length(OSCData) do
+            Bytes[I - 1] := Byte(Ord(OSCData[I]) and $FF);
+          FTitle := TEncoding.UTF8.GetString(Bytes);
           if Assigned(FOnTitleChange) then
             FOnTitleChange(FTitle);
         end;
@@ -2090,6 +2132,33 @@ var
       N := N or 8;
     Result := Byte(N and $0F);
   end;
+  function Ansi256To16(Idx: Integer): Byte;
+  var
+    V, R, G, B: Integer;
+  begin
+    { Quantize an xterm 256-color index to the 16 ANSI colors. The old
+      'and $0F' truncation mapped e.g. the common mid-grey 244 to red. }
+    if (Idx < 0) or (Idx > 255) then Exit(7);
+    if Idx < 16 then Exit(Byte(Idx));
+    if Idx >= 232 then
+    begin
+      { Grayscale ramp: 232..255 -> 8..238 }
+      V := 8 + (Idx - 232) * 10;
+      Result := RGBToANSIIndex(V, V, V);
+    end
+    else
+    begin
+      { 6x6x6 color cube with xterm levels 0,95,135,175,215,255 }
+      V := Idx - 16;
+      R := V div 36;
+      G := (V div 6) mod 6;
+      B := V mod 6;
+      if R > 0 then R := 55 + R * 40;
+      if G > 0 then G := 55 + G * 40;
+      if B > 0 then B := 55 + B * 40;
+      Result := RGBToANSIIndex(R, G, B);
+    end;
+  end;
 begin
   if FParamCount = 0 then
   begin
@@ -2129,8 +2198,8 @@ begin
         begin
           if (I + 2 < FParamCount) and (FParams[I + 1] = 5) then
           begin
-            { 256-color mode: use lower 4 bits }
-            FG := FPalette.MapForeground(FParams[I + 2] and $0F);
+            { 256-color mode: quantize to the 16-color palette }
+            FG := FPalette.MapForeground(Ansi256To16(FParams[I + 2]));
             FBuffer.SetForeground(FG);
             Inc(I, 2);
           end
@@ -2153,7 +2222,7 @@ begin
         begin
           if (I + 2 < FParamCount) and (FParams[I + 1] = 5) then
           begin
-            BG := FPalette.MapBackground(FParams[I + 2] and $0F);
+            BG := FPalette.MapBackground(Ansi256To16(FParams[I + 2]));
             FBuffer.SetBackground(BG shr 4);
             Inc(I, 2);
           end
@@ -2273,6 +2342,21 @@ begin
   FVisualBell := True;  { Visual bell enabled by default }
   FVisualBellActive := False;
   FLogStream := nil;
+  { Auto-enable raw PTY-byte logging when FV_TERMINAL_LOG is set. The value
+    should be a directory; each terminal writes a uniquely-named file there,
+    so multiple panes don't collide. The file holds the raw bytes that came
+    out of the child via ConPTY (input to our parser); use a hex viewer to
+    inspect it. Used to diagnose parser/buffer mismatches. }
+  if GetEnvironmentVariable('FV_TERMINAL_LOG') <> '' then
+  begin
+    var LogDir := GetEnvironmentVariable('FV_TERMINAL_LOG');
+    if DirectoryExists(LogDir) then
+    begin
+      var FileName := IncludeTrailingPathDelimiter(LogDir) +
+        Format('fvterm_%d_%d.bin', [GetCurrentProcessId, GetTickCount]);
+      StartLogging(FileName);
+    end;
+  end;
   FTitle := '';
   FMousePassthroughEnabled := False;  { Start in Mouse:Select mode }
   FLastMouseButtonCode := 3;
@@ -2558,6 +2642,12 @@ begin
     Buf[X].Attr := Attr;
     Buf[X].FG_RGB := 0;
     Buf[X].BG_RGB := 0;
+    { Buf is a stack-allocated TDrawBuffer: unmanaged fields hold stack
+      garbage unless explicitly zeroed. Leftover ExtAttrs/UL_RGB bits were
+      emitted as SGR strikethrough/undercurl/colored-underline decorations
+      over the pane (see TERMINAL_RENDERING_BUG.md). }
+    Buf[X].ExtAttrs := 0;
+    Buf[X].UL_RGB := 0;
   end;
 end;
 
@@ -3067,6 +3157,7 @@ end;
 
 procedure TTerminalView.HandleTitleChange(const NewTitle: string);
 begin
+  if FTitle = NewTitle then Exit;
   FTitle := NewTitle;
   if Assigned(FOnTitleChange) then
     FOnTitleChange(Self);
@@ -3112,6 +3203,8 @@ begin
       Buf[X].Attr := Attr;
       Buf[X].FG_RGB := 0;
       Buf[X].BG_RGB := 0;
+      Buf[X].ExtAttrs := 0;
+      Buf[X].UL_RGB := 0;
     end;
     WriteLine(0, Y, Size.X, 1, Buf);
   end;
@@ -3398,14 +3491,13 @@ begin
   end
   else
     FScrollBar.SetParams(1, 0, 1, 1, 1);  { Show thumb at bottom when no scrollback }
-
-  FScrollBar.DrawView;  { Force redraw }
 end;
 
 procedure TTerminalWindow.RefreshWindowTitle;
 var
   ModeText: string;
   BaseText: string;
+  NewTitle: string;
 begin
   if (FTerminal <> nil) and FTerminal.MousePassthroughEnabled then
     ModeText := 'Mouse:Pass'
@@ -3416,14 +3508,11 @@ begin
   if BaseText = '' then
     BaseText := 'Terminal';
 
-  Title := BaseText + ' [' + ModeText + ' C-A,M]';
-  { Redraw frame/title and then child views to avoid blanking the terminal body. }
-  if Frame <> nil then
-    Frame.DrawView;
-  if FTerminal <> nil then
-    FTerminal.DrawView;
-  if FScrollBar <> nil then
-    FScrollBar.DrawView;
+  NewTitle := BaseText + ' [' + ModeText + ' C-A,M]';
+  if Title = NewTitle then Exit;
+
+  Title := NewTitle;
+  DrawView;
 end;
 
 procedure TTerminalWindow.HandleTerminalTitleChange(Sender: TObject);

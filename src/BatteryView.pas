@@ -1,4 +1,4 @@
-{*******************************************************}
+﻿{*******************************************************}
 {       Free Vision - Battery Status View              }
 {       Battery level and AC power display             }
 {*******************************************************}
@@ -8,7 +8,7 @@ unit BatteryView;
 interface
 
 uses
-  Winapi.Windows,
+  Winapi.Windows, FVClock,
   FVConsts, Objects, Drivers, Views;
 
 type
@@ -67,7 +67,7 @@ var
   CurrentTick: UInt64;
   PowerStatus: TSystemPowerStatus;
 begin
-  CurrentTick := GetTickCount64;
+  CurrentTick := FVClock.GetMonotonicMs;
   if (CurrentTick - FLastUpdate) >= (UInt64(FRefreshInterval) * 1000) then begin
     FLastUpdate := CurrentTick;
 

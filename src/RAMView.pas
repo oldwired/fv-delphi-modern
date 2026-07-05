@@ -1,4 +1,4 @@
-{*******************************************************}
+﻿{*******************************************************}
 {       Free Vision - RAM Usage View                   }
 {       System memory usage display widget             }
 {*******************************************************}
@@ -8,7 +8,7 @@ unit RAMView;
 interface
 
 uses
-  Winapi.Windows,
+  Winapi.Windows, FVClock,
   FVConsts, Objects, Drivers, Views;
 
 type
@@ -67,7 +67,7 @@ var
   MemStatus: TMemoryStatusEx;
   CurrentTick: UInt64;
 begin
-  CurrentTick := GetTickCount64;
+  CurrentTick := FVClock.GetMonotonicMs;
   if (CurrentTick - FLastUpdate) >= (UInt64(FRefreshInterval) * 1000) then begin
     FLastUpdate := CurrentTick;
 

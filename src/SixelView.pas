@@ -1,4 +1,4 @@
-{*******************************************************}
+﻿{*******************************************************}
 {       Free Vision Sixel View                          }
 {       Reusable view for pre-encoded SIXEL data        }
 {*******************************************************}
@@ -10,7 +10,7 @@ unit SixelView;
 interface
 
 uses
-  Winapi.Windows,
+  Winapi.Windows, FVClock,
   FVCommon, Drivers, Views, SixelEncoder;
 
 type
@@ -556,7 +556,7 @@ procedure TSixelAnimView.Update;
 var
   Now64: UInt64;
 begin
-  Now64 := GetTickCount64;
+  Now64 := FVClock.GetMonotonicMs;
   if (Now64 - FLastUpdate) < Cardinal(FUpdateInterval) then Exit;
   FLastUpdate := Now64;
 

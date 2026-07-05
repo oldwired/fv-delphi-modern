@@ -1,4 +1,4 @@
-{*********************************************************}
+﻿{*********************************************************}
 {                                                         }
 {       Free Vision - Multi-Task Progress (TTaskProgress) }
 {                                                         }
@@ -22,7 +22,7 @@ interface
 
 uses
   System.Generics.Collections,
-  Winapi.Windows,
+  Winapi.Windows, FVClock,
   FVCommon, Objects, Drivers, Views, FVConsts, FVBoxChars;
 
 const
@@ -89,7 +89,7 @@ begin
   T.Caption     := ACaption;
   T.Current     := 0;
   T.Max         := AMax;
-  T.StartTickMs := GetTickCount64;
+  T.StartTickMs := FVClock.GetMonotonicMs;
   T.LastTickMs  := T.StartTickMs;
   T.SpinnerIdx  := 0;
   Result := FTasks.Add(T);
@@ -103,7 +103,7 @@ var
 begin
   if (Index < 0) or (Index >= FTasks.Count) then Exit;
   T := FTasks[Index];
-  Now := GetTickCount64;
+  Now := FVClock.GetMonotonicMs;
   T.Current := ACurrent;
   if T.Current < 0 then T.Current := 0;
   if T.Current > T.Max then T.Current := T.Max;
@@ -162,7 +162,7 @@ var
 begin
   if (Task.Current <= 0) or (Task.Current >= Task.Max) then
     Exit('--:--');
-  Elapsed := GetTickCount64 - Task.StartTickMs;
+  Elapsed := FVClock.GetMonotonicMs - Task.StartTickMs;
   if Elapsed < 100 then Exit('--:--');
   { Remaining ms = Elapsed * (Max - Current) / Current }
   Remaining := Elapsed * UInt64(Task.Max - Task.Current) div UInt64(Task.Current);

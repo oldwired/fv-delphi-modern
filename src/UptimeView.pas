@@ -1,4 +1,4 @@
-{*******************************************************}
+﻿{*******************************************************}
 {       Free Vision - Uptime View Gadget               }
 {       Displays system uptime                          }
 {*******************************************************}
@@ -8,7 +8,7 @@ unit UptimeView;
 interface
 
 uses
-  Winapi.Windows,
+  Winapi.Windows, FVClock,
   FVConsts, Objects, Drivers, Views;
 
 type
@@ -60,7 +60,7 @@ var
   Ticks: UInt64;
   TotalSecs, Days, Hours, Mins, Secs: UInt64;
 begin
-  Ticks := GetTickCount64;
+  Ticks := FVClock.GetMonotonicMs;
   TotalSecs := Ticks div 1000;
 
   Days := TotalSecs div 86400;
@@ -92,7 +92,7 @@ procedure TUptimeView.Update;
 var
   CurrentTicks: UInt64;
 begin
-  CurrentTicks := GetTickCount64;
+  CurrentTicks := FVClock.GetMonotonicMs;
   { Check if refresh interval has passed (convert to ms) }
   if (CurrentTicks - FLastTicks) >= (UInt64(FRefreshInterval) * 1000) then begin
     FLastTicks := CurrentTicks;

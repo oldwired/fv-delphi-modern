@@ -3353,7 +3353,7 @@ begin
     case Event.Command of
       cmUpdateTitle:
         begin
-          Frame.DrawView;
+          DrawView;
           ClearEvent(Event);
         end;
       cmBludgeonStats:

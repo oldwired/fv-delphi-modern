@@ -543,6 +543,65 @@ begin
   Result := True;
 end;
 
+{ Build a CREATE_UNICODE_ENVIRONMENT block: <KEY=VAL>#0<KEY=VAL>#0...#0#0 of
+  WideChars. Inherits the parent environment but overrides a small set of
+  variables that signal terminal capability to child CLIs (Node/Ink, chalk,
+  is-unicode-supported). Without these the child assumes a non-Unicode dumb
+  terminal on Windows and falls back to ASCII box-drawing.
+
+  Returned bytes are the literal env block; pass @Bytes[0] as lpEnvironment
+  with CREATE_UNICODE_ENVIRONMENT in dwCreationFlags. }
+function BuildChildEnvironmentBlock: TBytes;
+const
+  Overrides: array[0..3, 0..1] of string = (
+    ('TERM',         'xterm-256color'),
+    ('COLORTERM',    'truecolor'),
+    ('TERM_PROGRAM', 'fv-agentcompanion'),
+    ('WT_SESSION',   'fv-agentcompanion-session')
+  );
+var
+  ParentEnv, P: PWideChar;
+  Entry, NameUpper: string;
+  EqPos, I, Skip: Integer;
+  Block: string;
+begin
+  Block := '';
+  ParentEnv := GetEnvironmentStringsW;
+  if ParentEnv <> nil then
+  try
+    P := ParentEnv;
+    while P^ <> #0 do
+    begin
+      Entry := P;
+      EqPos := Pos('=', Entry);
+      Skip := 0;
+      if EqPos > 1 then
+      begin
+        NameUpper := UpperCase(Copy(Entry, 1, EqPos - 1));
+        for I := 0 to High(Overrides) do
+          if NameUpper = Overrides[I, 0] then
+          begin
+            Skip := 1;
+            Break;
+          end;
+      end;
+      if Skip = 0 then
+        Block := Block + Entry + #0;
+      Inc(P, Length(Entry) + 1);
+    end;
+  finally
+    FreeEnvironmentStringsW(ParentEnv);
+  end;
+
+  for I := 0 to High(Overrides) do
+    Block := Block + Overrides[I, 0] + '=' + Overrides[I, 1] + #0;
+  Block := Block + #0;  { final terminator }
+
+  SetLength(Result, Length(Block) * SizeOf(WideChar));
+  if Length(Result) > 0 then
+    Move(Block[1], Result[0], Length(Result));
+end;
+
 function TConPTY.LaunchProcess(const CommandLine: string): Boolean;
 var
   StartupInfoEx: STARTUPINFOEXW;
@@ -550,6 +609,8 @@ var
   AttrListSize: SIZE_T;
   AttrList: PPROC_THREAD_ATTRIBUTE_LIST;
   CmdLine: string;
+  EnvBlock: TBytes;
+  EnvPtr: Pointer;
 begin
   Result := False;
   AttrList := nil;
@@ -596,10 +657,19 @@ begin
     CmdLine := CommandLine;
     UniqueString(CmdLine);
 
+    // Build env block with TERM/COLORTERM so Node CLIs (Claude Code, etc.)
+    // detect Unicode + truecolor support and skip ASCII fallback rendering.
+    EnvBlock := BuildChildEnvironmentBlock;
+    if Length(EnvBlock) > 0 then
+      EnvPtr := @EnvBlock[0]
+    else
+      EnvPtr := nil;
+
     // Create the process
     FillChar(ProcessInfo, SizeOf(ProcessInfo), 0);
     if not CreateProcessW(nil, PWideChar(CmdLine), nil, nil, False,
-      EXTENDED_STARTUPINFO_PRESENT, nil, nil,
+      EXTENDED_STARTUPINFO_PRESENT or CREATE_UNICODE_ENVIRONMENT,
+      EnvPtr, nil,
       StartupInfoEx.StartupInfo, ProcessInfo) then
     begin
       FLastError := 'CreateProcess failed: ' + SysErrorMessage(GetLastError);

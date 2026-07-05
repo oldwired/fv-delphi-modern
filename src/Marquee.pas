@@ -1,4 +1,4 @@
-{*******************************************************}
+﻿{*******************************************************}
 {       Free Vision - Marquee / Scrolling Ticker       }
 {       Scrolling text display                         }
 {*******************************************************}
@@ -8,7 +8,7 @@ unit Marquee;
 interface
 
 uses
-  Winapi.Windows,
+  Winapi.Windows, FVClock,
   FVConsts, Objects, Drivers, Views;
 
 type
@@ -75,7 +75,7 @@ end;
 procedure TMarquee.Resume;
 begin
   FPaused := False;
-  FLastScroll := GetTickCount64;
+  FLastScroll := FVClock.GetMonotonicMs;
 end;
 
 procedure TMarquee.Reset;
@@ -91,7 +91,7 @@ var
 begin
   if FPaused or (FText = '') then Exit;
 
-  CurrentTick := GetTickCount64;
+  CurrentTick := FVClock.GetMonotonicMs;
   if (CurrentTick - FLastScroll) >= FScrollSpeed then begin
     FLastScroll := CurrentTick;
 

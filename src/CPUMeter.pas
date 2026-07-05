@@ -1,4 +1,4 @@
-{*******************************************************}
+﻿{*******************************************************}
 {       Free Vision - CPU Meter View                   }
 {       CPU usage percentage display widget            }
 {*******************************************************}
@@ -8,7 +8,7 @@ unit CPUMeter;
 interface
 
 uses
-  Winapi.Windows,
+  Winapi.Windows, FVClock,
   FVConsts, Objects, Drivers, Views;
 
 type
@@ -73,7 +73,7 @@ var
   CurrIdle, CurrKernel, CurrUser: UInt64;
   IdleDelta, KernelDelta, UserDelta, TotalDelta: UInt64;
 begin
-  CurrentTick := GetTickCount64;
+  CurrentTick := FVClock.GetMonotonicMs;
   if (CurrentTick - FLastUpdate) >= (UInt64(FRefreshInterval) * 1000) then begin
     FLastUpdate := CurrentTick;
 

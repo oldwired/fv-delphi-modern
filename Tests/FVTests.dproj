@@ -1,0 +1,154 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <ProjectGuid>{C0F0A1E0-1B2C-4D3E-9F4A-5B6C7D8E9F01}</ProjectGuid>
+        <MainSource>TestRunner.dpr</MainSource>
+        <Base>True</Base>
+        <Config Condition="'$(Config)'==''">Debug</Config>
+        <ProjectName Condition="'$(ProjectName)'==''">FVTests</ProjectName>
+        <TargetedPlatforms>1</TargetedPlatforms>
+        <AppType>Console</AppType>
+        <FrameworkType>None</FrameworkType>
+        <ProjectVersion>20.3</ProjectVersion>
+        <Platform Condition="'$(Platform)'==''">Win32</Platform>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Config)'=='Base' or '$(Base)'!=''">
+        <Base>true</Base>
+    </PropertyGroup>
+    <PropertyGroup Condition="('$(Platform)'=='Win32' and '$(Base)'=='true') or '$(Base_Win32)'!=''">
+        <Base_Win32>true</Base_Win32>
+        <CfgParent>Base</CfgParent>
+        <Base>true</Base>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Config)'=='Release' or '$(Cfg_1)'!=''">
+        <Cfg_1>true</Cfg_1>
+        <CfgParent>Base</CfgParent>
+        <Base>true</Base>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Config)'=='Debug' or '$(Cfg_2)'!=''">
+        <Cfg_2>true</Cfg_2>
+        <CfgParent>Base</CfgParent>
+        <Base>true</Base>
+    </PropertyGroup>
+    <PropertyGroup Condition="('$(Platform)'=='Win32' and '$(Cfg_2)'=='true') or '$(Cfg_2_Win32)'!=''">
+        <Cfg_2_Win32>true</Cfg_2_Win32>
+        <CfgParent>Cfg_2</CfgParent>
+        <Cfg_2>true</Cfg_2>
+        <Base>true</Base>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Base)'!=''">
+        <DCC_E>false</DCC_E>
+        <DCC_F>false</DCC_F>
+        <DCC_K>false</DCC_K>
+        <DCC_N>false</DCC_N>
+        <DCC_S>false</DCC_S>
+        <DCC_ImageBase>00400000</DCC_ImageBase>
+        <SanitizedProjectName>FVTests</SanitizedProjectName>
+        <DCC_UnitSearchPath>$(BDS)\source\DUnitX;..\src;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;$(DCC_Namespace)</DCC_Namespace>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Base_Win32)'!=''">
+        <DCC_Namespace>Winapi;System.Win;Data.Win;Datasnap.Win;Web.Win;Soap.Win;Xml.Win;Bde;$(DCC_Namespace)</DCC_Namespace>
+        <BT_BuildType>Debug</BT_BuildType>
+        <DCC_WriteableConstants>true</DCC_WriteableConstants>
+        <Manifest_File>(Ohne)</Manifest_File>
+        <AppDPIAwarenessMode>none</AppDPIAwarenessMode>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Cfg_1)'!=''">
+        <DCC_Define>RELEASE;$(DCC_Define)</DCC_Define>
+        <DCC_DebugInformation>0</DCC_DebugInformation>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Cfg_2)'!=''">
+        <DCC_Define>DEBUG;$(DCC_Define)</DCC_Define>
+        <DCC_Optimize>false</DCC_Optimize>
+        <DCC_GenerateStackFrames>true</DCC_GenerateStackFrames>
+        <DCC_RangeChecking>false</DCC_RangeChecking>
+        <DCC_IntegerOverflowCheck>true</DCC_IntegerOverflowCheck>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Cfg_2_Win32)'!=''">
+        <DCC_WriteableConstants>true</DCC_WriteableConstants>
+        <Manifest_File>(Ohne)</Manifest_File>
+        <AppDPIAwarenessMode>none</AppDPIAwarenessMode>
+    </PropertyGroup>
+    <ItemGroup>
+        <DelphiCompile Include="$(MainSource)">
+            <MainSource>MainSource</MainSource>
+        </DelphiCompile>
+        <DCCReference Include="..\src\FVInterfaces.pas"/>
+        <DCCReference Include="..\src\FVSerialization.pas"/>
+        <DCCReference Include="..\src\Objects.pas"/>
+        <DCCReference Include="..\src\FVCommon.pas"/>
+        <DCCReference Include="..\src\FVBoxChars.pas"/>
+        <DCCReference Include="..\src\FVUnicodeWidth.pas"/>
+        <DCCReference Include="..\src\FVProfile.pas"/>
+        <DCCReference Include="..\src\FVClock.pas"/>
+        <DCCReference Include="..\src\FVHeadless.pas"/>
+        <DCCReference Include="..\src\FVUTF8.pas"/>
+        <DCCReference Include="..\src\FVScreen.pas"/>
+        <DCCReference Include="..\src\Drivers.pas"/>
+        <DCCReference Include="..\src\fvconsts.pas"/>
+        <DCCReference Include="..\src\histlist.pas"/>
+        <DCCReference Include="..\src\Views.pas"/>
+        <DCCReference Include="..\src\Menus.pas"/>
+        <DCCReference Include="..\src\Validate.pas"/>
+        <DCCReference Include="..\src\app.pas"/>
+        <DCCReference Include="..\src\Dialogs.pas"/>
+        <DCCReference Include="..\src\SpinnerView.pas"/>
+        <DCCReference Include="..\src\FuzzyFinder.pas"/>
+        <DCCReference Include="..\src\SyntaxHighlight.pas"/>
+        <DCCReference Include="..\src\Marquee.pas"/>
+        <DCCReference Include="..\src\Notification.pas"/>
+        <DCCReference Include="..\src\BlinkIndicator.pas"/>
+        <DCCReference Include="..\src\TaskProgress.pas"/>
+        <DCCReference Include="GridSerializer.pas"/>
+        <DCCReference Include="GoldenHelper.pas"/>
+        <DCCReference Include="ViewHarness.pas"/>
+        <DCCReference Include="Test_Smoke.pas"/>
+        <DCCReference Include="Test_Spinners.pas"/>
+        <DCCReference Include="Test_UTF8.pas"/>
+        <DCCReference Include="Test_UnicodeWidth.pas"/>
+        <DCCReference Include="Test_Serialization.pas"/>
+        <DCCReference Include="Test_Profile.pas"/>
+        <DCCReference Include="Test_Validators.pas"/>
+        <DCCReference Include="Test_FuzzyFinder.pas"/>
+        <DCCReference Include="Test_SyntaxHighlight.pas"/>
+        <DCCReference Include="Test_GridSerializer.pas"/>
+        <DCCReference Include="Test_Animations.pas"/>
+        <DCCReference Include="Test_Views.pas"/>
+        <DCCReference Include="Test_Dialogs.pas"/>
+        <DCCReference Include="..\src\ProgressBar.pas"/>
+        <DCCReference Include="..\src\Breadcrumb.pas"/>
+        <DCCReference Include="..\src\Splitter.pas"/>
+        <DCCReference Include="..\src\Accordion.pas"/>
+        <DCCReference Include="Test_NewWidgets.pas"/>
+        <DCCReference Include="Test_Regressions.pas"/>
+        <DCCReference Include="Test_ListNav.pas"/>
+        <BuildConfiguration Include="Base">
+            <Key>Base</Key>
+        </BuildConfiguration>
+        <BuildConfiguration Include="Release">
+            <Key>Cfg_1</Key>
+            <CfgParent>Base</CfgParent>
+        </BuildConfiguration>
+        <BuildConfiguration Include="Debug">
+            <Key>Cfg_2</Key>
+            <CfgParent>Base</CfgParent>
+        </BuildConfiguration>
+    </ItemGroup>
+    <ProjectExtensions>
+        <Borland.Personality>Delphi.Personality.12</Borland.Personality>
+        <Borland.ProjectType/>
+        <BorlandProject>
+            <Delphi.Personality>
+                <Source>
+                    <Source Name="MainSource">TestRunner.dpr</Source>
+                </Source>
+            </Delphi.Personality>
+            <Platforms>
+                <Platform value="Win32">True</Platform>
+                <Platform value="Win64">False</Platform>
+            </Platforms>
+        </BorlandProject>
+    </ProjectExtensions>
+    <Import Project="$(BDS)\Bin\CodeGear.Delphi.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Delphi.Targets')"/>
+    <Import Project="$(APPDATA)\Embarcadero\$(BDSAPPDATABASEDIR)\$(PRODUCTVERSION)\UserTools.proj" Condition="Exists('$(APPDATA)\Embarcadero\$(BDSAPPDATABASEDIR)\$(PRODUCTVERSION)\UserTools.proj')"/>
+</Project>

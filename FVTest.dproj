@@ -98,6 +98,8 @@
         <DCCReference Include="src\FVBoxChars.pas"/>
         <DCCReference Include="src\FVUnicodeWidth.pas"/>
         <DCCReference Include="src\FVProfile.pas"/>
+        <DCCReference Include="src\FVClock.pas"/>
+        <DCCReference Include="src\FVHeadless.pas"/>
         <DCCReference Include="src\FVUTF8.pas"/>
         <DCCReference Include="src\Drivers.pas"/>
         <DCCReference Include="src\Views.pas"/>

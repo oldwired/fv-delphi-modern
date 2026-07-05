@@ -1,4 +1,4 @@
-{*******************************************************}
+﻿{*******************************************************}
 {       Free Vision - VU Meter                         }
 {       Audio-style level meter with peak hold         }
 {*******************************************************}
@@ -8,7 +8,7 @@ unit VUMeter;
 interface
 
 uses
-  Winapi.Windows,
+  Winapi.Windows, FVClock,
   FVConsts, Objects, Drivers, Views, FVBoxChars;
 
 type
@@ -77,7 +77,7 @@ begin
   { Update peak }
   if AValue >= FPeakValue then begin
     FPeakValue := AValue;
-    FPeakHoldTime := GetTickCount64;
+    FPeakHoldTime := FVClock.GetMonotonicMs;
   end;
 
   DrawView;
@@ -94,7 +94,7 @@ procedure TVUMeter.Update;
 var
   CurrentTick: UInt64;
 begin
-  CurrentTick := GetTickCount64;
+  CurrentTick := FVClock.GetMonotonicMs;
 
   { Decay peak after hold time (500ms) }
   if FShowPeak and (FPeakValue > FValue) then begin

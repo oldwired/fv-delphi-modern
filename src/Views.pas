@@ -417,6 +417,16 @@ var
   WVY: Integer;             { Current Y coordinate (transformed to parent space) }
   WVTarget: TView;          { The view whose data is being written }
 
+  { Diagnostic: when FV_WRITESPAN_LOG=<dir> is set in the environment, the
+    first 3 frames append one line per WriteSpanToVideoBuf call to
+    <dir>/writespan.log. Used by FVTerm to inspect Z-order clipping math
+    for the leftmost-columns bug — see TERMINAL_RENDERING_BUG.md, Phase 2b. }
+  FWriteSpanLogPath: string = '';
+  FWriteSpanLogFrames: Cardinal = 3;
+  FWriteSpanLogLastFrame: Integer = -1;
+  FWriteSpanLogStream: TextFile;
+  FWriteSpanLogStreamOpen: Boolean = False;
+
 { Helper functions }
 
 function Min(A, B: Integer): Integer;
@@ -1131,6 +1141,44 @@ begin
   if (G and gfGrowHiY) <> 0 then Grow(Bounds.B.Y);
 end;
 
+{ Diagnostic: log post-clip span to writespan.log. Gated on the env-var
+  path read at unit init; auto-stops after FWriteSpanLogFrames frames. }
+procedure LogWriteSpan(x1, x2: Integer);
+var
+  CurFrame: Cardinal;
+begin
+  if FWriteSpanLogPath = '' then Exit;
+  CurFrame := FVScreen.GetFVFrameCounter;
+  if CurFrame >= FWriteSpanLogFrames then
+  begin
+    if FWriteSpanLogStreamOpen then
+    begin
+      CloseFile(FWriteSpanLogStream);
+      FWriteSpanLogStreamOpen := False;
+    end;
+    Exit;
+  end;
+  if not FWriteSpanLogStreamOpen then
+  begin
+    try
+      AssignFile(FWriteSpanLogStream, FWriteSpanLogPath);
+      Rewrite(FWriteSpanLogStream);
+      FWriteSpanLogStreamOpen := True;
+    except
+      FWriteSpanLogPath := '';
+      Exit;
+    end;
+  end;
+  if FWriteSpanLogLastFrame <> Integer(CurFrame) then
+  begin
+    WriteLn(FWriteSpanLogStream, '--- Frame ', CurFrame, ' ---');
+    FWriteSpanLogLastFrame := Integer(CurFrame);
+  end;
+  WriteLn(FWriteSpanLogStream,
+    Format('Y=%d x1=%d x2=%d off=%d sw=%d',
+           [WVY, x1, x2, WVBufOffset, FVScreen.ScreenWidth]));
+end;
+
 { WriteSpanToVideoBuf - writes a horizontal span from the source draw buffer
   to the screen buffers (VideoBuf, UnicodeCharBuf, FGRGBBuf, BGRGBBuf).
   x1, x2 are in absolute screen coordinates. ShadowCounter > 0 means the
@@ -1151,6 +1199,8 @@ begin
   if x2 > FVScreen.ScreenWidth then x2 := FVScreen.ScreenWidth;
   if (x1 >= x2) then Exit;
   if (WVY < 0) or (WVY >= FVScreen.ScreenHeight) then Exit;
+
+  LogWriteSpan(x1, x2);
 
   FVScreen.MarkVideoDirty;
 
@@ -1333,13 +1383,13 @@ begin
         if ((P.State and sfShadow) <> 0) and (WVY >= P.Origin.Y + ShadowSize.Y) then begin
           if x1 >= dx then
             Continue; { Span starts past shadow }
-          Inc(ShadowCounter);
-          if x2 <= dx then
-            Continue; { Span entirely within shadow }
+          if x2 <= dx then begin
+            do_writeViewRec1(x1, x2, P, ShadowCounter + 1);
+            Exit; { Span entirely within shadow }
+          end;
           { Partial shadow: recurse for shadow fragment }
-          do_writeViewRec1(x1, dx, P, ShadowCounter);
+          do_writeViewRec1(x1, dx, P, ShadowCounter + 1);
           x1 := dx;
-          Dec(ShadowCounter);
           Continue;
         end else
           Continue;
@@ -1357,12 +1407,12 @@ begin
         dx := P.Origin.X + ShadowSize.X + P.Size.X;
         if x1 >= dx then
           Continue; { Span starts past bottom shadow }
-        Inc(ShadowCounter);
-        if x2 <= dx then
-          Continue; { Span entirely within bottom shadow }
-        do_writeViewRec1(x1, dx, P, ShadowCounter);
+        if x2 <= dx then begin
+          do_writeViewRec1(x1, x2, P, ShadowCounter + 1);
+          Exit; { Span entirely within bottom shadow }
+        end;
+        do_writeViewRec1(x1, dx, P, ShadowCounter + 1);
         x1 := dx;
-        Dec(ShadowCounter);
       end;
     end;
   until False;
@@ -1549,12 +1599,15 @@ begin
       Inc(Event.Where.Y, P.Y);
       MoveGrow(Origin, Event.Where);
     end;
-    { If mouse was dragged, we're done; otherwise continue to keyboard mode }
-    if MouseMoved then
-      Finished := True;
+    { A mouse-initiated drag ends when the button is released, whether or not
+      the window actually moved. Only a keyboard-initiated drag (cmMove/cmResize,
+      Event.What <> evMouseDown) uses the interactive keyboard loop below.
+      Falling into keyboard mode after a plain click was the bug that forced
+      the user to press Esc before the window would respond to anything else. }
+    Finished := True;
   end;
 
-  { Keyboard mode - continues after mouse release (if no drag) or starts directly }
+  { Keyboard mode - only for keyboard/command-initiated moves (arrows + Enter/Esc) }
   while not Finished do begin
     P := Origin;
     S := Size;
@@ -2040,23 +2093,36 @@ var
   D: TPoint;
   V: TView;
   R: TRect;
+  OldState: Word;
 begin
   D.X := (Bounds.B.X - Bounds.A.X) - Size.X;
   D.Y := (Bounds.B.Y - Bounds.A.Y) - Size.Y;
   if (D.X <> 0) or (D.Y <> 0) then begin
     Lock;
-    if Last <> nil then begin
-      V := Last;
-      repeat
-        V := V.Next;
-        V.CalcBounds(R, D);
-        V.ChangeBounds(R);
-      until V = Last;
+    try
+      if Last <> nil then begin
+        V := Last;
+        repeat
+          V := V.Next;
+          V.CalcBounds(R, D);
+          OldState := V.State;
+          V.State := V.State and not sfExposed;
+          try
+            V.ChangeBounds(R);
+          finally
+            V.State := (V.State and not sfExposed) or (OldState and sfExposed);
+          end;
+        until V = Last;
+      end;
+      SetBounds(Bounds);
+      GetExtent(Clip);
+    finally
+      UnLock;
     end;
-    UnLock;
+  end else begin
+    SetBounds(Bounds);
+    GetExtent(Clip);
   end;
-  SetBounds(Bounds);
-  GetExtent(Clip);
 end;
 
 function TGroup.IndexOf(P: TView): Integer;
@@ -2295,9 +2361,9 @@ begin
 
   if (Owner <> nil) and (Width > 10) then begin
     TitleStr := TWindow(Owner).GetTitle(Width - 10);
+    TitleStr := CopyDisplayCells(TitleStr, 0, Width - 10);
     if TitleStr <> '' then begin
       L := StringDisplayWidth(TitleStr);
-      if L > Width - 10 then L := Width - 10;
       if L > 0 then begin
         I := (Width - L) shr 1;
         { Bounds check all array accesses }
@@ -2350,6 +2416,13 @@ var
 begin
   inherited HandleEvent(Event);
   if (Event.What = evMouseDown) and (Owner <> nil) then begin
+    { Mouse-wheel notifications arrive as evMouseDown with a wheel button and
+      never produce a matching mouse-up. Treating one as a title-bar click would
+      start a window drag whose capture loop waits forever for a button release,
+      trapping the window in move mode. The frame does not scroll, so ignore it. }
+    if (Event.Buttons and (mbScrollWheelUp or mbScrollWheelDown)) <> 0 then
+      Exit;
+
     MakeLocal(Event.Where, Mouse);
     WinFlags := TWindow(Owner).Flags;
 
@@ -2397,7 +2470,6 @@ end;
 procedure TFrame.SetState(AState: Word; Enable: Boolean);
 begin
   inherited SetState(AState, Enable);
-  if AState and (sfActive + sfDragging) <> 0 then DrawView;
 end;
 
 procedure TFrame.FrameLine(var FrameBuf; Y, N: Integer; Color: Byte);
@@ -2498,15 +2570,22 @@ begin
 end;
 
 procedure TScrollBar.SetRange(AMin, AMax: Integer);
+var
+  NewMax: Integer;
+  NewValue: Integer;
 begin
-  Min := AMin;
   { Ensure Max >= Min to prevent negative scroll values }
   if AMax < AMin then
-    Max := AMin
+    NewMax := AMin
   else
-    Max := AMax;
-  if Value < Min then Value := Min;
-  if Value > Max then Value := Max;
+    NewMax := AMax;
+  NewValue := Value;
+  if NewValue < AMin then NewValue := AMin;
+  if NewValue > NewMax then NewValue := NewMax;
+  if (Min = AMin) and (Max = NewMax) and (Value = NewValue) then Exit;
+  Min := AMin;
+  Max := NewMax;
+  Value := NewValue;
   DrawView;
 end;
 
@@ -2517,11 +2596,38 @@ begin
 end;
 
 procedure TScrollBar.SetParams(AValue, AMin, AMax, APgStep, AArStep: Integer);
+var
+  NewMax: Integer;
+  NewValue: Integer;
+  OldValueAfterRange: Integer;
+  NeedsDraw: Boolean;
+  ValueChanged: Boolean;
 begin
+  if AMax < AMin then
+    NewMax := AMin
+  else
+    NewMax := AMax;
+  NewValue := AValue;
+  if NewValue < AMin then NewValue := AMin;
+  if NewValue > NewMax then NewValue := NewMax;
+
+  OldValueAfterRange := Value;
+  if OldValueAfterRange < AMin then OldValueAfterRange := AMin;
+  if OldValueAfterRange > NewMax then OldValueAfterRange := NewMax;
+
+  NeedsDraw := (Min <> AMin) or (Max <> NewMax) or (Value <> NewValue);
+  ValueChanged := OldValueAfterRange <> NewValue;
+
   ArStep := AArStep;
   PgStep := APgStep;
-  SetRange(AMin, AMax);
-  SetValue(AValue);
+  Min := AMin;
+  Max := NewMax;
+  Value := NewValue;
+
+  if NeedsDraw then
+    DrawView;
+  if ValueChanged then
+    ScrollDraw;
 end;
 
 procedure TScrollBar.HandleEvent(var Event: TEvent);
@@ -2974,7 +3080,16 @@ begin
         end else
           Ni := Mouse.Y + (Size.Y * (Mouse.X div Cw)) + TopItem;
       until not MouseEvent(Event, evMouseMove + evMouseAuto);
-      if Oi <> Ni then MoveFocus(Ni);
+      if Oi <> Ni then
+        MoveFocus(Ni)
+      else if (Range > 0) and MouseInView(Event.Where) then
+        { Click landed on the item that already had focus. MoveFocus is skipped
+          because nothing changed, but dependent views still need to know the
+          item was (re)picked — e.g. the file dialog's name field only updates
+          on the cmFileFocused broadcast that FocusItem emits. Without this,
+          clicking the pre-focused first entry does nothing until the user first
+          selects a different file. }
+        FocusItem(Focused);
       if Event.Double and (Range > Focused) then
         SelectItem(Focused);
       ClearEvent(Event);
@@ -3034,7 +3149,7 @@ end;
 function TWindow.GetTitle(MaxSize: Integer): TTitleStr;
 begin
   if MaxSize > 0 then
-    Result := Copy(Title, 1, MaxSize)
+    Result := CopyDisplayCells(Title, 0, MaxSize)
   else
     Result := Title;
 end;
@@ -3246,4 +3361,18 @@ end;
 initialization
   CurCommandSet := [0..255];
   TheTopView := nil;
+  FWriteSpanLogPath := GetEnvironmentVariable('FV_WRITESPAN_LOG');
+  if FWriteSpanLogPath <> '' then
+  begin
+    if not (FWriteSpanLogPath[Length(FWriteSpanLogPath)] in ['/', '\']) then
+      FWriteSpanLogPath := FWriteSpanLogPath + '\';
+    FWriteSpanLogPath := FWriteSpanLogPath + 'writespan.log';
+  end;
+
+finalization
+  if FWriteSpanLogStreamOpen then
+  begin
+    CloseFile(FWriteSpanLogStream);
+    FWriteSpanLogStreamOpen := False;
+  end;
 end.

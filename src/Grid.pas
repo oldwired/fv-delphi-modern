@@ -2278,12 +2278,14 @@ begin
     begin
       if Event.Command = cmScrollBarChanged then
       begin
-        if Event.InfoPtr = FVScrollBar then
+        { Guard against nil = nil matching when this grid was constructed
+          without scrollbars but a broadcast carries a nil InfoPtr. }
+        if (FVScrollBar <> nil) and (Event.InfoPtr = FVScrollBar) then
         begin
           FTopRow := FVScrollBar.Value;
           DrawView;
         end
-        else if Event.InfoPtr = FHScrollBar then
+        else if (FHScrollBar <> nil) and (Event.InfoPtr = FHScrollBar) then
         begin
           FLeftCol := FHScrollBar.Value;
           DrawView;

@@ -1,4 +1,4 @@
-{*********************************************************}
+﻿{*********************************************************}
 {                                                         }
 {       Free Vision - Spinner Animator (TSpinnerView)     }
 {                                                         }
@@ -20,7 +20,7 @@ unit SpinnerView;
 interface
 
 uses
-  Winapi.Windows,
+  Winapi.Windows, FVClock,
   Objects, Drivers, Views;
 
 type
@@ -200,7 +200,7 @@ begin
   FKind        := AKind;
   FCaption     := ACaption;
   FFrameIdx    := 0;
-  FLastTickMs  := GetTickCount64;
+  FLastTickMs  := FVClock.GetMonotonicMs;
   FIntervalMs  := DefaultIntervalFor(AKind);
   FActive      := True;
 end;
@@ -228,7 +228,7 @@ var
   Now: UInt64;
 begin
   if not FActive then Exit;
-  Now := GetTickCount64;
+  Now := FVClock.GetMonotonicMs;
   if Now - FLastTickMs >= FIntervalMs then
   begin
     FLastTickMs := Now;

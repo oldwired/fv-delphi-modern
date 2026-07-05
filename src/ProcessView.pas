@@ -1,4 +1,4 @@
-{*******************************************************}
+﻿{*******************************************************}
 {       Free Vision - Process Count View               }
 {       Running processes and threads display          }
 {*******************************************************}
@@ -8,7 +8,7 @@ unit ProcessView;
 interface
 
 uses
-  Winapi.Windows, Winapi.TlHelp32,
+  Winapi.Windows, FVClock, Winapi.TlHelp32,
   FVConsts, Objects, Drivers, Views;
 
 type
@@ -58,7 +58,7 @@ var
   ProcessEntry: TProcessEntry32;
   ProcCount, ThrCount: Integer;
 begin
-  CurrentTick := GetTickCount64;
+  CurrentTick := FVClock.GetMonotonicMs;
   if (CurrentTick - FLastUpdate) >= (UInt64(FRefreshInterval) * 1000) then begin
     FLastUpdate := CurrentTick;
 
