@@ -163,9 +163,10 @@ begin
     for X := 0 to Size.X - 1 do
     begin
       CharCode := (Y * Size.X + X) and $FF;
-      { Use helper function to get safe displayable character }
-      B[X].Ch := GetDisplayChar(CharCode);
-      B[X].Attr := NormColor;
+      { DrawChar (not direct B[X].Ch/Attr writes) so the RGB/ExtAttrs/UL_RGB
+        extension fields are zeroed - TDrawBuffer is stack-allocated and
+        direct field writes leave the other fields as garbage. }
+      DrawChar(B, X, GetDisplayChar(CharCode), NormColor, 1);
     end;
     WriteLine(0, Y, Size.X, 1, B);
   end;
@@ -183,9 +184,8 @@ begin
   if Enable then
     Color := ((Color and $F) shl 4) or (Color shr 4);
   CharCode := (Cursor.Y * Size.X + Cursor.X) and $FF;
-  { Use helper function to get safe displayable character }
-  B[0].Ch := GetDisplayChar(CharCode);
-  B[0].Attr := Color;
+  { DrawChar zeroes the RGB/ExtAttrs extension fields of the stack cell }
+  DrawChar(B, 0, GetDisplayChar(CharCode), Color, 1);
   WriteLine(Cursor.X, Cursor.Y, 1, 1, B);
 end;
 

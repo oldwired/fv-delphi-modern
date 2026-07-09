@@ -38,13 +38,15 @@ type
     [Test] procedure Emoji_IsRecognizedAsWide;
     [Test] procedure CombiningMark_HasZeroWidth;
     [Test] procedure ForcedProfile_DisablesHyperlinkAndSixel;
+    [Test] procedure DrawBuffer_ExtensionFieldsZeroed_AsciiTable;
   end;
 
 implementation
 
 uses
   System.SysUtils, System.StrUtils,
-  Drivers, Views, App, FVCommon, FVScreen, FVUTF8, FVUnicodeWidth, FVProfile;
+  Drivers, Views, App, FVCommon, FVScreen, FVUTF8, FVUnicodeWidth, FVProfile,
+  AsciiTab;
 
 procedure TRegressionTests.Setup;
 begin
@@ -136,6 +138,49 @@ begin
   Assert.AreEqual(0, FVCellWidth($0301), 'combining acute');
   Assert.AreEqual(0, FVCellWidth($0300), 'combining grave');
   Assert.AreEqual(0, FVCellWidth($200B), 'zero-width space');
+end;
+
+{ Fill a large stack region with a non-zero pattern so a TDrawBuffer local
+  allocated further down inherits garbage instead of a coincidentally clean
+  stack - mimics the deep call stacks of a real application run. }
+procedure DirtyStackDeep;
+var
+  A: array[0..65535] of Byte;
+  I: Integer;
+begin
+  for I := 0 to High(A) do
+    A[I] := $A5;
+  if A[32768] <> $A5 then
+    raise Exception.Create('unreachable');
+end;
+
+procedure TRegressionTests.DrawBuffer_ExtensionFieldsZeroed_AsciiTable;
+var
+  R: TRect;
+  T: TTable;
+  X, Y, I, Bad: Integer;
+begin
+  { Memory gotcha: "TDrawBuffer is stack-allocated, NOT zero-initialized".
+    TTable.Draw used to write B[X].Ch/Attr directly, leaving FG_RGB/BG_RGB/
+    ExtAttrs/UL_RGB as stack garbage - random colors and attributes in the
+    ASCII chart. Draw functions must go through the Draw* helpers (or zero
+    every extension field explicitly). }
+  R.A.X := 1; R.A.Y := 1; R.B.X := 33; R.B.Y := 9;
+  T := TTable.Create(R);
+  FHarness.Adopt(T);
+  DirtyStackDeep;
+  FHarness.RenderAndUpdate;
+
+  Bad := 0;
+  for Y := 1 to 8 do
+    for X := 1 to 32 do begin
+      I := Y * ScreenWidth + X;
+      if (FGRGBBuf[I] <> 0) or (BGRGBBuf[I] <> 0) or
+         (ExtAttrsBuf[I] <> 0) or (ULRGBBuf[I] <> 0) then
+        Inc(Bad);
+    end;
+  Assert.AreEqual(0, Bad,
+    'ASCII table cells must not carry RGB/ExtAttrs/UL_RGB stack garbage');
 end;
 
 procedure TRegressionTests.ForcedProfile_DisablesHyperlinkAndSixel;

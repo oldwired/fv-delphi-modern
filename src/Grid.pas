@@ -1380,12 +1380,10 @@ begin
   begin
     if ScreenY >= Size.Y then Break;
 
-    { Clear buffer using new TDrawCell format }
-    for K := 0 to Size.X - 1 do
-    begin
-      B[K].Ch := ' ';
-      B[K].Attr := NormalColor;
-    end;
+    { Clear buffer via DrawChar so the RGB/ExtAttrs/UL_RGB extension fields
+      are zeroed - TDrawBuffer is stack-allocated; direct Ch/Attr writes
+      would leave the other fields as garbage. }
+    DrawChar(B, 0, ' ', Byte(NormalColor), Size.X);
     ScreenX := 0;
 
     { Draw fixed columns }
@@ -1475,10 +1473,8 @@ begin
 
   { Draw filter row if enabled }
   if FShowFilterRow and (ScreenY < Size.Y) then begin
-    for K := 0 to Size.X - 1 do begin
-      B[K].Ch := ' ';
-      B[K].Attr := $1F; { white on blue - filter input style }
-    end;
+    { DrawChar zeroes the RGB/ExtAttrs extension fields of the stack cells }
+    DrawChar(B, 0, ' ', $1F, Size.X); { white on blue - filter input style }
     ScreenX := 0;
     ScrollVisibleIndex := 0;
     for J := 0 to FColumns.Count - 1 do begin
@@ -1543,12 +1539,8 @@ begin
     end else
       Row := FFixedRows + FTopRow + I;  { Data rows start at FFixedRows }
 
-    { Clear buffer using new TDrawCell format }
-    for K := 0 to Size.X - 1 do
-    begin
-      B[K].Ch := ' ';
-      B[K].Attr := NormalColor;
-    end;
+    { Clear buffer via DrawChar so the extension fields are zeroed too }
+    DrawChar(B, 0, ' ', Byte(NormalColor), Size.X);
 
     if Row < FRowCount then
     begin
